@@ -12,4 +12,11 @@ assert.ok(schema.includes('products_list_code_uidx'), 'product codes must be uni
 assert.ok(storefront.includes('function escapeHtml(value)'), 'storefront must escape values rendered as HTML');
 assert.ok(storefront.includes('el.textContent = String(text'), 'toast messages must render as text');
 
+const api = await readFile(new URL('../js/api.js', import.meta.url), 'utf8');
+assert.ok(api.includes('function spreadsheetIdFromUrl(url)'), 'Google Sheet URLs must be parsed safely');
+assert.ok(api.includes("fetchGoogleSheetRows(spreadsheetId, 'Products')"), 'legacy product import must be enabled');
+assert.ok(api.includes("fetchGoogleSheetRows(spreadsheetId, 'Orders')"), 'legacy order import must be enabled');
+assert.ok(api.includes("sb.rpc('import_legacy_order_list'"), 'legacy imports must use the atomic database transaction');
+assert.ok(schema.includes('create or replace function public.import_legacy_order_list'), 'legacy import RPC must exist');
+
 console.log('Project safety checks passed.');

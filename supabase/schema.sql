@@ -333,3 +333,102 @@ $$;
 
 revoke all on function public.submit_order(uuid, text, text, jsonb) from public;
 grant execute on function public.submit_order(uuid, text, text, jsonb) to anon, authenticated;
+
+-- ═══════════════════════════════════════════════════════════
+-- import_legacy_order_list — one-time Google Sheets migration
+-- Creates the list, products, and orders in one transaction.
+-- Any invalid row aborts the whole import automatically.
+-- ═══════════════════════════════════════════════════════════
+create or replace function public.import_legacy_order_list(
+  p_name        text,
+  p_description text,
+  p_image       text,
+  p_status      text,
+  p_display     text,
+  p_products    jsonb,
+  p_orders      jsonb
+) returns jsonb
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  v_list_id       uuid;
+  v_product_count integer := 0;
+  v_order_count   integer := 0;
+begin
+  if not public.is_admin() then
+    raise exception 'Administrator access required' using errcode = '42501';
+  end if;
+  if length(btrim(coalesce(p_name, ''))) < 1 or length(btrim(p_name)) > 150 then
+    raise exception 'Invalid import name';
+  end if;
+  if jsonb_typeof(coalesce(p_products, '[]'::jsonb)) <> 'array'
+     or jsonb_typeof(coalesce(p_orders, '[]'::jsonb)) <> 'array' then
+    raise exception 'Products and orders must be arrays';
+  end if;
+
+  insert into public.order_lists(name, description, image, status, display)
+  values (
+    btrim(p_name),
+    btrim(coalesce(p_description, '')),
+    btrim(coalesce(p_image, '')),
+    case when lower(btrim(coalesce(p_status, ''))) = 'open' then 'Open' else 'Closed' end,
+    case when lower(btrim(coalesce(p_display, ''))) in ('hidden', 'hide', 'false', 'no') then 'Hidden' else 'Show' end
+  ) returning id into v_list_id;
+
+  insert into public.products
+    (list_id, code, name, image, price, deposit, remaining, status, yuan, options)
+  select
+    v_list_id,
+    btrim(coalesce(x.code, '')),
+    btrim(coalesce(x.name, '')),
+    btrim(coalesce(x.image, '')),
+    coalesce(x.price, 0),
+    coalesce(x.deposit, 0),
+    x.remaining,
+    case when lower(btrim(coalesce(x.status, ''))) in ('closed', 'close', 'ปิด') then 'Closed' else 'Open' end,
+    coalesce(x.yuan, 0),
+    btrim(coalesce(x.options, ''))
+  from jsonb_to_recordset(coalesce(p_products, '[]'::jsonb)) as x(
+    code text, name text, image text, price numeric, deposit numeric,
+    remaining numeric, status text, yuan numeric, options text
+  );
+  get diagnostics v_product_count = row_count;
+
+  insert into public.orders
+    (list_id, customer, product, qty, pay_type, price, total,
+     yuan, total_yuan, full_price, total_full, remark, created_at)
+  select
+    v_list_id,
+    btrim(coalesce(x.customer, '')),
+    btrim(coalesce(x.product, '')),
+    coalesce(x.qty, 1),
+    coalesce(nullif(btrim(x.pay_type), ''), 'Full Price'),
+    coalesce(x.price, 0),
+    coalesce(x.total, 0),
+    coalesce(x.yuan, 0),
+    coalesce(x.total_yuan, 0),
+    coalesce(x.full_price, 0),
+    coalesce(x.total_full, 0),
+    btrim(coalesce(x.remark, '')),
+    coalesce(x.created_at, now())
+  from jsonb_to_recordset(coalesce(p_orders, '[]'::jsonb)) as x(
+    customer text, product text, qty numeric, pay_type text, price numeric,
+    total numeric, yuan numeric, total_yuan numeric, full_price numeric,
+    total_full numeric, remark text, created_at timestamptz
+  );
+  get diagnostics v_order_count = row_count;
+
+  return jsonb_build_object(
+    'status', 'Success',
+    'sheetId', v_list_id,
+    'name', btrim(p_name),
+    'products', v_product_count,
+    'orders', v_order_count
+  );
+end;
+$$;
+
+revoke all on function public.import_legacy_order_list(text, text, text, text, text, jsonb, jsonb) from public;
+grant execute on function public.import_legacy_order_list(text, text, text, text, text, jsonb, jsonb) to authenticated;

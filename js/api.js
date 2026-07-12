@@ -59,6 +59,188 @@
     return s + '00';
   }
 
+  function spreadsheetIdFromUrl(url) {
+    var m = String(url || '').match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
+    return m ? m[1] : '';
+  }
+
+  function gvizRows(payload) {
+    if (!payload || !payload.table) throw new Error('Google Sheets ส่งข้อมูลกลับมาไม่ถูกต้อง');
+    var cols = payload.table.cols || [];
+    var rows = [cols.map(function (col) { return col.label || col.id || ''; })];
+    (payload.table.rows || []).forEach(function (sourceRow) {
+      rows.push(cols.map(function (_, i) {
+        var value = sourceRow.c && sourceRow.c[i];
+        if (!value) return '';
+        if (value.f !== null && value.f !== undefined) return value.f;
+        return value.v === null || value.v === undefined ? '' : value.v;
+      }));
+    });
+    return rows;
+  }
+
+  function headerKey(value) {
+    return String(value || '').trim().toLowerCase()
+      .replace(/[._\-\/\\]+/g, ' ')
+      .replace(/\s+/g, ' ');
+  }
+
+  function columnFinder(header) {
+    var normalized = header.map(headerKey);
+    return function (aliases, fallback) {
+      for (var i = 0; i < aliases.length; i++) {
+        var idx = normalized.indexOf(headerKey(aliases[i]));
+        if (idx !== -1) return idx;
+      }
+      return fallback;
+    };
+  }
+
+  function cell(row, idx) {
+    return idx >= 0 && idx < row.length ? String(row[idx] || '').trim() : '';
+  }
+
+  function legacyNumber(value, rowLabel, allowNull) {
+    value = String(value === null || value === undefined ? '' : value).trim();
+    if (value === '' && allowNull) return null;
+    var cleaned = value.replace(/[,฿¥\s]/g, '');
+    var n = Number(cleaned || 0);
+    if (!isFinite(n) || n < 0) throw new Error(rowLabel + ': ตัวเลขไม่ถูกต้อง ("' + value + '")');
+    return n;
+  }
+
+  function legacyDate(value) {
+    value = String(value || '').trim();
+    if (!value) return null;
+    var gv = value.match(/^Date\((\d{4}),(\d{1,2}),(\d{1,2})(?:,(\d{1,2}),(\d{1,2}),(\d{1,2}))?\)$/);
+    if (gv) {
+      return gv[1] + '-' + String(Number(gv[2]) + 1).padStart(2, '0') + '-' +
+        String(Number(gv[3])).padStart(2, '0') + 'T' +
+        String(Number(gv[4] || 0)).padStart(2, '0') + ':' +
+        String(Number(gv[5] || 0)).padStart(2, '0') + ':' +
+        String(Number(gv[6] || 0)).padStart(2, '0') + '+07:00';
+    }
+    var m = value.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+    if (m) {
+      var year = Number(m[3]);
+      if (year > 2400) year -= 543;
+      return year + '-' + String(Number(m[2])).padStart(2, '0') + '-' +
+        String(Number(m[1])).padStart(2, '0') + 'T' +
+        String(Number(m[4] || 0)).padStart(2, '0') + ':' +
+        String(Number(m[5] || 0)).padStart(2, '0') + ':' +
+        String(Number(m[6] || 0)).padStart(2, '0') + '+07:00';
+    }
+    var parsed = new Date(value);
+    return isNaN(parsed.getTime()) ? null : parsed.toISOString();
+  }
+
+  function fetchGoogleSheetRows(spreadsheetId, sheetName) {
+    return new Promise(function (resolve, reject) {
+      var callbackName = '__orderHubGviz' + Date.now() + Math.floor(Math.random() * 100000);
+      var script = document.createElement('script');
+      var done = false;
+      var timer = setTimeout(function () {
+        finish(new Error('โหลดชีต ' + sheetName + ' หมดเวลา — ตรวจสอบสิทธิ์แชร์ชีต'));
+      }, 20000);
+
+      function finish(error, rows) {
+        if (done) return;
+        done = true; clearTimeout(timer);
+        try { delete window[callbackName]; } catch (e) { window[callbackName] = undefined; }
+        if (script.parentNode) script.parentNode.removeChild(script);
+        if (error) reject(error); else resolve(rows);
+      }
+
+      window[callbackName] = function (payload) {
+        if (payload && payload.status === 'error') {
+          var details = payload.errors && payload.errors[0] && payload.errors[0].detailed_message;
+          finish(new Error(details || ('ไม่พบชีตชื่อ ' + sheetName + ' หรือยังไม่ได้เปิดสิทธิ์ดู')));
+          return;
+        }
+        try { finish(null, gvizRows(payload)); }
+        catch (e) { finish(e); }
+      };
+      script.onerror = function () {
+        finish(new Error('โหลดชีต ' + sheetName + ' ไม่ได้ — กรุณาแชร์เป็น “ทุกคนที่มีลิงก์ดูได้”'));
+      };
+      script.src = 'https://docs.google.com/spreadsheets/d/' + spreadsheetId +
+        '/gviz/tq?headers=1&sheet=' + encodeURIComponent(sheetName) +
+        '&tqx=' + encodeURIComponent('out:json;responseHandler:' + callbackName);
+      document.head.appendChild(script);
+    });
+  }
+
+  function legacyProducts(rows) {
+    if (!rows.length) throw new Error('ชีต Products ว่างเปล่า');
+    var find = columnFinder(rows[0]);
+    var c = {
+      code: find(['id', 'product id', 'code', 'barcode', 'รหัส', 'รหัสสินค้า'], 0),
+      name: find(['name', 'product', 'product name', 'สินค้า', 'ชื่อสินค้า'], 1),
+      image: find(['image', 'image url', 'รูป', 'รูปภาพ'], 2),
+      price: find(['price', 'full price', 'ราคา', 'ราคาเต็ม'], 3),
+      deposit: find(['deposit', 'มัดจำ'], 4),
+      remaining: find(['remaining', 'stock', 'คงเหลือ', 'จำนวนคงเหลือ'], 5),
+      status: find(['status', 'สถานะ'], 6),
+      yuan: find(['yuan', 'price yuan', 'หยวน', 'ราคาหยวน'], 7),
+      options: find(['options', 'option', 'ตัวเลือก'], 8)
+    };
+    var out = [], seen = {};
+    for (var i = 1; i < rows.length; i++) {
+      var row = rows[i], name = cell(row, c.name);
+      if (!name) continue;
+      var code = cell(row, c.code) || ('legacy-' + (i + 1));
+      if (seen[code]) throw new Error('Products แถว ' + (i + 1) + ': รหัสสินค้าซ้ำ ' + code);
+      seen[code] = true;
+      out.push({
+        code: code, name: name, image: cell(row, c.image),
+        price: legacyNumber(cell(row, c.price), 'Products แถว ' + (i + 1), false),
+        deposit: legacyNumber(cell(row, c.deposit), 'Products แถว ' + (i + 1), false),
+        remaining: legacyNumber(cell(row, c.remaining), 'Products แถว ' + (i + 1), true),
+        status: cell(row, c.status) || 'Open',
+        yuan: legacyNumber(cell(row, c.yuan), 'Products แถว ' + (i + 1), false),
+        options: cell(row, c.options)
+      });
+    }
+    return out;
+  }
+
+  function legacyOrders(rows) {
+    if (!rows.length) return [];
+    var find = columnFinder(rows[0]);
+    var c = {
+      timestamp: find(['timestamp', 'date', 'วันที่', 'วันเวลา'], 0),
+      customer: find(['customer', 'customer name', 'ลูกค้า', 'ชื่อลูกค้า'], 1),
+      product: find(['product', 'product name', 'สินค้า', 'ชื่อสินค้า'], 2),
+      qty: find(['qty', 'quantity', 'จำนวน'], 3),
+      payType: find(['pay type', 'payment type', 'ประเภทการชำระ', 'ประเภท'], 4),
+      price: find(['price', 'ราคา'], 5), total: find(['total', 'รวม'], 6),
+      yuan: find(['yuan', 'หยวน'], 7), totalYuan: find(['total yuan', 'รวมหยวน'], 8),
+      fullPrice: find(['full price', 'ราคาเต็ม'], 9), totalFull: find(['total full', 'รวมราคาเต็ม'], 10),
+      remark: find(['remark', 'phone', 'หมายเหตุ', 'เบอร์', 'เบอร์โทร'], 11)
+    };
+    var out = [];
+    for (var i = 1; i < rows.length; i++) {
+      var row = rows[i], customer = cell(row, c.customer), product = cell(row, c.product);
+      if (!customer && !product) continue;
+      var imported = {
+        customer: customer, product: product,
+        qty: legacyNumber(cell(row, c.qty) || '1', 'Orders แถว ' + (i + 1), false),
+        pay_type: cell(row, c.payType) || 'Full Price',
+        price: legacyNumber(cell(row, c.price), 'Orders แถว ' + (i + 1), false),
+        total: legacyNumber(cell(row, c.total), 'Orders แถว ' + (i + 1), false),
+        yuan: legacyNumber(cell(row, c.yuan), 'Orders แถว ' + (i + 1), false),
+        total_yuan: legacyNumber(cell(row, c.totalYuan), 'Orders แถว ' + (i + 1), false),
+        full_price: legacyNumber(cell(row, c.fullPrice), 'Orders แถว ' + (i + 1), false),
+        total_full: legacyNumber(cell(row, c.totalFull), 'Orders แถว ' + (i + 1), false),
+        remark: cell(row, c.remark)
+      };
+      var created = legacyDate(cell(row, c.timestamp));
+      if (created) imported.created_at = created;
+      out.push(imported);
+    }
+    return out;
+  }
+
   function requireSb() { if (!sb) throw new Error(NOT_CONFIGURED_MSG); }
 
   // "admin" → "admin@orderhub.local"; real e-mail addresses pass through
@@ -300,8 +482,34 @@
       } catch (e) { return e.__json || err(e.message || e); }
     },
 
-    adminAddOrderList: async function () {
-      return err('โหมด "เชื่อมชีต" ใช้ไม่ได้ในเวอร์ชันเว็บ (ไม่มี Google Sheets แล้ว) — กรุณาใช้โหมด "✨ สร้างใหม่" แทนค่ะ');
+    adminAddOrderList: async function (spreadsheetUrl, status, desc, image, display, importName) {
+      try {
+        requireSb(); await requireAdmin();
+        var spreadsheetId = spreadsheetIdFromUrl(spreadsheetUrl);
+        if (!spreadsheetId) return err('URL Google Spreadsheet ไม่ถูกต้อง');
+        importName = String(importName || '').trim();
+        if (!importName) return err('กรุณากรอกชื่อรายการนำเข้า');
+
+        var sheets = await Promise.all([
+          fetchGoogleSheetRows(spreadsheetId, 'Products'),
+          fetchGoogleSheetRows(spreadsheetId, 'Orders')
+        ]);
+        var products = legacyProducts(sheets[0]);
+        var orders = legacyOrders(sheets[1]);
+        var imported = await sb.rpc('import_legacy_order_list', {
+          p_name: importName,
+          p_description: String(desc || '').trim(),
+          p_image: String(image || '').trim(),
+          p_status: String(status || 'Closed').trim(),
+          p_display: String(display || 'Show').trim(),
+          p_products: products,
+          p_orders: orders
+        });
+        if (imported.error) throw imported.error;
+        return J(imported.data);
+      } catch (e) {
+        return e.__json || err(e.message || e);
+      }
     },
 
     adminCreateNewOrderList: async function (name, desc, image, status) {
