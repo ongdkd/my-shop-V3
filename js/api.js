@@ -294,7 +294,7 @@
 
   async function fetchLists() {
     var r = await sb.from('order_lists')
-      .select('id,seq,name,description,image,status,display,created_at')
+      .select('id,seq,name,description,image,status,display,source_spreadsheet_id,created_at')
       .order('seq', { ascending: true });
     if (r.error) throw r.error;
     return r.data || [];
