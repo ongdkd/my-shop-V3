@@ -31,6 +31,10 @@
    - ติ๊ก **Auto Confirm User** ด้วย
 3. ทำซ้ำสำหรับแอดมินทุกคน (แทนที่ Whitelist เดิม)
 
+> **อยากล็อกอินด้วยชื่อผู้ใช้แทนอีเมล?** สร้าง user ด้วยอีเมลปลอมรูปแบบ
+> `ชื่อผู้ใช้@orderhub.local` เช่น `admin@orderhub.local` — แล้วหน้า Login
+> จะพิมพ์แค่ `admin` ได้เลย (โดเมนแก้ได้ที่ `ADMIN_USERNAME_DOMAIN` ใน `js/config.js`)
+
 ### 4. ใส่ค่าเชื่อมต่อ
 1. **Project URL:** ไปที่ **Settings → General** (หรือกดปุ่ม **Connect** ด้านบน) แล้วคัดลอก URL เช่น `https://xxxx.supabase.co`
 2. **API Key:** ไปที่ **Settings → API Keys**

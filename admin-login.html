@@ -220,14 +220,14 @@
       <!-- ① LOGIN FORM -->
       <div class="state active" id="stateLogin">
         <div class="form-title">🔑 เข้าสู่ระบบ Admin</div>
-        <div class="form-sub">กรอกอีเมลและรหัสผ่านเพื่อเข้าใช้งาน</div>
+        <div class="form-sub">กรอกชื่อผู้ใช้ (หรืออีเมล) และรหัสผ่านเพื่อเข้าใช้งาน</div>
 
         <div class="divider"></div>
 
         <div class="field-wrap">
-          <div class="field-label">อีเมล (Email)</div>
+          <div class="field-label">ชื่อผู้ใช้ (Username) หรืออีเมล</div>
           <input class="text-input" type="text" id="usernameInput"
-            placeholder="กรอกอีเมล"
+            placeholder="กรอกชื่อผู้ใช้หรืออีเมล"
             autocomplete="username" maxlength="128">
         </div>
 
@@ -373,7 +373,7 @@
     var username = document.getElementById('usernameInput').value.trim();
     var pw = document.getElementById('pwInput').value.trim();
     if (!username || !pw) {
-      setError(true, 'กรุณากรอกอีเมลและรหัสผ่าน');
+      setError(true, 'กรุณากรอกชื่อผู้ใช้และรหัสผ่าน');
       return;
     }
 

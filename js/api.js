@@ -60,6 +60,15 @@
 
   function requireSb() { if (!sb) throw new Error(NOT_CONFIGURED_MSG); }
 
+  // "admin" → "admin@orderhub.local"; real e-mail addresses pass through
+  function toAdminEmail(username) {
+    username = String(username || '').trim().toLowerCase();
+    if (username && username.indexOf('@') === -1) {
+      username += (window.ADMIN_USERNAME_DOMAIN || '@orderhub.local');
+    }
+    return username;
+  }
+
   async function getSession() {
     if (!sb) return null;
     var r = await sb.auth.getSession();
@@ -111,9 +120,11 @@
     },
 
     // ── Auth ──────────────────────────────────────────────────
+    // Plain usernames are allowed: "admin" becomes the Supabase user
+    // "admin@orderhub.local" (domain configurable in config.js)
     adminVerifyLogin: async function (username, password) {
       if (!sb) return { ok: false, message: NOT_CONFIGURED_MSG };
-      username = String(username || '').trim().toLowerCase();
+      username = toAdminEmail(username);
       password = String(password || '').trim();
       if (!username || !password) return { ok: false };
       var r = await sb.auth.signInWithPassword({ email: username, password: password });
@@ -126,7 +137,7 @@
       if (s) return true;
       if (username && password) {
         var r = await sb.auth.signInWithPassword({
-          email: String(username).trim().toLowerCase(),
+          email: toAdminEmail(username),
           password: String(password).trim()
         });
         return !r.error;
