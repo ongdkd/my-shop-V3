@@ -81,6 +81,68 @@ insert into public.notify_emails(email) values
   ('pyatadaja@gmail.com')
 on conflict do nothing;
 
+-- Explicit administrator allowlist. Do not use the generic "authenticated"
+-- role as an admin check: any Supabase Auth account has that role.
+create table if not exists public.admin_users (
+  email      text primary key check (email = lower(email)),
+  created_at timestamptz not null default now()
+);
+insert into public.admin_users(email) values
+  ('admin@kagashop.admin')
+on conflict do nothing;
+
+create or replace function public.is_admin()
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.admin_users a
+    where a.email = lower(coalesce(auth.jwt() ->> 'email', ''))
+  ) or coalesce(auth.jwt() -> 'app_metadata' ->> 'role', '') = 'admin';
+$$;
+
+revoke all on function public.is_admin() from public;
+grant execute on function public.is_admin() to authenticated;
+
+-- Database invariants protect data even when requests bypass the UI.
+create unique index if not exists products_list_code_uidx
+  on public.products(list_id, code);
+create index if not exists products_list_seq_idx
+  on public.products(list_id, seq);
+create index if not exists orders_list_created_idx
+  on public.orders(list_id, created_at desc);
+create index if not exists orders_list_customer_created_idx
+  on public.orders(list_id, customer, created_at desc);
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'products_values_nonnegative' and conrelid = 'public.products'::regclass
+  ) then
+    alter table public.products add constraint products_values_nonnegative
+      check (price >= 0 and deposit >= 0 and yuan >= 0 and (remaining is null or remaining >= 0));
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'orders_values_nonnegative' and conrelid = 'public.orders'::regclass
+  ) then
+    alter table public.orders add constraint orders_values_nonnegative
+      check (qty > 0 and price >= 0 and total >= 0 and yuan >= 0 and total_yuan >= 0 and full_price >= 0 and total_full >= 0);
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'stock_values_nonnegative' and conrelid = 'public.stock_items'::regclass
+  ) then
+    alter table public.stock_items add constraint stock_values_nonnegative
+      check (price >= 0 and deposit >= 0 and yuan >= 0 and (stock is null or stock >= 0));
+  end if;
+end $$;
+
 -- ═══════════════════════════════════════════════════════════
 -- Row Level Security
 --  * shop front (anon):  read lists + products, submit orders via RPC
@@ -91,37 +153,52 @@ alter table public.products     enable row level security;
 alter table public.orders       enable row level security;
 alter table public.stock_items  enable row level security;
 alter table public.notify_emails enable row level security;
+alter table public.admin_users enable row level security;
 
 -- order_lists
 drop policy if exists lists_public_read  on public.order_lists;
 drop policy if exists lists_admin_write  on public.order_lists;
 create policy lists_public_read on public.order_lists
-  for select using (true);
+  for select using (
+    lower(btrim(display)) not in ('hidden', 'hide', 'false', 'no')
+  );
 create policy lists_admin_write on public.order_lists
-  for all to authenticated using (true) with check (true);
+  for all to authenticated using (public.is_admin()) with check (public.is_admin());
 
 -- products
 drop policy if exists products_public_read on public.products;
 drop policy if exists products_admin_write on public.products;
 create policy products_public_read on public.products
-  for select using (true);
+  for select using (
+    lower(btrim(status)) = 'open'
+    and exists (
+      select 1 from public.order_lists l
+      where l.id = products.list_id
+        and lower(btrim(l.status)) = 'open'
+        and lower(btrim(l.display)) not in ('hidden', 'hide', 'false', 'no')
+    )
+  );
 create policy products_admin_write on public.products
-  for all to authenticated using (true) with check (true);
+  for all to authenticated using (public.is_admin()) with check (public.is_admin());
 
 -- orders (public inserts happen through the submit_order RPC below)
 drop policy if exists orders_admin_all on public.orders;
 create policy orders_admin_all on public.orders
-  for all to authenticated using (true) with check (true);
+  for all to authenticated using (public.is_admin()) with check (public.is_admin());
 
 -- stock (admin only)
 drop policy if exists stock_admin_all on public.stock_items;
 create policy stock_admin_all on public.stock_items
-  for all to authenticated using (true) with check (true);
+  for all to authenticated using (public.is_admin()) with check (public.is_admin());
 
 -- notify emails (admin read)
 drop policy if exists notify_admin_read on public.notify_emails;
 create policy notify_admin_read on public.notify_emails
-  for select to authenticated using (true);
+  for select to authenticated using (public.is_admin());
+
+drop policy if exists admin_users_admin_read on public.admin_users;
+create policy admin_users_admin_read on public.admin_users
+  for select to authenticated using (public.is_admin());
 
 -- ═══════════════════════════════════════════════════════════
 -- submit_order — atomic order submission for the public shop
@@ -146,22 +223,76 @@ declare
   v_opt    text;
   v_unit   numeric;
   v_label  text;
+  v_phone  text;
+  req      record;
 begin
   if p_items is null or jsonb_typeof(p_items) <> 'array' or jsonb_array_length(p_items) = 0 then
     return jsonb_build_object('status', 'Error', 'message', 'No order items received');
   end if;
+  if jsonb_array_length(p_items) > 100 then
+    return jsonb_build_object('status', 'Error', 'message', 'Too many order items');
+  end if;
+  if length(btrim(coalesce(p_customer, ''))) < 1 or length(btrim(p_customer)) > 100 then
+    return jsonb_build_object('status', 'Error', 'message', 'Invalid customer name');
+  end if;
+  v_phone := regexp_replace(coalesce(p_phone, ''), '[-[:space:]]', '', 'g');
+  if v_phone !~ '^0[6-9][0-9]{8}$' then
+    return jsonb_build_object('status', 'Error', 'message', 'Invalid phone number');
+  end if;
+  if not exists (
+    select 1 from public.order_lists
+    where id = p_list_id
+      and lower(btrim(status)) = 'open'
+      and lower(btrim(display)) not in ('hidden', 'hide', 'false', 'no')
+  ) then
+    return jsonb_build_object('status', 'Error', 'message', 'Order list is not open');
+  end if;
 
-  -- 1) validate stock (and lock the rows)
+  -- 1) Validate every item before casting request values.
   for it in select * from jsonb_array_elements(p_items) loop
+    if jsonb_typeof(it) <> 'object'
+       or coalesce(it->>'id', '') = ''
+       or length(it->>'id') > 100
+       or coalesce(it->>'quantity', '') !~ '^[1-9][0-9]*$'
+       or (it->>'quantity')::numeric > 100
+       or coalesce(it->>'isDeposit', 'false') not in ('true', 'false')
+       or length(coalesce(it->>'selectedOption', '')) > 200 then
+      return jsonb_build_object('status', 'Error', 'message', 'Invalid order item');
+    end if;
     select * into prod from public.products
       where list_id = p_list_id and code = (it->>'id')
-      order by seq limit 1
-      for update;
+      limit 1;
     if not found then
       return jsonb_build_object('status', 'Error', 'message', 'Product not found: ' || coalesce(it->>'id', ''));
     end if;
-    v_qty := coalesce((it->>'quantity')::numeric, 1);
-    if prod.remaining is not null and prod.remaining < v_qty then
+    if lower(btrim(prod.status)) <> 'open' then
+      return jsonb_build_object('status', 'Error', 'message', 'Product is closed: ' || prod.name);
+    end if;
+    v_opt := btrim(coalesce(it->>'selectedOption', ''));
+    if btrim(prod.options) <> '' then
+      if v_opt = '' or not exists (
+        select 1 from unnest(string_to_array(prod.options, ',')) allowed(value)
+        where btrim(allowed.value) = v_opt
+      ) then
+        return jsonb_build_object('status', 'Error', 'message', 'Invalid product option: ' || prod.name);
+      end if;
+    elsif v_opt <> '' then
+      return jsonb_build_object('status', 'Error', 'message', 'Product has no options: ' || prod.name);
+    end if;
+  end loop;
+
+  -- Lock in a stable order and validate the aggregate requested quantity.
+  -- Aggregating prevents duplicate item rows from bypassing the stock check.
+  for req in
+    select item.value->>'id' as code, sum((item.value->>'quantity')::numeric) as qty
+    from jsonb_array_elements(p_items) as item(value)
+    group by item.value->>'id'
+    order by item.value->>'id'
+  loop
+    select * into prod from public.products
+      where list_id = p_list_id and code = req.code
+      for update;
+    if prod.remaining is not null and prod.remaining < req.qty then
       return jsonb_build_object('status', 'Error', 'message', 'Stock not enough for ' || prod.name);
     end if;
   end loop;
@@ -173,7 +304,7 @@ begin
       order by seq limit 1
       for update;
 
-    v_qty    := coalesce((it->>'quantity')::numeric, 1);
+    v_qty    := (it->>'quantity')::numeric;
     v_is_dep := coalesce((it->>'isDeposit')::boolean, false);
     v_opt    := coalesce(it->>'selectedOption', '');
 
@@ -188,12 +319,12 @@ begin
       (list_id, customer, product, qty, pay_type, price, total,
        yuan, total_yuan, full_price, total_full, remark)
     values
-      (p_list_id, coalesce(p_customer, ''), v_label, v_qty,
+      (p_list_id, btrim(p_customer), v_label, v_qty,
        case when v_is_dep then 'Deposit' else 'Full Price' end,
        v_unit, v_unit * v_qty,
        coalesce(prod.yuan, 0), coalesce(prod.yuan, 0) * v_qty,
        coalesce(prod.price, 0), coalesce(prod.price, 0) * v_qty,
-       coalesce(p_phone, ''));
+       v_phone);
   end loop;
 
   return jsonb_build_object('status', 'Success');
@@ -202,3 +333,102 @@ $$;
 
 revoke all on function public.submit_order(uuid, text, text, jsonb) from public;
 grant execute on function public.submit_order(uuid, text, text, jsonb) to anon, authenticated;
+
+-- ═══════════════════════════════════════════════════════════
+-- import_legacy_order_list — one-time Google Sheets migration
+-- Creates the list, products, and orders in one transaction.
+-- Any invalid row aborts the whole import automatically.
+-- ═══════════════════════════════════════════════════════════
+create or replace function public.import_legacy_order_list(
+  p_name        text,
+  p_description text,
+  p_image       text,
+  p_status      text,
+  p_display     text,
+  p_products    jsonb,
+  p_orders      jsonb
+) returns jsonb
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  v_list_id       uuid;
+  v_product_count integer := 0;
+  v_order_count   integer := 0;
+begin
+  if not public.is_admin() then
+    raise exception 'Administrator access required' using errcode = '42501';
+  end if;
+  if length(btrim(coalesce(p_name, ''))) < 1 or length(btrim(p_name)) > 150 then
+    raise exception 'Invalid import name';
+  end if;
+  if jsonb_typeof(coalesce(p_products, '[]'::jsonb)) <> 'array'
+     or jsonb_typeof(coalesce(p_orders, '[]'::jsonb)) <> 'array' then
+    raise exception 'Products and orders must be arrays';
+  end if;
+
+  insert into public.order_lists(name, description, image, status, display)
+  values (
+    btrim(p_name),
+    btrim(coalesce(p_description, '')),
+    btrim(coalesce(p_image, '')),
+    case when lower(btrim(coalesce(p_status, ''))) = 'open' then 'Open' else 'Closed' end,
+    case when lower(btrim(coalesce(p_display, ''))) in ('hidden', 'hide', 'false', 'no') then 'Hidden' else 'Show' end
+  ) returning id into v_list_id;
+
+  insert into public.products
+    (list_id, code, name, image, price, deposit, remaining, status, yuan, options)
+  select
+    v_list_id,
+    btrim(coalesce(x.code, '')),
+    btrim(coalesce(x.name, '')),
+    btrim(coalesce(x.image, '')),
+    coalesce(x.price, 0),
+    coalesce(x.deposit, 0),
+    x.remaining,
+    case when lower(btrim(coalesce(x.status, ''))) in ('closed', 'close', 'ปิด') then 'Closed' else 'Open' end,
+    coalesce(x.yuan, 0),
+    btrim(coalesce(x.options, ''))
+  from jsonb_to_recordset(coalesce(p_products, '[]'::jsonb)) as x(
+    code text, name text, image text, price numeric, deposit numeric,
+    remaining numeric, status text, yuan numeric, options text
+  );
+  get diagnostics v_product_count = row_count;
+
+  insert into public.orders
+    (list_id, customer, product, qty, pay_type, price, total,
+     yuan, total_yuan, full_price, total_full, remark, created_at)
+  select
+    v_list_id,
+    btrim(coalesce(x.customer, '')),
+    btrim(coalesce(x.product, '')),
+    coalesce(x.qty, 1),
+    coalesce(nullif(btrim(x.pay_type), ''), 'Full Price'),
+    coalesce(x.price, 0),
+    coalesce(x.total, 0),
+    coalesce(x.yuan, 0),
+    coalesce(x.total_yuan, 0),
+    coalesce(x.full_price, 0),
+    coalesce(x.total_full, 0),
+    btrim(coalesce(x.remark, '')),
+    coalesce(x.created_at, now())
+  from jsonb_to_recordset(coalesce(p_orders, '[]'::jsonb)) as x(
+    customer text, product text, qty numeric, pay_type text, price numeric,
+    total numeric, yuan numeric, total_yuan numeric, full_price numeric,
+    total_full numeric, remark text, created_at timestamptz
+  );
+  get diagnostics v_order_count = row_count;
+
+  return jsonb_build_object(
+    'status', 'Success',
+    'sheetId', v_list_id,
+    'name', btrim(p_name),
+    'products', v_product_count,
+    'orders', v_order_count
+  );
+end;
+$$;
+
+revoke all on function public.import_legacy_order_list(text, text, text, text, text, jsonb, jsonb) from public;
+grant execute on function public.import_legacy_order_list(text, text, text, text, text, jsonb, jsonb) to authenticated;

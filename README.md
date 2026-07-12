@@ -67,7 +67,7 @@
 | ล็อกอินแอดมิน | รหัสผ่านใน code.gs / ชีต Whitelist | **Supabase Auth** (เพิ่ม/ลบแอดมินในแดชบอร์ด) |
 | ตัดสต็อกตอนสั่งซื้อ | LockService + เขียนชีต | ฟังก์ชัน `submit_order` ใน Postgres (atomic, กันสต็อกติดลบ) |
 | อัปโหลดรูป | ผ่าน Apps Script → Cloudinary | เบราว์เซอร์อัปโหลดตรงเข้า Cloudinary (cloud/preset เดิม) |
-| "เชื่อมชีต" ในแอดมิน | ผูก Spreadsheet ด้วย URL | ❌ ใช้ไม่ได้แล้ว — ใช้ปุ่ม "✨ สร้างใหม่" แทน |
+| "เชื่อมชีต" ในแอดมิน | ผูก Spreadsheet ด้วย URL | ✅ นำเข้าข้อมูลเก่าจากแท็บ `Products` + `Orders` เข้า Supabase แบบครั้งเดียว |
 | แจ้งเตือนสั่งของ (อีเมล) | MailApp ส่งอีเมลอัตโนมัติ | เปิดแอปอีเมล (mailto) พร้อมเนื้อหาสรุปให้ กด Send เอง |
 | เพิ่มลงปฏิทิน | CalendarApp สร้าง event | เปิดหน้า Google Calendar พร้อมกรอก event ให้ กด Save เอง |
 | ชีต "Summary Order" | สูตรในชีต | คำนวณสรุปจากตาราง orders อัตโนมัติ |
@@ -76,7 +76,49 @@
 
 > ถ้าอยากให้ระบบ**ส่งอีเมลอัตโนมัติจริง ๆ** ต้องเพิ่ม Supabase Edge Function + บริการอย่าง Resend — แจ้งได้เลยถ้าต้องการ
 
+## นำเข้ารายการเก่าจาก Google Sheets
+
+1. เปิด Spreadsheet เก่า แล้วตั้งค่า **แชร์ → ทุกคนที่มีลิงก์ → ผู้มีสิทธิ์ดู**
+2. ตรวจสอบว่ามีแท็บชื่อ `Products` และ `Orders` (ตัวพิมพ์ตรงกัน)
+3. ในหน้า Admin กด **สร้างรายการใหม่ → 📥 นำเข้าชีตเก่า**
+4. วาง URL ของ Spreadsheet, ตั้งชื่อรายการ แล้วกด **นำเข้าข้อมูล**
+5. ตรวจสอบจำนวนสินค้าและออเดอร์ที่นำเข้า ก่อนเปลี่ยนสถานะรายการจาก `Closed` เป็น `Open`
+
+ระบบอ่านชื่อคอลัมน์ทั้งภาษาไทยและอังกฤษ ถ้าหัวคอลัมน์ไม่ตรง จะใช้ลำดับเดิมดังนี้:
+
+- `Products`: รหัส, ชื่อ, รูป, ราคาเต็ม, มัดจำ, คงเหลือ, สถานะ, หยวน, ตัวเลือก
+- `Orders`: วันเวลา, ลูกค้า, สินค้า, จำนวน, ประเภทชำระ, ราคา, รวม, หยวน, รวมหยวน, ราคาเต็ม, รวมราคาเต็ม, หมายเหตุ/เบอร์โทร
+
+การนำเข้าเป็นการ **คัดลอก** ข้อมูลเข้า Supabase เท่านั้น หลังนำเข้าแล้วการแก้ไข Google Sheet จะไม่เปลี่ยนข้อมูลในเว็บ หากแถวใดไม่ถูกต้อง ระบบจะยกเลิกการนำเข้าทั้งรายการเพื่อไม่ให้เหลือข้อมูลบางส่วน
+
 ## หมายเหตุความปลอดภัย
 - `anon key` ใส่ในหน้าเว็บได้ ปลอดภัยเพราะสิทธิ์ถูกคุมด้วย Row Level Security:
   ลูกค้า (ไม่ล็อกอิน) อ่านรายการ/สินค้า + ส่งออเดอร์ได้เท่านั้น — แก้ไขข้อมูลต้องล็อกอินแอดมิน
 - อย่าเอา `service_role` key มาใส่ใน config.js เด็ดขาด
+
+## Security migration (required after this update)
+
+Run `supabase/schema.sql` again in the Supabase SQL Editor. The schema now uses
+an explicit `admin_users` allowlist instead of treating every authenticated user
+as an administrator. The configured username `admin` maps to the seeded account
+`admin@kagashop.admin`.
+
+If your administrator signs in with a different email, add it from the SQL
+Editor before signing in:
+
+```sql
+insert into public.admin_users(email)
+values ('your-admin@example.com')
+on conflict do nothing;
+```
+
+Keep public email sign-up disabled unless the application needs customer
+accounts. Anonymous order submission is validated in the database, but a
+production deployment should still place CAPTCHA/rate limiting in front of the
+public `submit_order` call.
+
+For local static checks (Node.js required):
+
+```bash
+npm run check
+```

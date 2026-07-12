@@ -2,8 +2,18 @@ var PLACEHOLDER = 'https://www.svgrepo.com/show/508699/landscape-placeholder.svg
 var products = [], cart = [], cartIdSeq = 0;
 var currentOrder = null, isSubmitted = false, summaryCache = null;
 var selectedSheetId = null, hubOrderLists = [];
+var html2CanvasLoader = null;
 
 function isValidPhone(p) { return /^0[6-9]\d{8}$/.test(p.replace(/[-\s]/g,'')); }
+
+function escapeHtml(value) {
+  return String(value === null || value === undefined ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 function getOrderListMetaBySheetId(sheetId) {
   for (var i = 0; i < hubOrderLists.length; i++) {
@@ -28,12 +38,34 @@ function highlightInputError(elId) {
 
 function showMessage(text, type) {
   var el = document.getElementById('message');
-  el.innerHTML = text; el.className = 'message ' + type; el.style.display = 'block';
+  el.textContent = String(text || ''); el.className = 'message ' + type; el.style.display = 'block';
   setTimeout(function(){el.style.display='none';}, 4000);
 }
 
 function formatCurrency(n) { return new Intl.NumberFormat('th-TH',{style:'currency',currency:'THB'}).format(n); }
-function safeImg(u) { return (u && u !== '') ? u : PLACEHOLDER; }
+function safeImg(u) {
+  try {
+    var parsed = new URL(String(u || ''), location.href);
+    return (parsed.protocol === 'https:' || parsed.protocol === 'http:') ? parsed.href : PLACEHOLDER;
+  } catch (e) { return PLACEHOLDER; }
+}
+
+function ensureHtml2Canvas() {
+  if (typeof window.html2canvas === 'function') return Promise.resolve(window.html2canvas);
+  if (html2CanvasLoader) return html2CanvasLoader;
+  html2CanvasLoader = new Promise(function(resolve, reject) {
+    var script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js';
+    script.async = true;
+    script.onload = function() {
+      if (typeof window.html2canvas === 'function') resolve(window.html2canvas);
+      else reject(new Error('html2canvas did not initialize'));
+    };
+    script.onerror = function() { reject(new Error('Unable to load html2canvas')); };
+    document.head.appendChild(script);
+  });
+  return html2CanvasLoader;
+}
 function sid(id) { return String(id).replace(/[^a-zA-Z0-9_-]/g,'_'); }
 
 function cartTotal() { var s=0; for(var i=0;i<cart.length;i++) s+=cart[i].unitPrice*cart[i].qty; return s; }
@@ -109,16 +141,16 @@ function renderCartSidebar() {
     var oe='';
     if(item.options && item.options.length>0){
       oe='<select class="cart-option-edit" data-cid="'+item.cartId+'">';
-      for(var j=0;j<item.options.length;j++) oe+='<option value="'+item.options[j]+'"'+(item.options[j]===item.option?' selected':'')+'>'+item.options[j]+'</option>';
+      for(var j=0;j<item.options.length;j++) oe+='<option value="'+escapeHtml(item.options[j])+'"'+(item.options[j]===item.option?' selected':'')+'>'+escapeHtml(item.options[j])+'</option>';
       oe+='</select>';
     }
-    var pill = item.option ? '<div class="cart-item-option-pill">'+item.option+'</div>' : '';
+    var pill = item.option ? '<div class="cart-item-option-pill">'+escapeHtml(item.option)+'</div>' : '';
     var ptc = item.isDeposit ? 'deposit' : 'full';
     var ptl = item.isDeposit ? 'มัดจำ' : 'ราคาเต็ม';
     html+='<div class="cart-item" id="ci-'+item.cartId+'">';
     html+='<div class="cart-item-header">';
-    html+='<img src="'+item.image+'" class="cart-item-img" data-fb="1">';
-    html+='<div class="cart-item-info"><div class="cart-item-name">'+item.name+'</div>'+pill+'</div>';
+    html+='<img src="'+escapeHtml(safeImg(item.image))+'" class="cart-item-img" data-fb="1">';
+    html+='<div class="cart-item-info"><div class="cart-item-name">'+escapeHtml(item.name)+'</div>'+pill+'</div>';
     html+='<button class="cart-item-remove" data-cid="'+item.cartId+'">&#x2715;</button>';
     html+='</div>';
     if(oe) html+='<div style="margin:0 0 10px;">'+oe+'</div>';
@@ -223,18 +255,18 @@ function populateProductTable() {
     if(opts.length>0){
       if(opts.length<5){
         var ch='';
-        for(var oi=0;oi<opts.length;oi++) ch+='<span class="option-chip" data-psid="'+s2+'" data-opt="'+opts[oi].replace(/"/g,'&quot;').replace(/'/g,'&#39;')+'">'+opts[oi]+'</span>';
+        for(var oi=0;oi<opts.length;oi++) ch+='<span class="option-chip" data-psid="'+s2+'" data-opt="'+escapeHtml(opts[oi])+'">'+escapeHtml(opts[oi])+'</span>';
         optHtml='<div class="options-wrapper"><div class="options-chips" id="popt-'+s2+'">'+ch+'</div></div>';
       } else {
         var sel='<option value="">-- เลือกตัวเลือก --</option>';
-        for(var oi2=0;oi2<opts.length;oi2++) sel+='<option value="'+opts[oi2].replace(/"/g,'&quot;')+'">'+opts[oi2]+'</option>';
+        for(var oi2=0;oi2<opts.length;oi2++) sel+='<option value="'+escapeHtml(opts[oi2])+'">'+escapeHtml(opts[oi2])+'</option>';
         optHtml='<div class="options-wrapper"><select class="option-select" id="popt-'+s2+'" data-psid="'+s2+'">'+sel+'</select></div>';
       }
     }
     var row=tbody.insertRow();
     row.innerHTML=
-      '<td><img src="'+p.image+'" alt="'+String(p.name||'').replace(/"/g,'&quot;')+'" class="product-image" loading="lazy" width="50" height="50" data-fb="1"></td>'+
-      '<td style="font-weight:600;">'+String(p.name||'')+'</td>'+
+      '<td><img src="'+escapeHtml(safeImg(p.image))+'" alt="'+escapeHtml(p.name||'')+'" class="product-image" loading="lazy" width="50" height="50" data-fb="1"></td>'+
+      '<td style="font-weight:600;">'+escapeHtml(p.name||'')+'</td>'+
       '<td class="center-align" style="color:var(--primary);font-weight:700;">'+formatCurrency(Number(p.price)||0)+'</td>'+
       '<td class="center-align"><div class="deposit-toggle"><span class="dep-price">'+formatCurrency(Number(p.deposit)||0)+'</span><label><input type="checkbox" class="depchk" data-psid="'+s2+'"> มัดจำ</label></div></td>'+
       '<td class="prod-action-cell">'+optHtml+'<div class="prod-qty-row"><button class="add-to-cart-btn atcbtn" data-psid="'+s2+'">'+cartSvg+' + ตะกร้า</button></div></td>';
@@ -266,8 +298,8 @@ function setFabVisible(v){document.getElementById('bottomBar').style.display=v?'
 
 function renderSummaryUI(cache) {
   var tq=0; for(var i=0;i<cache.items.length;i++) tq+=cache.items[i].quantity;
-  var m='<div class="summary-meta-chip">&#x1F464; '+cache.customerName+'</div>';
-  if(cache.customerPhone) m+='<div class="summary-meta-chip">&#x1F4DE; '+cache.customerPhone+'</div>';
+  var m='<div class="summary-meta-chip">&#x1F464; '+escapeHtml(cache.customerName)+'</div>';
+  if(cache.customerPhone) m+='<div class="summary-meta-chip">&#x1F4DE; '+escapeHtml(cache.customerPhone)+'</div>';
   m+='<div class="summary-meta-chip">&#x1F4E6; '+tq+' ชิ้น</div>';
   if(cache.hasDeposit) m+='<div class="summary-meta-chip accent">&#x1F4B0; มีรายการมัดจำ</div>';
   document.getElementById('summaryMeta').innerHTML=m;
@@ -304,8 +336,8 @@ function onOrderSuccess(){
   document.getElementById('summary').style.display='none';
   document.getElementById('confirmation').style.display='block';
   setFabVisible(false);
-  var pr=currentOrder.customerPhone?'<p style="margin:2px 0 10px;font-size:0.88rem;color:var(--text-2);"><strong>เบอร์โทร:</strong> '+currentOrder.customerPhone+'</p>':'';
-  var html='<p style="margin:0 0 2px;font-weight:700;font-size:0.95rem;">'+currentOrder.customerName+'</p>'+pr+'<ul style="list-style:none;padding:0;margin:0;">';
+  var pr=currentOrder.customerPhone?'<p style="margin:2px 0 10px;font-size:0.88rem;color:var(--text-2);"><strong>เบอร์โทร:</strong> '+escapeHtml(currentOrder.customerPhone)+'</p>':'';
+  var html='<p style="margin:0 0 2px;font-weight:700;font-size:0.95rem;">'+escapeHtml(currentOrder.customerName)+'</p>'+pr+'<ul style="list-style:none;padding:0;margin:0;">';
   var total=0,hasDeposit=false;
   for(var i=0;i<currentOrder.items.length;i++){
     var item=currentOrder.items[i], p=findProduct(item.id); if(!p) continue;
@@ -323,8 +355,8 @@ function onOrderSuccess(){
 
 function buildItemHtml(img,name,option,qty,up,total,isDeposit,fullPrice){
   var hint=isDeposit?'<div class="receipt-item-hint">ราคาเต็ม: '+formatCurrency(fullPrice)+'</div>':'';
-  var opt=option?'<div class="receipt-item-option">'+option+'</div>':'';
-  return '<li class="receipt-item"><img src="'+safeImg(img)+'" class="receipt-item-img" data-fb="1"><div class="receipt-item-body"><div class="receipt-item-name">'+name+'</div>'+opt+'<div class="receipt-item-price">'+qty+' x '+formatCurrency(up)+' = <strong>'+formatCurrency(total)+'</strong></div>'+hint+'</div></li>';
+  var opt=option?'<div class="receipt-item-option">'+escapeHtml(option)+'</div>':'';
+  return '<li class="receipt-item"><img src="'+escapeHtml(safeImg(img))+'" class="receipt-item-img" data-fb="1"><div class="receipt-item-body"><div class="receipt-item-name">'+escapeHtml(name)+'</div>'+opt+'<div class="receipt-item-price">'+escapeHtml(qty)+' x '+formatCurrency(up)+' = <strong>'+formatCurrency(total)+'</strong></div>'+hint+'</div></li>';
 }
 
 function resetForm(){
@@ -355,6 +387,18 @@ function downloadReceipt() {
   var receipt = document.getElementById('receipt');
   var list    = document.querySelector('#orderSummary ul');
   var btn     = document.getElementById('downloadBtn');
+
+  if (typeof window.html2canvas !== 'function') {
+    btn.disabled = true;
+    btn.textContent = '⏳ กำลังโหลดเครื่องมือสร้างรูป...';
+    ensureHtml2Canvas().then(downloadReceipt).catch(function(err) {
+      btn.disabled = false;
+      btn.textContent = 'ดาวน์โหลดใบเสร็จ';
+      showMessage('ไม่สามารถโหลดเครื่องมือสร้างใบเสร็จได้', 'error');
+      console.error(err);
+    });
+    return;
+  }
  
   // Show generating state but keep button visible always
   btn.disabled = true;
@@ -503,10 +547,10 @@ function renderHubCards(lists){
     var item=lists[j],isOpen=(item.status==='Open');
     var badge=isOpen?'<span class="hub-status-open">&#x25CF; เปิดรับอยู่</span>':'<span class="hub-status-closed">&#x2715; ปิดรับแล้ว</span>';
     var arrow=isOpen?'<span class="hub-card-arrow">&#x2192;</span>':'';
-    html+='<div class="hub-card'+(isOpen?'':' closed')+'" data-shid="'+item.sheetId+'">';
-    html+='<div class="hub-card-img-wrap"><img src="'+safeImg(item.image)+'" class="hub-card-img" data-fb="1"></div>';
-    html+='<div class="hub-card-body"><div class="hub-card-name">'+item.name+'</div>';
-    html+='<div class="hub-card-desc">'+(item.description||(isOpen?'คลิกเพื่อสั่งซื้อ':'ปิดรับออเดอร์แล้วค่ะ'))+'</div>';
+    html+='<div class="hub-card'+(isOpen?'':' closed')+'" data-shid="'+escapeHtml(item.sheetId)+'">';
+    html+='<div class="hub-card-img-wrap"><img src="'+escapeHtml(safeImg(item.image))+'" class="hub-card-img" loading="lazy" data-fb="1"></div>';
+    html+='<div class="hub-card-body"><div class="hub-card-name">'+escapeHtml(item.name)+'</div>';
+    html+='<div class="hub-card-desc">'+escapeHtml(item.description||(isOpen?'คลิกเพื่อสั่งซื้อ':'ปิดรับออเดอร์แล้วค่ะ'))+'</div>';
     html+='<div class="hub-card-footer">'+badge+arrow+'</div></div></div>';
   }
   grid.innerHTML=html;
@@ -561,9 +605,9 @@ function buildSideMenuItems(){
     var item=items[i],isOpen=(item.status==='Open'),isCurrent=(item.sheetId===selectedSheetId);
     var st=isCurrent?'<div class="sms-open">&#x25CF; กำลังดูอยู่</div>':(isOpen?'<div class="sms-open">&#x25CF; เปิดรับอยู่</div>':'<div class="sms-closed">&#x2715; ปิดรับแล้ว</div>');
     var dis=!isOpen?'style="opacity:0.5;cursor:not-allowed;"':'';
-    html+='<button class="side-menu-item'+(isCurrent?' active':'')+'" data-shid="'+item.sheetId+'" data-open="'+(isOpen?'1':'0')+'" data-cur="'+(isCurrent?'1':'0')+'" '+dis+'>';
-    html+='<img src="'+safeImg(item.image)+'" class="side-menu-item-img" data-fb="1">';
-    html+='<div><div class="side-menu-item-name">'+item.name+'</div>'+st+'</div></button>';
+    html+='<button class="side-menu-item'+(isCurrent?' active':'')+'" data-shid="'+escapeHtml(item.sheetId)+'" data-open="'+(isOpen?'1':'0')+'" data-cur="'+(isCurrent?'1':'0')+'" '+dis+'>';
+    html+='<img src="'+escapeHtml(safeImg(item.image))+'" class="side-menu-item-img" loading="lazy" data-fb="1">';
+    html+='<div><div class="side-menu-item-name">'+escapeHtml(item.name)+'</div>'+st+'</div></button>';
   }
 
   list.innerHTML=html;

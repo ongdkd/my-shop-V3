@@ -476,7 +476,9 @@ function renderPayment() {
   POS_CART.forEach(function(item) {
     var r = document.createElement('div'); r.className = 'pay-order-row';
     var label = item.product.name + (item.option ? ' (' + item.option + ')' : '') + ' × ' + item.qty;
-    r.innerHTML = '<span>' + label + '</span><span>' + fmt(item.lineTotal) + '</span>';
+    var labelSpan = document.createElement('span'); labelSpan.textContent = label;
+    var amountSpan = document.createElement('span'); amountSpan.textContent = fmt(item.lineTotal);
+    r.appendChild(labelSpan); r.appendChild(amountSpan);
     orderCard.appendChild(r);
   });
 

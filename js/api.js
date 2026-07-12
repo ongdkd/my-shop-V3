@@ -18,6 +18,7 @@
     window.SUPABASE_ANON_KEY.indexOf('YOUR_') === -1;
 
   var sb = null;
+  var _adminVerified = false;
   if (CONFIGURED) {
     sb = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
   } else {
@@ -58,6 +59,188 @@
     return s + '00';
   }
 
+  function spreadsheetIdFromUrl(url) {
+    var m = String(url || '').match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
+    return m ? m[1] : '';
+  }
+
+  function gvizRows(payload) {
+    if (!payload || !payload.table) throw new Error('Google Sheets ส่งข้อมูลกลับมาไม่ถูกต้อง');
+    var cols = payload.table.cols || [];
+    var rows = [cols.map(function (col) { return col.label || col.id || ''; })];
+    (payload.table.rows || []).forEach(function (sourceRow) {
+      rows.push(cols.map(function (_, i) {
+        var value = sourceRow.c && sourceRow.c[i];
+        if (!value) return '';
+        if (value.f !== null && value.f !== undefined) return value.f;
+        return value.v === null || value.v === undefined ? '' : value.v;
+      }));
+    });
+    return rows;
+  }
+
+  function headerKey(value) {
+    return String(value || '').trim().toLowerCase()
+      .replace(/[._\-\/\\]+/g, ' ')
+      .replace(/\s+/g, ' ');
+  }
+
+  function columnFinder(header) {
+    var normalized = header.map(headerKey);
+    return function (aliases, fallback) {
+      for (var i = 0; i < aliases.length; i++) {
+        var idx = normalized.indexOf(headerKey(aliases[i]));
+        if (idx !== -1) return idx;
+      }
+      return fallback;
+    };
+  }
+
+  function cell(row, idx) {
+    return idx >= 0 && idx < row.length ? String(row[idx] || '').trim() : '';
+  }
+
+  function legacyNumber(value, rowLabel, allowNull) {
+    value = String(value === null || value === undefined ? '' : value).trim();
+    if (value === '' && allowNull) return null;
+    var cleaned = value.replace(/[,฿¥\s]/g, '');
+    var n = Number(cleaned || 0);
+    if (!isFinite(n) || n < 0) throw new Error(rowLabel + ': ตัวเลขไม่ถูกต้อง ("' + value + '")');
+    return n;
+  }
+
+  function legacyDate(value) {
+    value = String(value || '').trim();
+    if (!value) return null;
+    var gv = value.match(/^Date\((\d{4}),(\d{1,2}),(\d{1,2})(?:,(\d{1,2}),(\d{1,2}),(\d{1,2}))?\)$/);
+    if (gv) {
+      return gv[1] + '-' + String(Number(gv[2]) + 1).padStart(2, '0') + '-' +
+        String(Number(gv[3])).padStart(2, '0') + 'T' +
+        String(Number(gv[4] || 0)).padStart(2, '0') + ':' +
+        String(Number(gv[5] || 0)).padStart(2, '0') + ':' +
+        String(Number(gv[6] || 0)).padStart(2, '0') + '+07:00';
+    }
+    var m = value.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+    if (m) {
+      var year = Number(m[3]);
+      if (year > 2400) year -= 543;
+      return year + '-' + String(Number(m[2])).padStart(2, '0') + '-' +
+        String(Number(m[1])).padStart(2, '0') + 'T' +
+        String(Number(m[4] || 0)).padStart(2, '0') + ':' +
+        String(Number(m[5] || 0)).padStart(2, '0') + ':' +
+        String(Number(m[6] || 0)).padStart(2, '0') + '+07:00';
+    }
+    var parsed = new Date(value);
+    return isNaN(parsed.getTime()) ? null : parsed.toISOString();
+  }
+
+  function fetchGoogleSheetRows(spreadsheetId, sheetName) {
+    return new Promise(function (resolve, reject) {
+      var callbackName = '__orderHubGviz' + Date.now() + Math.floor(Math.random() * 100000);
+      var script = document.createElement('script');
+      var done = false;
+      var timer = setTimeout(function () {
+        finish(new Error('โหลดชีต ' + sheetName + ' หมดเวลา — ตรวจสอบสิทธิ์แชร์ชีต'));
+      }, 20000);
+
+      function finish(error, rows) {
+        if (done) return;
+        done = true; clearTimeout(timer);
+        try { delete window[callbackName]; } catch (e) { window[callbackName] = undefined; }
+        if (script.parentNode) script.parentNode.removeChild(script);
+        if (error) reject(error); else resolve(rows);
+      }
+
+      window[callbackName] = function (payload) {
+        if (payload && payload.status === 'error') {
+          var details = payload.errors && payload.errors[0] && payload.errors[0].detailed_message;
+          finish(new Error(details || ('ไม่พบชีตชื่อ ' + sheetName + ' หรือยังไม่ได้เปิดสิทธิ์ดู')));
+          return;
+        }
+        try { finish(null, gvizRows(payload)); }
+        catch (e) { finish(e); }
+      };
+      script.onerror = function () {
+        finish(new Error('โหลดชีต ' + sheetName + ' ไม่ได้ — กรุณาแชร์เป็น “ทุกคนที่มีลิงก์ดูได้”'));
+      };
+      script.src = 'https://docs.google.com/spreadsheets/d/' + spreadsheetId +
+        '/gviz/tq?headers=1&sheet=' + encodeURIComponent(sheetName) +
+        '&tqx=' + encodeURIComponent('out:json;responseHandler:' + callbackName);
+      document.head.appendChild(script);
+    });
+  }
+
+  function legacyProducts(rows) {
+    if (!rows.length) throw new Error('ชีต Products ว่างเปล่า');
+    var find = columnFinder(rows[0]);
+    var c = {
+      code: find(['id', 'product id', 'code', 'barcode', 'รหัส', 'รหัสสินค้า'], 0),
+      name: find(['name', 'product', 'product name', 'สินค้า', 'ชื่อสินค้า'], 1),
+      image: find(['image', 'image url', 'รูป', 'รูปภาพ'], 2),
+      price: find(['price', 'full price', 'ราคา', 'ราคาเต็ม'], 3),
+      deposit: find(['deposit', 'มัดจำ'], 4),
+      remaining: find(['remaining', 'stock', 'คงเหลือ', 'จำนวนคงเหลือ'], 5),
+      status: find(['status', 'สถานะ'], 6),
+      yuan: find(['yuan', 'price yuan', 'หยวน', 'ราคาหยวน'], 7),
+      options: find(['options', 'option', 'ตัวเลือก'], 8)
+    };
+    var out = [], seen = {};
+    for (var i = 1; i < rows.length; i++) {
+      var row = rows[i], name = cell(row, c.name);
+      if (!name) continue;
+      var code = cell(row, c.code) || ('legacy-' + (i + 1));
+      if (seen[code]) throw new Error('Products แถว ' + (i + 1) + ': รหัสสินค้าซ้ำ ' + code);
+      seen[code] = true;
+      out.push({
+        code: code, name: name, image: cell(row, c.image),
+        price: legacyNumber(cell(row, c.price), 'Products แถว ' + (i + 1), false),
+        deposit: legacyNumber(cell(row, c.deposit), 'Products แถว ' + (i + 1), false),
+        remaining: legacyNumber(cell(row, c.remaining), 'Products แถว ' + (i + 1), true),
+        status: cell(row, c.status) || 'Open',
+        yuan: legacyNumber(cell(row, c.yuan), 'Products แถว ' + (i + 1), false),
+        options: cell(row, c.options)
+      });
+    }
+    return out;
+  }
+
+  function legacyOrders(rows) {
+    if (!rows.length) return [];
+    var find = columnFinder(rows[0]);
+    var c = {
+      timestamp: find(['timestamp', 'date', 'วันที่', 'วันเวลา'], 0),
+      customer: find(['customer', 'customer name', 'ลูกค้า', 'ชื่อลูกค้า'], 1),
+      product: find(['product', 'product name', 'สินค้า', 'ชื่อสินค้า'], 2),
+      qty: find(['qty', 'quantity', 'จำนวน'], 3),
+      payType: find(['pay type', 'payment type', 'ประเภทการชำระ', 'ประเภท'], 4),
+      price: find(['price', 'ราคา'], 5), total: find(['total', 'รวม'], 6),
+      yuan: find(['yuan', 'หยวน'], 7), totalYuan: find(['total yuan', 'รวมหยวน'], 8),
+      fullPrice: find(['full price', 'ราคาเต็ม'], 9), totalFull: find(['total full', 'รวมราคาเต็ม'], 10),
+      remark: find(['remark', 'phone', 'หมายเหตุ', 'เบอร์', 'เบอร์โทร'], 11)
+    };
+    var out = [];
+    for (var i = 1; i < rows.length; i++) {
+      var row = rows[i], customer = cell(row, c.customer), product = cell(row, c.product);
+      if (!customer && !product) continue;
+      var imported = {
+        customer: customer, product: product,
+        qty: legacyNumber(cell(row, c.qty) || '1', 'Orders แถว ' + (i + 1), false),
+        pay_type: cell(row, c.payType) || 'Full Price',
+        price: legacyNumber(cell(row, c.price), 'Orders แถว ' + (i + 1), false),
+        total: legacyNumber(cell(row, c.total), 'Orders แถว ' + (i + 1), false),
+        yuan: legacyNumber(cell(row, c.yuan), 'Orders แถว ' + (i + 1), false),
+        total_yuan: legacyNumber(cell(row, c.totalYuan), 'Orders แถว ' + (i + 1), false),
+        full_price: legacyNumber(cell(row, c.fullPrice), 'Orders แถว ' + (i + 1), false),
+        total_full: legacyNumber(cell(row, c.totalFull), 'Orders แถว ' + (i + 1), false),
+        remark: cell(row, c.remark)
+      };
+      var created = legacyDate(cell(row, c.timestamp));
+      if (created) imported.created_at = created;
+      out.push(imported);
+    }
+    return out;
+  }
+
   function requireSb() { if (!sb) throw new Error(NOT_CONFIGURED_MSG); }
 
   // "admin" → "admin@orderhub.local"; real e-mail addresses pass through
@@ -80,6 +263,13 @@
   async function requireAdmin() {
     var s = await getSession();
     if (!s) throw { __json: err('Unauthorised — กรุณาเข้าสู่ระบบใหม่') };
+    if (!_adminVerified) {
+      var check = await sb.rpc('is_admin');
+      if (check.error || check.data !== true) {
+        throw { __json: err('Forbidden — บัญชีนี้ไม่มีสิทธิ์ผู้ดูแลระบบ') };
+      }
+      _adminVerified = true;
+    }
     return s;
   }
 
@@ -92,21 +282,47 @@
   function listIdFromRow(rowIndex) { return _listRowMap[rowIndex] || null; }
 
   async function fetchLists() {
-    var r = await sb.from('order_lists').select('*').order('seq', { ascending: true });
+    var r = await sb.from('order_lists')
+      .select('id,seq,name,description,image,status,display,created_at')
+      .order('seq', { ascending: true });
     if (r.error) throw r.error;
     return r.data || [];
   }
 
   async function fetchProducts(listId) {
-    var r = await sb.from('products').select('*').eq('list_id', listId).order('seq', { ascending: true });
+    var r = await sb.from('products')
+      .select('id,seq,list_id,code,name,image,price,deposit,remaining,status,yuan,options')
+      .eq('list_id', listId)
+      .order('seq', { ascending: true });
     if (r.error) throw r.error;
     return r.data || [];
   }
 
   async function fetchOrders(listId) {
-    var r = await sb.from('orders').select('*').eq('list_id', listId).order('seq', { ascending: true });
+    var r = await sb.from('orders')
+      .select('id,seq,list_id,customer,product,qty,pay_type,price,total,yuan,total_yuan,full_price,total_full,remark,created_at')
+      .eq('list_id', listId)
+      .order('seq', { ascending: true });
     if (r.error) throw r.error;
     return r.data || [];
+  }
+
+  function mapOrder(r) {
+    return {
+      rowIndex: r.seq,
+      timestamp: r.created_at || '',
+      customer: r.customer || '',
+      product: r.product || '',
+      qty: num(r.qty),
+      payType: r.pay_type || '',
+      price: num(r.price),
+      total: num(r.total),
+      yuan: num(r.yuan),
+      totalYuan: num(r.total_yuan),
+      fullPrice: num(r.full_price),
+      totalFull: num(r.total_full),
+      remark: r.remark || ''
+    };
   }
 
   // ════════════════════════════════════════════════════════════
@@ -128,7 +344,14 @@
       password = String(password || '').trim();
       if (!username || !password) return { ok: false };
       var r = await sb.auth.signInWithPassword({ email: username, password: password });
-      return { ok: !r.error };
+      if (r.error) return { ok: false };
+      var adminCheck = await sb.rpc('is_admin');
+      if (adminCheck.error || adminCheck.data !== true) {
+        await sb.auth.signOut();
+        return { ok: false, message: 'บัญชีนี้ไม่มีสิทธิ์ผู้ดูแลระบบ' };
+      }
+      _adminVerified = true;
+      return { ok: true };
     },
 
     adminSetSessionToken: async function (username, password) {
@@ -259,8 +482,34 @@
       } catch (e) { return e.__json || err(e.message || e); }
     },
 
-    adminAddOrderList: async function () {
-      return err('โหมด "เชื่อมชีต" ใช้ไม่ได้ในเวอร์ชันเว็บ (ไม่มี Google Sheets แล้ว) — กรุณาใช้โหมด "✨ สร้างใหม่" แทนค่ะ');
+    adminAddOrderList: async function (spreadsheetUrl, status, desc, image, display, importName) {
+      try {
+        requireSb(); await requireAdmin();
+        var spreadsheetId = spreadsheetIdFromUrl(spreadsheetUrl);
+        if (!spreadsheetId) return err('URL Google Spreadsheet ไม่ถูกต้อง');
+        importName = String(importName || '').trim();
+        if (!importName) return err('กรุณากรอกชื่อรายการนำเข้า');
+
+        var sheets = await Promise.all([
+          fetchGoogleSheetRows(spreadsheetId, 'Products'),
+          fetchGoogleSheetRows(spreadsheetId, 'Orders')
+        ]);
+        var products = legacyProducts(sheets[0]);
+        var orders = legacyOrders(sheets[1]);
+        var imported = await sb.rpc('import_legacy_order_list', {
+          p_name: importName,
+          p_description: String(desc || '').trim(),
+          p_image: String(image || '').trim(),
+          p_status: String(status || 'Closed').trim(),
+          p_display: String(display || 'Show').trim(),
+          p_products: products,
+          p_orders: orders
+        });
+        if (imported.error) throw imported.error;
+        return J(imported.data);
+      } catch (e) {
+        return e.__json || err(e.message || e);
+      }
     },
 
     adminCreateNewOrderList: async function (name, desc, image, status) {
@@ -346,24 +595,32 @@
       try {
         requireSb(); await requireAdmin();
         var data = await fetchOrders(sheetId);
-        var orders = data.map(function (r, i) {
-          return {
-            rowIndex: i + 2,
-            timestamp: r.created_at || '',
-            customer: r.customer || '',
-            product: r.product || '',
-            qty: num(r.qty),
-            payType: r.pay_type || '',
-            price: num(r.price),
-            total: num(r.total),
-            yuan: num(r.yuan),
-            totalYuan: num(r.total_yuan),
-            fullPrice: num(r.full_price),
-            totalFull: num(r.total_full),
-            remark: r.remark || ''
-          };
-        });
+        var orders = data.map(mapOrder);
         return ok({ orders: orders });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
+    adminGetAllOrders: async function () {
+      try {
+        requireSb(); await requireAdmin();
+        var data = [], from = 0, pageSize = 1000, truncated = false;
+        while (true) {
+          var r = await sb.from('orders')
+            .select('id,seq,list_id,customer,product,qty,pay_type,price,total,yuan,total_yuan,full_price,total_full,remark,created_at,order_lists(name)')
+            .order('created_at', { ascending: false })
+            .range(from, from + pageSize - 1);
+          if (r.error) return err(r.error.message);
+          data = data.concat(r.data || []);
+          if (!r.data || r.data.length < pageSize) break;
+          from += pageSize;
+          if (from >= 10000) { truncated = true; break; }
+        }
+        var orders = data.map(function (row) {
+          var out = mapOrder(row);
+          out.shopName = row.order_lists && row.order_lists.name ? row.order_lists.name : '';
+          return out;
+        });
+        return ok({ orders: orders, truncated: truncated });
       } catch (e) { return e.__json || err(e.message || e); }
     },
 
@@ -416,10 +673,12 @@
     adminUpdateProduct: async function (sheetId, rowIndex, id, name, image, price, deposit, remaining, yuan, options) {
       try {
         requireSb(); await requireAdmin();
+        id = String(id || '').trim();
+        if (!id) return err('กรุณากรอกรหัสสินค้า');
         var pid = (_prodRowMap[sheetId] || {})[rowIndex];
         if (!pid) return err('ไม่พบสินค้า (กรุณารีเฟรชหน้า)');
         var r = await sb.from('products').update({
-          code: String(id || '').trim(),
+          code: id,
           name: String(name || ''),
           image: String(image || ''),
           price: num(price),
@@ -473,24 +732,22 @@
     adminGenerateCustomerSummary: async function (sheetId, customerName, startDate, endDate) {
       try {
         requireSb(); await requireAdmin();
-        var data = await fetchOrders(sheetId);
-        var start = startDate ? new Date(startDate) : null;
-        if (start) start.setHours(0, 0, 0, 0);
-        var end = endDate ? new Date(endDate) : null;
-        if (end) end.setHours(23, 59, 59, 999);
-
         var target = String(customerName || '').trim();
-        var customerOrders = data.filter(function (r) {
-          if (String(r.customer || '').trim() !== target) return false;
-          if (start || end) {
-            var d = new Date(r.created_at);
-            if (!isNaN(d.getTime())) {
-              if (start && d < start) return false;
-              if (end && d > end) return false;
-            }
-          }
-          return true;
-        });
+        var q = sb.from('orders')
+          .select('product,qty,total,total_yuan,full_price,total_full,created_at')
+          .eq('list_id', sheetId)
+          .eq('customer', target);
+        if (startDate) {
+          q = q.gte('created_at', new Date(startDate + 'T00:00:00').toISOString());
+        }
+        if (endDate) {
+          var exclusiveEnd = new Date(endDate + 'T00:00:00');
+          exclusiveEnd.setDate(exclusiveEnd.getDate() + 1);
+          q = q.lt('created_at', exclusiveEnd.toISOString());
+        }
+        var qr = await q.order('created_at', { ascending: true });
+        if (qr.error) return err(qr.error.message);
+        var customerOrders = qr.data || [];
 
         if (!customerOrders.length) return err('ไม่พบรายการสั่งซื้อในช่วงวันที่เลือก');
 
@@ -516,6 +773,7 @@
     // ── Image upload (Cloudinary, direct from browser) ───────
     adminUploadImage: async function (base64Image) {
       try {
+        requireSb(); await requireAdmin();
         var fd = new FormData();
         fd.append('file', base64Image);
         fd.append('upload_preset', window.CLOUDINARY_UPLOAD_PRESET);
@@ -526,7 +784,7 @@
         var json = await resp.json();
         if (!json.secure_url) return err(json.error ? json.error.message : 'Upload failed');
         return ok({ url: json.secure_url });
-      } catch (e) { return err(e.message || e); }
+      } catch (e) { return e.__json || err(e.message || e); }
     },
 
     // ════════════════════════════════════════════════════════
@@ -641,7 +899,9 @@
     adminGetStockProducts: async function () {
       try {
         requireSb(); await requireAdmin();
-        var r = await sb.from('stock_items').select('*').order('seq', { ascending: true });
+        var r = await sb.from('stock_items')
+          .select('id,seq,parent_id,code,name,image,price,deposit,yuan,stock,status')
+          .order('seq', { ascending: true });
         if (r.error) return err(r.error.message);
         var data = r.data || [];
 
@@ -788,21 +1048,38 @@
       try {
         requireSb(); await requireAdmin();
         var rows = [];
+        var wantedIds = [];
+        items.forEach(function (item) {
+          var parentId = _stockRowMap[item.parentRowIndex];
+          if (parentId && wantedIds.indexOf(parentId) === -1) wantedIds.push(parentId);
+          (item.childRowIndexes || []).forEach(function (ri) {
+            var childId = _stockRowMap[ri];
+            if (childId && wantedIds.indexOf(childId) === -1) wantedIds.push(childId);
+          });
+        });
+        if (!wantedIds.length) return err('ไม่มีสินค้าที่นำเข้าได้');
+        var all = await sb.from('stock_items')
+          .select('id,seq,parent_id,code,name,image,price,deposit,yuan,stock,status')
+          .in('id', wantedIds);
+        if (all.error) return err(all.error.message);
+        var byId = {};
+        (all.data || []).forEach(function (row) { byId[row.id] = row; });
+
         for (var i = 0; i < items.length; i++) {
           var item = items[i];
           var pid = _stockRowMap[item.parentRowIndex];
           if (!pid) continue;
-          var pr = await sb.from('stock_items').select('*').eq('id', pid).single();
-          if (pr.error || !pr.data || !pr.data.name) continue;
-          var p = pr.data;
+          var p = byId[pid];
+          if (!p || !p.name) continue;
 
           var kidIds = (item.childRowIndexes || [])
             .map(function (ri) { return _stockRowMap[ri]; })
             .filter(Boolean);
           var kids = [];
           if (kidIds.length) {
-            var kr = await sb.from('stock_items').select('*').in('id', kidIds).order('seq');
-            if (!kr.error && kr.data) kids = kr.data.filter(function (k) { return k.name; });
+            kids = kidIds.map(function (id) { return byId[id]; })
+              .filter(function (k) { return k && k.name; })
+              .sort(function (a, b) { return Number(a.seq) - Number(b.seq); });
           }
 
           if (!kids.length) {
@@ -841,7 +1118,10 @@
   };
 
   window.__api = API;
-  window.__sbSignOut = function () { return sb ? sb.auth.signOut() : Promise.resolve(); };
+  window.__sbSignOut = function () {
+    _adminVerified = false;
+    return sb ? sb.auth.signOut() : Promise.resolve();
+  };
 
   // ════════════════════════════════════════════════════════════
   // google.script.run emulation
