@@ -14,7 +14,7 @@ window.SUPABASE_ANON_KEY = 'sb_publishable_UF-JWpzyM3EWLRzR-2R12g_fxfBV10m';
 
 // Username login: typing "admin" signs in as "admin" + this domain.
 // Create the matching user in Supabase Auth, e.g. admin@orderhub.local
-window.ADMIN_USERNAME_DOMAIN = '@orderhub.local';
+window.ADMIN_USERNAME_DOMAIN = '@kagashop.admin';
 
 // Cloudinary unsigned upload (same values as the old Apps Script version)
 window.CLOUDINARY_CLOUD_NAME    = 'dk5f1v2ro';
