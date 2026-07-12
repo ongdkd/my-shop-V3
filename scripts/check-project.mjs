@@ -13,10 +13,15 @@ assert.ok(storefront.includes('function escapeHtml(value)'), 'storefront must es
 assert.ok(storefront.includes('el.textContent = String(text'), 'toast messages must render as text');
 
 const api = await readFile(new URL('../js/api.js', import.meta.url), 'utf8');
+const config = await readFile(new URL('../js/config.js', import.meta.url), 'utf8');
 assert.ok(api.includes('function spreadsheetIdFromUrl(url)'), 'Google Sheet URLs must be parsed safely');
-assert.ok(api.includes("fetchGoogleSheetRows(spreadsheetId, 'Products')"), 'legacy product import must be enabled');
-assert.ok(api.includes("fetchGoogleSheetRows(spreadsheetId, 'Orders')"), 'legacy order import must be enabled');
+assert.ok(api.includes('function fetchGoogleSpreadsheet(spreadsheetId)'), 'official Google Sheets API import must be enabled');
+assert.ok(api.includes("['ranges', 'Products']"), 'legacy product range must be requested');
+assert.ok(api.includes("['ranges', 'Orders']"), 'legacy order range must be requested');
+assert.ok(api.includes('var importName = spreadsheet.title'), 'import name must come from spreadsheet metadata');
+assert.ok(config.includes('window.GOOGLE_SHEETS_API_KEY'), 'Google Sheets API key setting must exist');
 assert.ok(api.includes("sb.rpc('import_legacy_order_list'"), 'legacy imports must use the atomic database transaction');
 assert.ok(schema.includes('create or replace function public.import_legacy_order_list'), 'legacy import RPC must exist');
+assert.ok(schema.includes("notify pgrst, 'reload schema'"), 'schema changes must refresh the PostgREST cache');
 
 console.log('Project safety checks passed.');

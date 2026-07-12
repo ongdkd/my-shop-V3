@@ -1948,17 +1948,6 @@ function openCreateOrderListModal() {
   urlInput.placeholder = 'https://docs.google.com/spreadsheets/d/...';
   urlInput.style.cssText = 'width:100%;box-sizing:border-box;';
 
-  var importNameWrap = document.createElement('div');
-  importNameWrap.style.cssText = 'margin-top:10px;';
-  var importNameLabel = document.createElement('label');
-  importNameLabel.textContent = 'ชื่อรายการที่จะสร้างในระบบ *';
-  importNameLabel.style.cssText = 'display:block;font-size:0.82rem;font-weight:600;color:var(--text-2);margin-bottom:6px;';
-  var importNameInput = document.createElement('input');
-  importNameInput.id = 'cImportName'; importNameInput.type = 'text';
-  importNameInput.placeholder = 'เช่น ออเดอร์เก่า รอบเดือน มิ.ย. 2568';
-  importNameInput.style.cssText = 'width:100%;box-sizing:border-box;';
-  importNameWrap.appendChild(importNameLabel); importNameWrap.appendChild(importNameInput);
-
   var nameInput = document.createElement('input');
   nameInput.id = 'cNewName'; nameInput.type = 'text';
   nameInput.placeholder = 'เช่น รอบพรีออเดอร์ มิ.ย. 2568';
@@ -1966,7 +1955,7 @@ function openCreateOrderListModal() {
 
   var warn = document.createElement('div');
   warn.style.cssText = 'background:var(--warning-light);border:1.5px solid var(--warning);border-radius:var(--radius-sm);padding:8px 12px;font-size:0.76rem;color:#7A5000;margin-top:6px;';
-  warn.innerHTML = '⚠️ ชีตต้องแชร์เป็น <strong>ทุกคนที่มีลิงก์ดูได้</strong> และมีแท็บชื่อ <strong>Products</strong> กับ <strong>Orders</strong> ระบบจะคัดลอกข้อมูลเข้า Supabase เพียงครั้งเดียว';
+  warn.innerHTML = '⚠️ ชีตต้องแชร์เป็น <strong>ทุกคนที่มีลิงก์ดูได้</strong> และมีแท็บชื่อ <strong>Products</strong> กับ <strong>Orders</strong> ชื่อรายการจะใช้ชื่อไฟล์ Spreadsheet โดยอัตโนมัติ';
 
   var info = document.createElement('div');
   info.style.cssText = 'background:#f0efff;border:1.5px solid #c4c0f7;border-radius:var(--radius-sm);padding:8px 12px;font-size:0.76rem;color:#4A4190;margin-top:6px;display:none;';
@@ -1976,7 +1965,6 @@ function openCreateOrderListModal() {
   f1.style.marginBottom = '0';
   f1.appendChild(urlLabelRow);
   f1.appendChild(urlInput);
-  f1.appendChild(importNameWrap);
   f1.appendChild(nameInput);
   f1.appendChild(warn);
   f1.appendChild(info);
@@ -2012,7 +2000,6 @@ function openCreateOrderListModal() {
 
     urlLabel.textContent = isCreate ? 'ชื่อรายการสั่งซื้อ *' : 'URL Spreadsheet *';
     urlInput.style.display  = isCreate ? 'none' : 'block';
-    importNameWrap.style.display = isCreate ? 'none' : 'block';
     nameInput.style.display = isCreate ? 'block' : 'none';
     warn.style.display = isCreate ? 'none' : 'block';
     info.style.display = isCreate ? 'block' : 'none';
@@ -2059,9 +2046,7 @@ function openCreateOrderListModal() {
 
     } else {
       var url = el('cUrl').value.trim();
-      var importName = el('cImportName').value.trim();
       if (!url) { toast('กรุณากรอก URL Spreadsheet', 'error'); return; }
-      if (!importName) { toast('กรุณากรอกชื่อรายการที่จะนำเข้า', 'error'); return; }
       if (url.indexOf('docs.google.com/spreadsheets') === -1) { toast('URL ไม่ถูกต้อง', 'error'); return; }
       saveBtn.disabled = true; saveBtn.textContent = 'กำลังนำเข้าข้อมูล...';
       resolveImage('cImage', function(imgUrl) {
@@ -2072,7 +2057,7 @@ function openCreateOrderListModal() {
               var res = JSON.parse(r);
               if (res.status === 'Success') {
                 closeModal();
-                toast('นำเข้าสำเร็จ: สินค้า ' + res.products + ' / ออเดอร์ ' + res.orders + ' รายการ', 'success');
+                toast('นำเข้า "' + res.name + '" สำเร็จ: สินค้า ' + res.products + ' / ออเดอร์ ' + res.orders + ' รายการ', 'success');
                 loadAllLists(renderOrderLists);
               } else { toast(res.message || 'เกิดข้อผิดพลาด', 'error'); }
             } catch(e) { toast('เกิดข้อผิดพลาด', 'error'); }
@@ -2081,7 +2066,7 @@ function openCreateOrderListModal() {
             saveBtn.disabled = false; saveBtn.textContent = '📥 นำเข้าข้อมูล';
             toast('เกิดข้อผิดพลาด: ' + (e && e.message || ''), 'error');
           })
-          .adminAddOrderList(url, el('cStatus').value, el('cDesc').value.trim(), imgUrl || '', 'Show', importName);
+          .adminAddOrderList(url, el('cStatus').value, el('cDesc').value.trim(), imgUrl || '', 'Show');
       });
     }
 

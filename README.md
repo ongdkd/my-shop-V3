@@ -12,7 +12,7 @@
 | `admin.html` + `js/admin.js` | แผงแอดมิน (เดิม: Admin.html + AdminJS) |
 | `pos.html` + `js/pos.js` | โหมด POS + สแกนบาร์โค้ด (เดิม: POS.html) |
 | `js/api.js` | **หัวใจของระบบ** — จำลอง `google.script.run` และย้ายทุกฟังก์ชันจาก code.gs ไปใช้ Supabase |
-| `js/config.js` | ⚙️ ใส่ค่า Supabase URL + Key ที่นี่ |
+| `js/config.js` | ⚙️ ใส่ค่า Supabase URL/Key และ Google Sheets API key ที่นี่ |
 | `supabase/schema.sql` | สร้างตาราง + สิทธิ์ + ฟังก์ชันส่งออเดอร์ (รันครั้งเดียว) |
 
 ## วิธีติดตั้ง (ประมาณ 10 นาที)
@@ -78,10 +78,27 @@
 
 ## นำเข้ารายการเก่าจาก Google Sheets
 
+### ตั้งค่า Google Sheets API (ครั้งเดียว)
+
+1. เปิด [Google Cloud Console](https://console.cloud.google.com/) แล้วเลือกหรือสร้าง Project
+2. ไปที่ **APIs & Services → Library** แล้วเปิดใช้งาน **Google Sheets API**
+3. ไปที่ **APIs & Services → Credentials → Create credentials → API key**
+4. ตั้ง **Application restrictions → Websites** และเพิ่ม URL เว็บจริง เช่น `https://your-domain.example/*` รวมถึง `http://localhost:8000/*` สำหรับทดสอบ
+5. ตั้ง **API restrictions → Restrict key → Google Sheets API**
+6. ใส่ key ใน `js/config.js`:
+
+```js
+window.GOOGLE_SHEETS_API_KEY = 'AIza...';
+```
+
+API key ฝั่งเบราว์เซอร์สามารถมองเห็นได้ตามปกติ จึงต้องจำกัดทั้งโดเมนและ API ตามข้อ 4–5
+
+### วิธีนำเข้า
+
 1. เปิด Spreadsheet เก่า แล้วตั้งค่า **แชร์ → ทุกคนที่มีลิงก์ → ผู้มีสิทธิ์ดู**
 2. ตรวจสอบว่ามีแท็บชื่อ `Products` และ `Orders` (ตัวพิมพ์ตรงกัน)
 3. ในหน้า Admin กด **สร้างรายการใหม่ → 📥 นำเข้าชีตเก่า**
-4. วาง URL ของ Spreadsheet, ตั้งชื่อรายการ แล้วกด **นำเข้าข้อมูล**
+4. วาง URL ของ Spreadsheet แล้วกด **นำเข้าข้อมูล** — `ชื่อรายการ` จะใช้ชื่อไฟล์ Spreadsheet อัตโนมัติ
 5. ตรวจสอบจำนวนสินค้าและออเดอร์ที่นำเข้า ก่อนเปลี่ยนสถานะรายการจาก `Closed` เป็น `Open`
 
 ระบบอ่านชื่อคอลัมน์ทั้งภาษาไทยและอังกฤษ ถ้าหัวคอลัมน์ไม่ตรง จะใช้ลำดับเดิมดังนี้:
@@ -90,6 +107,12 @@
 - `Orders`: วันเวลา, ลูกค้า, สินค้า, จำนวน, ประเภทชำระ, ราคา, รวม, หยวน, รวมหยวน, ราคาเต็ม, รวมราคาเต็ม, หมายเหตุ/เบอร์โทร
 
 การนำเข้าเป็นการ **คัดลอก** ข้อมูลเข้า Supabase เท่านั้น หลังนำเข้าแล้วการแก้ไข Google Sheet จะไม่เปลี่ยนข้อมูลในเว็บ หากแถวใดไม่ถูกต้อง ระบบจะยกเลิกการนำเข้าทั้งรายการเพื่อไม่ให้เหลือข้อมูลบางส่วน
+
+ถ้าพบข้อความ `Could not find the function public.import_legacy_order_list ... in the schema cache` ให้เปิด Supabase → **SQL Editor**, รันไฟล์ `supabase/schema.sql` เวอร์ชันล่าสุดทั้งหมด แล้วรันคำสั่งนี้อีกครั้ง:
+
+```sql
+notify pgrst, 'reload schema';
+```
 
 ## หมายเหตุความปลอดภัย
 - `anon key` ใส่ในหน้าเว็บได้ ปลอดภัยเพราะสิทธิ์ถูกคุมด้วย Row Level Security:

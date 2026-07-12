@@ -432,3 +432,6 @@ $$;
 
 revoke all on function public.import_legacy_order_list(text, text, text, text, text, jsonb, jsonb) from public;
 grant execute on function public.import_legacy_order_list(text, text, text, text, text, jsonb, jsonb) to authenticated;
+
+-- Ask PostgREST to expose newly created/updated RPC functions immediately.
+notify pgrst, 'reload schema';

@@ -64,21 +64,6 @@
     return m ? m[1] : '';
   }
 
-  function gvizRows(payload) {
-    if (!payload || !payload.table) throw new Error('Google Sheets ส่งข้อมูลกลับมาไม่ถูกต้อง');
-    var cols = payload.table.cols || [];
-    var rows = [cols.map(function (col) { return col.label || col.id || ''; })];
-    (payload.table.rows || []).forEach(function (sourceRow) {
-      rows.push(cols.map(function (_, i) {
-        var value = sourceRow.c && sourceRow.c[i];
-        if (!value) return '';
-        if (value.f !== null && value.f !== undefined) return value.f;
-        return value.v === null || value.v === undefined ? '' : value.v;
-      }));
-    });
-    return rows;
-  }
-
   function headerKey(value) {
     return String(value || '').trim().toLowerCase()
       .replace(/[._\-\/\\]+/g, ' ')
@@ -134,40 +119,66 @@
     return isNaN(parsed.getTime()) ? null : parsed.toISOString();
   }
 
-  function fetchGoogleSheetRows(spreadsheetId, sheetName) {
-    return new Promise(function (resolve, reject) {
-      var callbackName = '__orderHubGviz' + Date.now() + Math.floor(Math.random() * 100000);
-      var script = document.createElement('script');
-      var done = false;
-      var timer = setTimeout(function () {
-        finish(new Error('โหลดชีต ' + sheetName + ' หมดเวลา — ตรวจสอบสิทธิ์แชร์ชีต'));
-      }, 20000);
+  function googleSheetsApiKey() {
+    var key = String(window.GOOGLE_SHEETS_API_KEY || '').trim();
+    if (!key || key.indexOf('YOUR_') !== -1) {
+      throw new Error('ยังไม่ได้ตั้งค่า Google Sheets API key — กรุณาใส่ GOOGLE_SHEETS_API_KEY ใน js/config.js');
+    }
+    return key;
+  }
 
-      function finish(error, rows) {
-        if (done) return;
-        done = true; clearTimeout(timer);
-        try { delete window[callbackName]; } catch (e) { window[callbackName] = undefined; }
-        if (script.parentNode) script.parentNode.removeChild(script);
-        if (error) reject(error); else resolve(rows);
+  async function googleSheetsRequest(path, params) {
+    params = params || [];
+    params.push(['key', googleSheetsApiKey()]);
+    var query = params.map(function (pair) {
+      return encodeURIComponent(pair[0]) + '=' + encodeURIComponent(pair[1]);
+    }).join('&');
+    var response;
+    try {
+      response = await fetch('https://sheets.googleapis.com/v4/' + path + '?' + query, { credentials: 'omit' });
+    } catch (e) {
+      throw new Error('เชื่อมต่อ Google Sheets API ไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตและข้อจำกัด API key');
+    }
+    var payload = null;
+    try { payload = await response.json(); } catch (e2) { payload = null; }
+    if (!response.ok) {
+      var message = payload && payload.error && payload.error.message;
+      if (response.status === 403) {
+        message = 'Google Sheets API ปฏิเสธคำขอ — ตรวจสอบว่าเปิด API, จำกัด key ให้ตรงโดเมน และแชร์ชีตเป็น “ทุกคนที่มีลิงก์ดูได้”';
+      } else if (response.status === 404) {
+        message = 'ไม่พบ Spreadsheet หรือบัญชีนี้ไม่มีสิทธิ์ดู';
       }
+      throw new Error(message || ('Google Sheets API error ' + response.status));
+    }
+    return payload || {};
+  }
 
-      window[callbackName] = function (payload) {
-        if (payload && payload.status === 'error') {
-          var details = payload.errors && payload.errors[0] && payload.errors[0].detailed_message;
-          finish(new Error(details || ('ไม่พบชีตชื่อ ' + sheetName + ' หรือยังไม่ได้เปิดสิทธิ์ดู')));
-          return;
-        }
-        try { finish(null, gvizRows(payload)); }
-        catch (e) { finish(e); }
-      };
-      script.onerror = function () {
-        finish(new Error('โหลดชีต ' + sheetName + ' ไม่ได้ — กรุณาแชร์เป็น “ทุกคนที่มีลิงก์ดูได้”'));
-      };
-      script.src = 'https://docs.google.com/spreadsheets/d/' + spreadsheetId +
-        '/gviz/tq?headers=1&sheet=' + encodeURIComponent(sheetName) +
-        '&tqx=' + encodeURIComponent('out:json;responseHandler:' + callbackName);
-      document.head.appendChild(script);
+  async function fetchGoogleSpreadsheet(spreadsheetId) {
+    var encodedId = encodeURIComponent(spreadsheetId);
+    var responses = await Promise.all([
+      googleSheetsRequest('spreadsheets/' + encodedId, [
+        ['fields', 'properties.title,sheets.properties.title']
+      ]),
+      googleSheetsRequest('spreadsheets/' + encodedId + '/values:batchGet', [
+        ['ranges', 'Products'],
+        ['ranges', 'Orders'],
+        ['majorDimension', 'ROWS'],
+        ['valueRenderOption', 'FORMATTED_VALUE']
+      ])
+    ]);
+    var metadata = responses[0], values = responses[1];
+    var titles = (metadata.sheets || []).map(function (sheet) {
+      return sheet && sheet.properties ? sheet.properties.title : '';
     });
+    if (titles.indexOf('Products') === -1 || titles.indexOf('Orders') === -1) {
+      throw new Error('Spreadsheet ต้องมีแท็บชื่อ Products และ Orders (ตัวพิมพ์ต้องตรงกัน)');
+    }
+    var valueRanges = values.valueRanges || [];
+    return {
+      title: String(metadata.properties && metadata.properties.title || '').trim(),
+      products: valueRanges[0] && valueRanges[0].values ? valueRanges[0].values : [],
+      orders: valueRanges[1] && valueRanges[1].values ? valueRanges[1].values : []
+    };
   }
 
   function legacyProducts(rows) {
@@ -482,20 +493,16 @@
       } catch (e) { return e.__json || err(e.message || e); }
     },
 
-    adminAddOrderList: async function (spreadsheetUrl, status, desc, image, display, importName) {
+    adminAddOrderList: async function (spreadsheetUrl, status, desc, image, display) {
       try {
         requireSb(); await requireAdmin();
         var spreadsheetId = spreadsheetIdFromUrl(spreadsheetUrl);
         if (!spreadsheetId) return err('URL Google Spreadsheet ไม่ถูกต้อง');
-        importName = String(importName || '').trim();
-        if (!importName) return err('กรุณากรอกชื่อรายการนำเข้า');
-
-        var sheets = await Promise.all([
-          fetchGoogleSheetRows(spreadsheetId, 'Products'),
-          fetchGoogleSheetRows(spreadsheetId, 'Orders')
-        ]);
-        var products = legacyProducts(sheets[0]);
-        var orders = legacyOrders(sheets[1]);
+        var spreadsheet = await fetchGoogleSpreadsheet(spreadsheetId);
+        var importName = spreadsheet.title;
+        if (!importName) return err('Google Sheets API ไม่ได้ส่งชื่อ Spreadsheet กลับมา');
+        var products = legacyProducts(spreadsheet.products);
+        var orders = legacyOrders(spreadsheet.orders);
         var imported = await sb.rpc('import_legacy_order_list', {
           p_name: importName,
           p_description: String(desc || '').trim(),
@@ -505,7 +512,13 @@
           p_products: products,
           p_orders: orders
         });
-        if (imported.error) throw imported.error;
+        if (imported.error) {
+          var importError = String(imported.error.message || '');
+          if (imported.error.code === 'PGRST202' || importError.indexOf('import_legacy_order_list') !== -1) {
+            return err('Supabase ยังไม่ได้ติดตั้งฟังก์ชันนำเข้า — เปิด SQL Editor แล้วรันไฟล์ supabase/schema.sql เวอร์ชันล่าสุดทั้งหมด จากนั้นลองใหม่');
+          }
+          throw imported.error;
+        }
         return J(imported.data);
       } catch (e) {
         return e.__json || err(e.message || e);

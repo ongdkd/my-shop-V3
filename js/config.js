@@ -19,3 +19,9 @@ window.ADMIN_USERNAME_DOMAIN = '@kagashop.admin';
 // Cloudinary unsigned upload (same values as the old Apps Script version)
 window.CLOUDINARY_CLOUD_NAME    = 'dk5f1v2ro';
 window.CLOUDINARY_UPLOAD_PRESET = 'gas_cover_img';
+
+// Google Sheets API v4 browser key — used by the legacy spreadsheet importer.
+// Enable "Google Sheets API" in Google Cloud, then restrict this key to:
+//   * Application restriction: Websites (your production URL + localhost)
+//   * API restriction: Google Sheets API only
+window.GOOGLE_SHEETS_API_KEY = 'AIzaSyD1w0eSRpVvVqZxYJ-o-ubz9ahb8elyapw';
