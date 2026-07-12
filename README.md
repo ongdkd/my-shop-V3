@@ -80,3 +80,30 @@
 - `anon key` ใส่ในหน้าเว็บได้ ปลอดภัยเพราะสิทธิ์ถูกคุมด้วย Row Level Security:
   ลูกค้า (ไม่ล็อกอิน) อ่านรายการ/สินค้า + ส่งออเดอร์ได้เท่านั้น — แก้ไขข้อมูลต้องล็อกอินแอดมิน
 - อย่าเอา `service_role` key มาใส่ใน config.js เด็ดขาด
+
+## Security migration (required after this update)
+
+Run `supabase/schema.sql` again in the Supabase SQL Editor. The schema now uses
+an explicit `admin_users` allowlist instead of treating every authenticated user
+as an administrator. The configured username `admin` maps to the seeded account
+`admin@kagashop.admin`.
+
+If your administrator signs in with a different email, add it from the SQL
+Editor before signing in:
+
+```sql
+insert into public.admin_users(email)
+values ('your-admin@example.com')
+on conflict do nothing;
+```
+
+Keep public email sign-up disabled unless the application needs customer
+accounts. Anonymous order submission is validated in the database, but a
+production deployment should still place CAPTCHA/rate limiting in front of the
+public `submit_order` call.
+
+For local static checks (Node.js required):
+
+```bash
+npm run check
+```

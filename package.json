@@ -1,0 +1,9 @@
+{
+  "name": "order-hub-web",
+  "private": true,
+  "scripts": {
+    "syntax": "node --check js/api.js && node --check js/index.js && node --check js/pos.js && node --check js/admin.js",
+    "test": "node scripts/check-project.mjs",
+    "check": "npm run syntax && npm test"
+  }
+}

@@ -119,6 +119,14 @@ window.playBeep = function() {
 };
 function fmt(n) { return new Intl.NumberFormat('th-TH',{style:'currency',currency:'THB'}).format(Number(n)||0); }
 function el(id) { return document.getElementById(id); }
+function escapeHtml(value) {
+  return String(value === null || value === undefined ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 function setContent(html) { el('content').innerHTML = html; }
 function setLoading() {
   var d = document.createElement('div');
@@ -1121,7 +1129,7 @@ function confirmDeleteOrderList(item) {
   var icon = document.createElement('div'); icon.style.cssText = 'font-size:2.5rem;margin-bottom:12px;'; icon.innerHTML = '&#x26A0;&#xFE0F;';
   var title2 = document.createElement('div'); title2.style.cssText = 'font-weight:700;font-size:0.95rem;margin-bottom:8px;'; title2.textContent = 'ยืนยันการลบ?';
   var msg = document.createElement('div'); msg.style.cssText = 'font-size:0.85rem;color:var(--text-2);';
-  msg.innerHTML = 'ลบ <strong>' + item.name + '</strong> ออกจากระบบ';
+  msg.innerHTML = 'ลบ <strong>' + escapeHtml(item.name) + '</strong> ออกจากระบบ';
   var note = document.createElement('div'); note.style.cssText = 'font-size:0.78rem;color:var(--error);margin-top:6px;'; note.textContent = '⚠️ สินค้าและคำสั่งซื้อทั้งหมดในรายการนี้จะถูกลบถาวรด้วย';
   wrap.appendChild(icon); wrap.appendChild(title2); wrap.appendChild(msg); wrap.appendChild(note);
   el('modalBody').appendChild(wrap);
@@ -1204,29 +1212,24 @@ function renderOrdersPanel() {
 function loadAllOrders() {
   var holder = el('ordersTable'); if (!holder) return;
   holder.innerHTML = ''; holder.appendChild(makeSpinner());
-  
-  var allCombinedOrders = [];
-  var loadedCount = 0;
-  var totalToLoad = allLists.length;
-
-  if (totalToLoad === 0) { renderOrdersTable([], holder, true); return; }
-
-  allLists.forEach(function(list) {
-    google.script.run.withSuccessHandler(function(r) {
-      loadedCount++;
-      try {
-        var res = JSON.parse(r);
-        if (res.status === 'Success') {
-          // Tag each order with the shop name
-          res.orders.forEach(function(o) { o.shopName = list.name; allCombinedOrders.push(o); });
-        }
-      } catch(e) {}
-      if (loadedCount === totalToLoad) renderOrdersTable(allCombinedOrders, holder, true);
-    }).withFailureHandler(function() {
-      loadedCount++;
-      if (loadedCount === totalToLoad) renderOrdersTable(allCombinedOrders, holder, true);
-    }).adminGetOrders(list.sheetId);
-  });
+  google.script.run.withSuccessHandler(function(r) {
+    try {
+      var res = JSON.parse(r);
+      if (res.status !== 'Success') {
+        holder.innerHTML = '';
+        holder.appendChild(div('state-empty', '&#x26A0;&#xFE0F; ' + escapeHtml(res.message)));
+        return;
+      }
+      if (res.truncated) toast('แสดงคำสั่งซื้อล่าสุด 10,000 รายการ', 'error');
+      renderOrdersTable(res.orders || [], holder, true);
+    } catch(e) {
+      holder.innerHTML = '';
+      holder.appendChild(div('state-empty', 'เกิดข้อผิดพลาด'));
+    }
+  }).withFailureHandler(function() {
+    holder.innerHTML = '';
+    holder.appendChild(div('state-empty', 'ไม่สามารถโหลดคำสั่งซื้อได้'));
+  }).adminGetAllOrders();
 }
 
 function loadOrders(sheetId) {
@@ -1235,7 +1238,7 @@ function loadOrders(sheetId) {
   google.script.run.withSuccessHandler(function(r) {
     try {
       var res = JSON.parse(r);
-      if (res.status !== 'Success') { holder.innerHTML = ''; holder.appendChild(div('state-empty', '&#x26A0;&#xFE0F; ' + res.message)); return; }
+      if (res.status !== 'Success') { holder.innerHTML = ''; holder.appendChild(div('state-empty', '&#x26A0;&#xFE0F; ' + escapeHtml(res.message))); return; }
       renderOrdersTable(res.orders, holder, false);
     } catch(e) { holder.innerHTML = ''; holder.appendChild(div('state-empty', 'เกิดข้อผิดพลาด')); }
   }).adminGetOrders(sheetId);
@@ -1346,7 +1349,7 @@ function renderOrdersTable(orders, holder, isAllView) {
       {text: o.customer, style: 'font-weight:600;'},
       {text: o.product, style: ''},
       {text: o.qty, style: 'text-align:center;'},
-      {html: '<span class="badge ' + (isDeposit ? 'badge-deposit' : 'badge-full') + '">' + o.payType + '</span>', style: 'text-align:center;'},
+      {html: '<span class="badge ' + (isDeposit ? 'badge-deposit' : 'badge-full') + '">' + escapeHtml(o.payType) + '</span>', style: 'text-align:center;'},
       {text: fmt(o.price), style: 'text-align:center;'},
       {text: fmt(o.total), style: 'text-align:center;font-weight:700;color:var(--primary);'},
       {text: o.remark || '—', style: 'text-align:center;font-size:0.75rem;color:var(--text-3);'}
@@ -1430,7 +1433,7 @@ function loadProducts(sheetId) {
   google.script.run.withSuccessHandler(function(r) {
     try {
       var res = JSON.parse(r);
-      if (res.status !== 'Success') { holder.innerHTML = ''; holder.appendChild(div('state-empty', '&#x26A0;&#xFE0F; ' + res.message)); return; }
+      if (res.status !== 'Success') { holder.innerHTML = ''; holder.appendChild(div('state-empty', '&#x26A0;&#xFE0F; ' + escapeHtml(res.message))); return; }
       
       currentProductsCache = res.products; 
       renderProductsTable(currentProductsCache, sheetId, holder);
@@ -1698,7 +1701,7 @@ function confirmDeleteProduct(sheetId, rowIndex, name) {
   var icon = document.createElement('div'); icon.style.cssText = 'font-size:2.5rem;margin-bottom:12px;'; icon.innerHTML = '&#x26A0;&#xFE0F;';
   var t = document.createElement('div'); t.style.cssText = 'font-weight:700;font-size:0.95rem;margin-bottom:8px;'; t.textContent = 'ยืนยันการลบ?';
   var m = document.createElement('div'); m.style.cssText = 'font-size:0.85rem;color:var(--text-2);';
-  m.innerHTML = 'ลบ <strong>' + name + '</strong> ออกจากรายการสินค้า';
+  m.innerHTML = 'ลบ <strong>' + escapeHtml(name) + '</strong> ออกจากรายการสินค้า';
   wrap.appendChild(icon); wrap.appendChild(t); wrap.appendChild(m); el('modalBody').appendChild(wrap);
   openModal('&#x1F5D1; ลบสินค้า', '', function() {
     var saveBtn = el('modalSave'); saveBtn.disabled = true; saveBtn.textContent = 'กำลังลบ...';
@@ -1823,7 +1826,7 @@ function generateSummary() {
   google.script.run.withSuccessHandler(function(r) {
     try {
       var res = JSON.parse(r);
-      if (res.status !== 'Success') { el('summaryResult').innerHTML = ''; el('summaryResult').appendChild(div('state-empty', '&#x26A0;&#xFE0F; ' + res.message)); return; }
+      if (res.status !== 'Success') { el('summaryResult').innerHTML = ''; el('summaryResult').appendChild(div('state-empty', '&#x26A0;&#xFE0F; ' + escapeHtml(res.message))); return; }
       
       res.deliveryFee = fee;
       res.prodGetDate = prodGetDate;
@@ -1877,7 +1880,7 @@ function renderSummaryResult(res) {
   // --- RENDER UI ---
   var card = div('section-card');
   var hdr = div('section-card-header');
-  hdr.appendChild(div('section-card-title', '&#x1F9FE; ผลลัพธ์: ' + res.customerName));
+  hdr.appendChild(div('section-card-title', '&#x1F9FE; ผลลัพธ์: ' + escapeHtml(res.customerName)));
   hdr.appendChild(makeBtn('btn btn-ghost btn-sm', '&#x1F4CB; คัดลอก', function() {
     var ta = el('summaryText'); if (!ta) return; ta.select(); document.execCommand('copy'); toast('คัดลอกแล้ว!', 'success');
   }));
@@ -3785,7 +3788,7 @@ function openEditStockModal(prod) {
       childDiv.style.cssText = 'border:1.5px solid var(--primary-light);border-left:3px solid var(--primary);border-radius:10px;padding:10px 12px;background:var(--surface-2);display:flex;align-items:center;gap:10px;';
       if (child.image) { var ci = document.createElement('img'); ci.src = child.image; ci.style.cssText='width:32px;height:32px;object-fit:cover;border-radius:6px;flex-shrink:0;'; childDiv.appendChild(ci); }
       var cInfo = document.createElement('div'); cInfo.style.cssText = 'flex:1;min-width:0;';
-      cInfo.innerHTML = '<div style="font-weight:700;font-size:0.85rem;">' + child.name + '</div><div style="font-family:monospace;font-size:0.72rem;color:var(--primary);">' + (child.id||'—') + '</div>';
+      cInfo.innerHTML = '<div style="font-weight:700;font-size:0.85rem;">' + escapeHtml(child.name) + '</div><div style="font-family:monospace;font-size:0.72rem;color:var(--primary);">' + escapeHtml(child.id||'—') + '</div>';
       childDiv.appendChild(cInfo);
       var cEditBtn8 = makeBtn('btn-icon', SVG_EDIT); cEditBtn8.style.cssText='width:28px;height:28px;flex-shrink:0;';
       cEditBtn8.onclick = (function(c8,p8) { return function() { closeModal(); setTimeout(function(){ openEditStockChildModal(c8,p8); }, 100); }; })(child, prod);
@@ -3874,7 +3877,7 @@ function openAddStockChildModal(parent) {
   imgWrapA.appendChild(makeImageField('scaImage', '', 'รูปภาพตัวเลือก'));
   grid.appendChild(imgWrapA);
 
-  openModal('➕ เพิ่มตัวเลือก: ' + parent.name, '', function() {
+  openModal('➕ เพิ่มตัวเลือก: ' + escapeHtml(parent.name), '', function() {
     var name = el('scaName').value.trim(), id = el('scaId').value.trim();
     if (!name) { toast('กรุณากรอกชื่อตัวเลือก', 'error'); return; }
     stopBarcodeScanner();
@@ -3983,7 +3986,7 @@ function confirmDeleteStockProduct(prod) {
   var wrap = document.createElement('div'); wrap.style.cssText = 'text-align:center;padding:8px 0;';
   wrap.innerHTML = '<div style="font-size:2.5rem;margin-bottom:12px;">&#x26A0;&#xFE0F;</div>' +
     '<div style="font-weight:700;font-size:0.95rem;margin-bottom:8px;">ยืนยันการลบ?</div>' +
-    '<div style="font-size:0.85rem;color:var(--text-2);">ลบ <strong>' + prod.name + '</strong>' +
+    '<div style="font-size:0.85rem;color:var(--text-2);">ลบ <strong>' + escapeHtml(prod.name) + '</strong>' +
     (prod.children.length ? ' และ ' + prod.children.length + ' ตัวเลือก' : '') + '</div>';
   el('modalBody').appendChild(wrap);
   openModal('&#x1F5D1; ลบสินค้า', '', function() {
@@ -4178,7 +4181,7 @@ function loadRestockPreview() {
     area.innerHTML = '';
     try {
       var res = JSON.parse(r);
-      if (res.status !== 'Success') { area.appendChild(div('state-empty', '&#x26A0;&#xFE0F; ' + res.message)); return; }
+      if (res.status !== 'Success') { area.appendChild(div('state-empty', '&#x26A0;&#xFE0F; ' + escapeHtml(res.message))); return; }
       renderRestockPreview(res.rows, area);
     } catch(e) { area.appendChild(div('state-empty', 'เกิดข้อผิดพลาด')); }
   }).adminGetSummaryOrder(sheetId);
