@@ -1702,34 +1702,42 @@ function renderProductsTable(products, sheetId, holder) {
 }
 
 function saveAllStock() {
-  var inputs = document.querySelectorAll('.stock-input');
-  if (!inputs.length) return;
+  // Only send rows the user actually edited, in a single batched request
+  var changedInputs = document.querySelectorAll('.stock-input.changed');
+  if (!changedInputs.length) { toast('ยังไม่มีการเปลี่ยนแปลงสต็อก', 'success'); return; }
+
   var saveBtn = document.getElementById('saveAllBtnBar');
   if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'กำลังบันทึก...'; }
-  var total = inputs.length, done = 0, errors = 0;
-  for (var i = 0; i < inputs.length; i++) {
-    (function(inp) {
-      var row = parseInt(inp.getAttribute('data-row'), 10);
-      var sid = inp.getAttribute('data-shid');
-      var val = inp.value === '' ? '' : inp.value;
-      google.script.run.withSuccessHandler(function(r) {
-        done++;
-        try { var res = JSON.parse(r); if (res.status !== 'Success') errors++; } catch(e2) { errors++; }
-        if (done === total) {
-          if (saveBtn) { saveBtn.disabled = false; saveBtn.innerHTML = '&#x2713; บันทึกสต็อก'; }
-          var ok = errors === 0;
-          toast(ok ? 'บันทึกสต็อกเรียบร้อย' : 'บันทึกแล้ว แต่มีข้อผิดพลาด ' + errors + ' รายการ', ok ? 'success' : 'error');
-          if (ok) {
-            // Reset change indicators
-            _changedStockRows = {};
-            document.querySelectorAll('.stock-input.changed').forEach(function(el) { el.classList.remove('changed'); });
-            var lbl = document.getElementById('stockSaveCount');
-            if (lbl) { lbl.textContent = 'บันทึกแล้ว ✓'; lbl.className = 'save-count'; }
-          }
-        }
-      }).adminUpdateStock(sid, row, val);
-    })(inputs[i]);
+
+  var sid = changedInputs[0].getAttribute('data-shid');
+  var changes = [];
+  for (var i = 0; i < changedInputs.length; i++) {
+    changes.push({
+      rowIndex: parseInt(changedInputs[i].getAttribute('data-row'), 10),
+      remaining: changedInputs[i].value === '' ? '' : changedInputs[i].value
+    });
   }
+
+  function restoreBtn() {
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.innerHTML = '&#x2713; บันทึกสต็อก'; }
+  }
+
+  google.script.run.withSuccessHandler(function(r) {
+    restoreBtn();
+    try {
+      var res = JSON.parse(r);
+      if (res.status === 'Success') {
+        toast('บันทึกสต็อกเรียบร้อย (' + res.saved + ' รายการ)', 'success');
+        _changedStockRows = {};
+        document.querySelectorAll('.stock-input.changed').forEach(function(el) { el.classList.remove('changed'); });
+        var lbl = document.getElementById('stockSaveCount');
+        if (lbl) { lbl.textContent = 'บันทึกแล้ว ✓'; lbl.className = 'save-count'; }
+      } else { toast(res.message || 'เกิดข้อผิดพลาด', 'error'); }
+    } catch(e2) { toast('เกิดข้อผิดพลาด', 'error'); }
+  }).withFailureHandler(function() {
+    restoreBtn();
+    toast('บันทึกสต็อกไม่สำเร็จ', 'error');
+  }).adminUpdateStockBulk(sid, changes);
 }
 
 function toggleProductStatus(checkbox, rowIndex, shid, lbl) {
@@ -1835,10 +1843,7 @@ function renderSummaryPanel() {
       try {
         var res = JSON.parse(r);
         if (res.status === 'Success') {
-          var uniqueNames = {};
-          res.orders.forEach(function(o) { if(o.customer) uniqueNames[o.customer.trim()] = true; });
-          var nameArr = Object.keys(uniqueNames).sort();
-          
+          var nameArr = res.customers || [];
           custSel.innerHTML = '<option value="">-- เลือกลูกค้า (' + nameArr.length + ' คน) --</option>';
           nameArr.forEach(function(n) {
             var o = document.createElement('option'); o.value = n; o.textContent = n;
@@ -1846,7 +1851,7 @@ function renderSummaryPanel() {
           });
         } else { custSel.innerHTML = '<option value="">โหลดรายชื่อไม่สำเร็จ</option>'; }
       } catch(e) { custSel.innerHTML = '<option value="">เกิดข้อผิดพลาด</option>'; }
-    }).adminGetOrders(sid);
+    }).adminGetCustomers(sid);
   };
 
   var resultHolder = document.createElement('div'); resultHolder.id = 'summaryResult';

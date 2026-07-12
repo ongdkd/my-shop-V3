@@ -692,6 +692,22 @@
       } catch (e) { return e.__json || err(e.message || e); }
     },
 
+    // Distinct customer names for one list — the summary dropdown only
+    // needs names, not full order payloads.
+    adminGetCustomers: async function (sheetId) {
+      try {
+        requireSb(); await requireAdmin();
+        var r = await sb.from('orders').select('customer').eq('list_id', sheetId);
+        if (r.error) return err(r.error.message);
+        var seen = {};
+        (r.data || []).forEach(function (row) {
+          var name = String(row.customer || '').trim();
+          if (name) seen[name] = true;
+        });
+        return ok({ customers: Object.keys(seen).sort() });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
     adminGetAllOrders: async function () {
       try {
         requireSb(); await requireAdmin();
@@ -792,6 +808,36 @@
         var r = await sb.from('products').update({ remaining: numOrNull(newRemaining) }).eq('id', pid);
         if (r.error) return err(r.error.message);
         return ok({});
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
+    // Saves many stock values in one round trip (the old sheet code
+    // needed one write per cell). changes: [{rowIndex, remaining}]
+    adminUpdateStockBulk: async function (sheetId, changes) {
+      try {
+        requireSb(); await requireAdmin();
+        if (!changes || !changes.length) return ok({ saved: 0 });
+        var map = _prodRowMap[sheetId] || {};
+        var byId = {};
+        changes.forEach(function (c) {
+          var pid = map[c.rowIndex];
+          if (pid) byId[pid] = numOrNull(c.remaining);
+        });
+        var ids = Object.keys(byId);
+        if (!ids.length) return err('ไม่พบสินค้า (กรุณารีเฟรชหน้า)');
+
+        // Confirm the rows still exist so the upsert can never
+        // insert ghost products for stale ids.
+        var existing = await sb.from('products').select('id').in('id', ids);
+        if (existing.error) return err(existing.error.message);
+        var payload = (existing.data || []).map(function (row) {
+          return { id: row.id, list_id: sheetId, remaining: byId[row.id] };
+        });
+        if (!payload.length) return err('ไม่พบสินค้า (กรุณารีเฟรชหน้า)');
+
+        var r = await sb.from('products').upsert(payload, { onConflict: 'id' });
+        if (r.error) return err(r.error.message);
+        return ok({ saved: payload.length });
       } catch (e) { return e.__json || err(e.message || e); }
     },
 
