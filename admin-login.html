@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin Login — Order Hub</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&family=Sora:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --primary: #6C63FF;
+    --primary-light: #EEF0FF;
+    --primary-dark: #4B44C7;
+    --error: #FF4757;
+    --error-light: #FFF0F1;
+    --success: #00C896;
+    --success-light: #E8FBF5;
+    --warning: #FFB547;
+    --warning-light: #FFF8EE;
+    --bg: #F2F3FA;
+    --surface: #FFFFFF;
+    --text: #1A1D3A;
+    --text-2: #5A5F80;
+    --text-3: #9BA0C0;
+    --border: #E4E6F2;
+    --shadow-md: 0 4px 28px rgba(108,99,255,0.14);
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 20px;
+    --font: 'Noto Sans Thai', 'Sora', sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%;
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+  }
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background:
+      radial-gradient(ellipse 65% 55% at 15% 5%, rgba(108,99,255,0.13) 0%, transparent 65%),
+      radial-gradient(ellipse 50% 45% at 85% 95%, rgba(0,200,150,0.09) 0%, transparent 65%);
+    pointer-events: none; z-index: 0;
+  }
+  .page {
+    position: relative; z-index: 1;
+    display: flex; align-items: center; justify-content: center;
+    min-height: 100vh; padding: 24px;
+  }
+  .card {
+    background: var(--surface);
+    border-radius: var(--radius-lg);
+    border: 1.5px solid var(--border);
+    box-shadow: var(--shadow-md);
+    width: 100%; max-width: 420px; overflow: hidden;
+    animation: cardIn 0.35s cubic-bezier(0.22,1,0.36,1) both;
+  }
+  @keyframes cardIn {
+    from { opacity: 0; transform: translateY(18px) scale(0.98); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  .card-header {
+    background: var(--primary);
+    padding: 28px 32px 24px;
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    position: relative; overflow: hidden;
+  }
+  .card-header::before {
+    content: ''; position: absolute; top: -35px; right: -35px;
+    width: 130px; height: 130px; border-radius: 50%;
+    background: rgba(255,255,255,0.08);
+  }
+  .card-header::after {
+    content: ''; position: absolute; bottom: -25px; left: -25px;
+    width: 90px; height: 90px; border-radius: 50%;
+    background: rgba(255,255,255,0.06);
+  }
+  .logo-icon { font-size: 2.2rem; position: relative; z-index: 1; }
+  .card-title { color: #fff; font-size: 1.15rem; font-weight: 700; position: relative; z-index: 1; }
+  .card-subtitle { color: rgba(255,255,255,0.7); font-size: 0.78rem; position: relative; z-index: 1; }
+
+  .card-body { padding: 28px 32px 24px; }
+
+  .state { display: none; flex-direction: column; align-items: center; gap: 14px; text-align: center; }
+  .state.active { display: flex; }
+
+  .spinner {
+    width: 36px; height: 36px;
+    border: 3px solid var(--primary-light); border-top-color: var(--primary);
+    border-radius: 50%; animation: spin 0.75s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading-text { color: var(--text-2); font-size: 0.85rem; }
+
+  .form-title {
+    font-size: 0.95rem; font-weight: 700; color: var(--text);
+    text-align: center; width: 100%;
+  }
+  .form-sub {
+    font-size: 0.78rem; color: var(--text-3);
+    text-align: center; margin-top: -6px;
+  }
+
+  .field-wrap { width: 100%; display: flex; flex-direction: column; gap: 6px; }
+  .field-label { font-size: 0.78rem; font-weight: 600; color: var(--text-2); text-align: left; }
+
+  .pw-field-wrap { width: 100%; position: relative; }
+  .pw-input {
+    width: 100%; padding: 11px 44px 11px 14px;
+    font-size: 0.88rem; font-family: var(--font);
+    background: var(--bg); border: 1.5px solid var(--border);
+    border-radius: var(--radius-md); color: var(--text);
+    outline: none; transition: border-color 0.15s, box-shadow 0.15s;
+    letter-spacing: 0.04em;
+  }
+  .pw-input:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(108,99,255,0.12);
+    background: #fff;
+  }
+  .pw-input.error {
+    border-color: var(--error);
+    box-shadow: 0 0 0 3px rgba(255,71,87,0.1);
+  }
+  .text-input {
+    width: 100%; padding: 11px 14px;
+    font-size: 0.88rem; font-family: var(--font);
+    background: var(--bg); border: 1.5px solid var(--border);
+    border-radius: var(--radius-md); color: var(--text);
+    outline: none; transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .text-input:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(108,99,255,0.12);
+    background: #fff;
+  }
+  .text-input.error {
+    border-color: var(--error);
+    box-shadow: 0 0 0 3px rgba(255,71,87,0.1);
+  }
+  .pw-toggle {
+    position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+    background: none; border: none; cursor: pointer; color: var(--text-3);
+    padding: 4px; display: flex; align-items: center; transition: color 0.15s;
+  }
+  .pw-toggle:hover { color: var(--text-2); }
+
+  .err-msg {
+    display: none; align-items: center; gap: 6px; width: 100%;
+    padding: 9px 12px; background: var(--error-light);
+    border: 1px solid rgba(255,71,87,0.2); border-radius: var(--radius-sm);
+    color: var(--error); font-size: 0.78rem; font-weight: 600; text-align: left;
+  }
+  .err-msg.visible { display: flex; }
+
+  .attempts-badge { display: none; font-size: 0.72rem; color: var(--warning); font-weight: 600; }
+  .attempts-badge.visible { display: block; }
+
+  @keyframes shake {
+    0%,100% { transform: translateX(0); }
+    20%      { transform: translateX(-7px); }
+    40%      { transform: translateX(7px); }
+    60%      { transform: translateX(-5px); }
+    80%      { transform: translateX(4px); }
+  }
+  .shake { animation: shake 0.4s ease; }
+
+  .btn-enter {
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    width: 100%; padding: 12px 20px;
+    background: var(--primary); color: #fff; font-family: var(--font);
+    font-size: 0.88rem; font-weight: 700; border: none;
+    border-radius: var(--radius-md); cursor: pointer;
+    transition: background 0.15s, transform 0.1s, opacity 0.15s;
+  }
+  .btn-enter:hover:not(:disabled) { background: var(--primary-dark); transform: translateY(-1px); }
+  .btn-enter:active:not(:disabled) { transform: translateY(0); }
+  .btn-enter:disabled { opacity: 0.6; cursor: not-allowed; }
+
+  .btn-back {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 9px 18px; background: var(--bg); color: var(--text-2);
+    font-family: var(--font); font-size: 0.82rem; font-weight: 600;
+    border: 1.5px solid var(--border); border-radius: var(--radius-md);
+    cursor: pointer; text-decoration: none; transition: background 0.15s;
+  }
+  .btn-back:hover { background: var(--border); color: var(--text); }
+
+  .icon-circle {
+    width: 56px; height: 56px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.7rem; flex-shrink: 0;
+  }
+  .icon-circle.success { background: var(--success-light); }
+  .icon-circle.error   { background: var(--error-light); }
+
+  .state-title { font-size: 1rem; font-weight: 700; color: var(--text); }
+  .state-sub   { font-size: 0.8rem; color: var(--text-3); line-height: 1.6; }
+
+  .lockout-timer { font-size: 2rem; font-weight: 700; color: var(--error); font-variant-numeric: tabular-nums; }
+
+  .divider { width: 100%; height: 1.5px; background: var(--border); margin: 2px 0; }
+  .card-footer { padding: 0 32px 20px; text-align: center; font-size: 0.7rem; color: var(--text-3); }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="card">
+    <div class="card-header">
+      <div class="logo-icon">🛍️</div>
+      <div class="card-title">Order Hub Admin</div>
+      <div class="card-subtitle">ระบบจัดการรายการสั่งซื้อ</div>
+    </div>
+
+    <div class="card-body">
+
+      <!-- ① LOGIN FORM -->
+      <div class="state active" id="stateLogin">
+        <div class="form-title">🔑 เข้าสู่ระบบ Admin</div>
+        <div class="form-sub">กรอกอีเมลและรหัสผ่านเพื่อเข้าใช้งาน</div>
+
+        <div class="divider"></div>
+
+        <div class="field-wrap">
+          <div class="field-label">อีเมล (Email)</div>
+          <input class="text-input" type="text" id="usernameInput"
+            placeholder="กรอกอีเมล"
+            autocomplete="username" maxlength="128">
+        </div>
+
+        <div class="field-wrap">
+          <div class="field-label">รหัสผ่าน (Password)</div>
+          <div class="pw-field-wrap" id="pwFieldWrap">
+            <input class="pw-input" type="password" id="pwInput"
+              placeholder="กรอกรหัสผ่าน"
+              autocomplete="current-password" maxlength="128">
+            <button class="pw-toggle" id="pwToggle" type="button" tabindex="-1">
+              <svg id="eyeIcon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                <circle cx="12" cy="12" r="3"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="err-msg" id="errMsg">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="12" y1="8" x2="12" y2="12"/>
+            <line x1="12" y1="16" x2="12.01" y2="16"/>
+          </svg>
+          <span id="errText">ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง</span>
+        </div>
+
+        <div class="attempts-badge" id="attemptsBadge">
+          ⚠️ เหลืออีก <span id="attemptsLeft">3</span> ครั้ง
+        </div>
+
+        <button class="btn-enter" id="loginBtn">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+          </svg>
+          เข้าสู่ระบบ
+        </button>
+
+        <a class="btn-back" href="index.html">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+          กลับหน้าหลัก
+        </a>
+      </div>
+
+      <!-- ② VERIFYING -->
+      <div class="state" id="stateVerifying">
+        <div class="spinner"></div>
+        <div class="loading-text">กำลังตรวจสอบ…</div>
+      </div>
+
+      <!-- ③ LOCKED OUT -->
+      <div class="state" id="stateLocked">
+        <div class="icon-circle error">🔒</div>
+        <div class="state-title" style="color:var(--error);">ถูกล็อกชั่วคราว</div>
+        <div class="lockout-timer" id="lockTimer">60</div>
+        <div class="state-sub">กรอกรหัสผ่านผิดเกินกำหนด<br>กรุณารอสักครู่แล้วลองใหม่</div>
+        <a class="btn-back" href="index.html">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+          กลับหน้าหลัก
+        </a>
+      </div>
+
+      <!-- ④ SUCCESS -->
+      <div class="state" id="stateSuccess">
+        <div class="icon-circle success">✅</div>
+        <div class="state-title">เข้าสู่ระบบสำเร็จ</div>
+        <div class="state-sub">กำลังนำคุณไปยังหน้า Admin…</div>
+        <div class="spinner"></div>
+      </div>
+
+    </div>
+
+    <div class="card-footer">Order Hub • ระบบจัดการการสั่งซื้อ</div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="js/config.js"></script>
+<script src="js/api.js"></script>
+<script>
+  var ALL_STATES = ['stateLogin','stateVerifying','stateLocked','stateSuccess'];
+
+  function showState(id) {
+    ALL_STATES.forEach(function(s) { document.getElementById(s).classList.remove('active'); });
+    document.getElementById(id).classList.add('active');
+  }
+
+  var MAX_ATTEMPTS = 5;
+  var LOCKOUT_SECS = 60;
+  var attempts = 0;
+
+  function triggerLockout() {
+    showState('stateLocked');
+    var rem = LOCKOUT_SECS;
+    document.getElementById('lockTimer').textContent = rem;
+    var t = setInterval(function() {
+      rem--;
+      document.getElementById('lockTimer').textContent = rem;
+      if (rem <= 0) {
+        clearInterval(t);
+        attempts = 0;
+        document.getElementById('attemptsBadge').classList.remove('visible');
+        document.getElementById('pwInput').value = '';
+        document.getElementById('usernameInput').value = '';
+        setError(false);
+        showState('stateLogin');
+        setTimeout(function() { document.getElementById('usernameInput').focus(); }, 100);
+      }
+    }, 1000);
+  }
+
+  function setError(show, msg) {
+    var pw   = document.getElementById('pwInput');
+    var un   = document.getElementById('usernameInput');
+    var err  = document.getElementById('errMsg');
+    var txt  = document.getElementById('errText');
+    var wrap = document.getElementById('pwFieldWrap');
+    if (show) {
+      pw.classList.add('error'); un.classList.add('error');
+      txt.textContent = msg || 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง';
+      err.classList.add('visible');
+      wrap.classList.remove('shake');
+      void wrap.offsetWidth;
+      wrap.classList.add('shake');
+    } else {
+      pw.classList.remove('error'); un.classList.remove('error');
+      err.classList.remove('visible');
+    }
+  }
+
+  // Show/hide password
+  var pwVisible = false;
+  document.getElementById('pwToggle').onclick = function() {
+    pwVisible = !pwVisible;
+    document.getElementById('pwInput').type = pwVisible ? 'text' : 'password';
+    document.getElementById('eyeIcon').innerHTML = pwVisible
+      ? '<line x1="1" y1="1" x2="23" y2="23"/><path d="M10.94 6.08A6.93 6.93 0 0 1 12 6c7 0 11 6 11 6a18.6 18.6 0 0 1-2.42 3.06M9.9 9.91A3 3 0 1 0 14.12 14"/>'
+      : '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>';
+  };
+
+  function submitLogin() {
+    var username = document.getElementById('usernameInput').value.trim();
+    var pw = document.getElementById('pwInput').value.trim();
+    if (!username || !pw) {
+      setError(true, 'กรุณากรอกอีเมลและรหัสผ่าน');
+      return;
+    }
+
+    attempts++;
+    document.getElementById('loginBtn').disabled = true;
+    showState('stateVerifying');
+
+    google.script.run
+      .withSuccessHandler(function(result) {
+        if (result.ok) {
+          localStorage.setItem('_adminUser', username);
+          sessionStorage.setItem('_au', username);
+          showState('stateSuccess');
+          setTimeout(function() { window.location.href = 'admin.html'; }, 800);
+        } else {
+          showState('stateLogin');
+          document.getElementById('loginBtn').disabled = false;
+          setError(true, result.message || 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง');
+          var left = MAX_ATTEMPTS - attempts;
+          if (left <= 0) {
+            triggerLockout();
+          } else if (left <= 3) {
+            document.getElementById('attemptsLeft').textContent = left;
+            document.getElementById('attemptsBadge').classList.add('visible');
+          }
+          document.getElementById('pwInput').value = '';
+          document.getElementById('pwInput').focus();
+        }
+      })
+      .withFailureHandler(function() {
+        showState('stateLogin');
+        document.getElementById('loginBtn').disabled = false;
+        setError(true, 'เกิดข้อผิดพลาด กรุณาลองใหม่');
+      })
+      .adminVerifyLogin(username, pw);
+  }
+
+  document.getElementById('loginBtn').onclick = submitLogin;
+  document.getElementById('pwInput').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') submitLogin();
+    else setError(false);
+  });
+  document.getElementById('usernameInput').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') document.getElementById('pwInput').focus();
+    else setError(false);
+  });
+
+  // Already signed in (Supabase session persists) → skip login
+  if (window.__sb) {
+    window.__sb.auth.getSession().then(function(r) {
+      if (r && r.data && r.data.session) {
+        showState('stateSuccess');
+        setTimeout(function() { window.location.href = 'admin.html'; }, 400);
+      }
+    });
+  }
+
+  // Prefill remembered email
+  var _savedUser = localStorage.getItem('_adminUser');
+  if (_savedUser) {
+    document.getElementById('usernameInput').value = _savedUser;
+    setTimeout(function() { document.getElementById('pwInput').focus(); }, 200);
+  } else {
+    setTimeout(function() { document.getElementById('usernameInput').focus(); }, 200);
+  }
+</script>
+</body>
+</html>

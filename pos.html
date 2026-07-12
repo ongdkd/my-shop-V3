@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>POS Mode — Order Hub</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&family=Sora:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+<script>
+// URL params replace the old Apps Script template variables
+var __posQuery = new URLSearchParams(location.search);
+var POS_INIT_SHEET_ID  = __posQuery.get('sheetId')  || '';
+var POS_INIT_LIST_NAME = __posQuery.get('listName') || 'POS';
+var POS_INIT_AU        = __posQuery.get('au') || '';
+var POS_INIT_AP        = __posQuery.get('ap') || '';
+</script>
+<link rel="stylesheet" href="css/pos.css">
+</head>
+<body>
+
+<div id="pos-toast"></div>
+
+<!-- ════════════════════════════════ -->
+<!-- LOADING OVERLAY                  -->
+<!-- ════════════════════════════════ -->
+<div id="pos-loading">
+  <div class="pos-loading-box">
+    <div class="pos-loading-spinner"></div>
+    <div class="pos-loading-title" id="posLoadingTitle">กำลังโหลดสินค้า...</div>
+    <div class="pos-loading-sub" id="posLoadingSub">กรุณารอสักครู่</div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════ -->
+<!-- SCREEN 1 : POS (Product Picker) -->
+<!-- ════════════════════════════════ -->
+<div class="screen active" id="screen-pos">
+  <div class="pos-topbar">
+    <button class="pos-back-btn" id="posBackBtn" onclick="posGoBack()">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+    </button>
+    <div class="pos-topbar-center">
+      <div class="pos-topbar-title" id="posTitle">🖥️ POS — เลือกสินค้า</div>
+      <div class="pos-topbar-sub" id="posSub">เพิ่มสินค้าเข้าตะกร้า</div>
+    </div>
+  </div>
+
+  <div class="pos-search-bar">
+    <div class="pos-search-inner">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input type="text" id="posSearch" placeholder="ค้นหาสินค้า..." oninput="filterProducts(this.value)">
+    </div>
+  </div>
+  <div class="pos-scan-row">
+    <button class="pos-scan-btn" onclick="openBarcodeScanner()">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 5h2M7 5h1M12 5h2M17 5h2M3 10h2M7 10h5M15 10h2M19 10h2M3 15h2M7 15h1M12 15h5M3 19h2M7 19h1M12 19h2M17 19h2"/></svg>
+      สแกนบาร์โค้ด
+    </button>
+  </div>
+
+  <div class="pos-product-scroll">
+    <div class="pos-prod-grid" id="posProductGrid"></div>
+    <div class="pos-empty" id="posEmpty" style="display:none;">ไม่พบสินค้า</div>
+    <div style="height:88px;"></div>
+  </div>
+
+  <button class="pos-cart-fab" id="posCartFab" onclick="goToSummary()">
+    <div class="pos-cart-fab-left">
+      <span class="pos-cart-count" id="cartCount">0</span>
+      <span>ดูตะกร้าสินค้า</span>
+    </div>
+    <span class="pos-cart-total" id="cartTotal">฿0</span>
+  </button>
+</div>
+
+<!-- ════════════════════════════════ -->
+<!-- SCREEN 2 : ORDER SUMMARY        -->
+<!-- ════════════════════════════════ -->
+<div class="screen" id="screen-summary">
+  <div class="pos-topbar">
+    <button class="pos-back-btn" onclick="goScreen('pos','summary')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+    </button>
+    <div class="pos-topbar-center">
+      <div class="pos-topbar-title">📋 สรุปออเดอร์</div>
+      <div class="pos-topbar-sub" id="summarySubTitle"></div>
+    </div>
+  </div>
+  <div class="summary-scroll" id="summaryContent"></div>
+  <div class="sum-bottom-bar">
+    <button class="sum-confirm-btn" id="sumConfirmBtn" onclick="goToPayment()">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+      ยืนยันและชำระเงิน
+    </button>
+  </div>
+</div>
+
+<!-- ════════════════════════════════ -->
+<!-- SCREEN 3 : QR PAYMENT           -->
+<!-- ════════════════════════════════ -->
+<div class="screen" id="screen-payment">
+  <div class="pos-topbar">
+    <button class="pos-back-btn" onclick="goScreen('summary','payment')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+    </button>
+    <div class="pos-topbar-center">
+      <div class="pos-topbar-title">💳 ชำระเงิน</div>
+      <div class="pos-topbar-sub">สแกน QR เพื่อชำระ</div>
+    </div>
+  </div>
+  <div class="pay-scroll" id="paymentContent"></div>
+</div>
+
+<!-- ════════════════════════════════ -->
+<!-- QTY MODAL                        -->
+<!-- ════════════════════════════════ -->
+<div id="qty-modal" onclick="qtyModalBgClick(event)">
+  <div class="qty-modal-box">
+    <div class="qty-modal-handle"></div>
+    <div class="qty-modal-prod">
+      <div id="qtyModalImg"></div>
+      <div>
+        <div class="qty-modal-name" id="qtyModalName"></div>
+        <div class="qty-modal-price" id="qtyModalPrice"></div>
+      </div>
+    </div>
+    <div id="qtyOptionsSection" style="display:none;">
+      <div class="qty-option-label">เลือกตัวเลือก</div>
+      <div class="qty-options" id="qtyOptions"></div>
+    </div>
+    <div class="qty-stepper">
+      <button class="qty-step-btn" onclick="changeQty(-1)">−</button>
+      <div class="qty-num" id="qtyNum">1</div>
+      <button class="qty-step-btn" onclick="changeQty(1)">+</button>
+    </div>
+    <div class="qty-modal-actions">
+      <button class="qty-cancel-btn" onclick="closeQtyModal()">ยกเลิก</button>
+      <button class="qty-add-btn" id="qtyAddBtn" onclick="addToCart()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
+        เพิ่มเข้าตะกร้า
+      </button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="js/config.js"></script>
+<script src="js/api.js"></script>
+<script src="js/pos.js"></script>
+
+</body>
+</html>
