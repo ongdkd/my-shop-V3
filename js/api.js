@@ -478,10 +478,12 @@
         var rows = data.map(function (row, i) {
           var rowIndex = i + 2;
           _listRowMap[rowIndex] = row.id;
+          var sourceId = String(row.source_spreadsheet_id || '').trim();
           return {
             rowIndex: rowIndex,
-            url: '',
+            url: sourceId ? 'https://docs.google.com/spreadsheets/d/' + sourceId + '/edit' : '',
             sheetId: row.id,
+            sourceSpreadsheetId: sourceId,
             name: String(row.name || 'รายการสั่งซื้อ').trim(),
             desc: String(row.description || '').trim(),
             image: String(row.image || '').trim(),
@@ -519,10 +521,87 @@
           }
           throw imported.error;
         }
+        // Remember the source sheet so products can be re-synced later.
+        // Non-fatal: on an older schema (missing column) the sync button
+        // simply will not appear for this list.
+        var newListId = imported.data && imported.data.sheetId;
+        if (newListId) {
+          var saved = await sb.from('order_lists')
+            .update({ source_spreadsheet_id: spreadsheetId })
+            .eq('id', newListId);
+          if (saved.error) console.warn('[api] could not save source spreadsheet id:', saved.error.message);
+        }
         return J(imported.data);
       } catch (e) {
         return e.__json || err(e.message || e);
       }
+    },
+
+    // Re-reads the Products tab of the list's source spreadsheet.
+    // Matches by product code: updates existing rows, inserts new ones.
+    // Never deletes web products that disappeared from the sheet.
+    // Stock (remaining) is only overwritten when updateStock is true,
+    // because the web deducts stock in Supabase as customers order.
+    adminSyncProductsFromSheet: async function (rowIndex, updateStock) {
+      try {
+        requireSb(); await requireAdmin();
+        var listId = listIdFromRow(rowIndex);
+        if (!listId) return err('ไม่พบรายการ (กรุณารีเฟรชหน้า)');
+
+        var lr = await sb.from('order_lists').select('source_spreadsheet_id').eq('id', listId).single();
+        if (lr.error) return err(lr.error.message);
+        var spreadsheetId = String(lr.data.source_spreadsheet_id || '').trim();
+        if (!spreadsheetId) return err('รายการนี้ไม่ได้นำเข้าจาก Google Sheets จึงซิงก์ไม่ได้');
+
+        var spreadsheet = await fetchGoogleSpreadsheet(spreadsheetId);
+        var sheetProducts = legacyProducts(spreadsheet.products);
+
+        var existing = await fetchProducts(listId);
+        var byCode = {};
+        existing.forEach(function (p) { byCode[String(p.code || '').trim()] = p; });
+
+        function normStatus(s) {
+          var v = String(s || '').trim().toLowerCase();
+          return (v === 'closed' || v === 'close' || v === 'ปิด') ? 'Closed' : 'Open';
+        }
+        function normRemaining(v) {
+          return v === null || v === undefined || v === '' ? null : Number(v);
+        }
+
+        var inserts = [], updates = [];
+        sheetProducts.forEach(function (sp) {
+          var row = {
+            list_id: listId,
+            code: sp.code,
+            name: sp.name,
+            image: String(sp.image || ''),
+            price: num(sp.price),
+            deposit: num(sp.deposit),
+            yuan: num(sp.yuan),
+            options: String(sp.options || ''),
+            status: normStatus(sp.status)
+          };
+          var cur = byCode[String(sp.code || '').trim()];
+          if (!cur) {
+            row.remaining = normRemaining(sp.remaining);
+            inserts.push(row);
+          } else {
+            row.id = cur.id;
+            if (updateStock) row.remaining = normRemaining(sp.remaining);
+            updates.push(row);
+          }
+        });
+
+        if (inserts.length) {
+          var ri = await sb.from('products').insert(inserts);
+          if (ri.error) return err(ri.error.message);
+        }
+        if (updates.length) {
+          var ru = await sb.from('products').upsert(updates, { onConflict: 'id' });
+          if (ru.error) return err(ru.error.message);
+        }
+        return ok({ updated: updates.length, added: inserts.length, total: sheetProducts.length });
+      } catch (e) { return e.__json || err(e.message || e); }
     },
 
     adminCreateNewOrderList: async function (name, desc, image, status) {

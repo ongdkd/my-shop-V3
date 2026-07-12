@@ -1007,6 +1007,15 @@ function renderOrderLists() {
     subRow.appendChild(orderBtn);
     subRow.appendChild(shopBtn);
     navRow.appendChild(subRow);
+
+    // Sync button — only for lists that were imported from a Google Sheet
+    if (item.sourceSpreadsheetId) {
+      var syncBtn = makeBtn('btn btn-ghost btn-sm', '&#x1F504; ซิงก์สินค้าจากชีต', (function(it) {
+        return function() { openSyncSheetModal(it); };
+      })(item));
+      syncBtn.style.cssText = 'justify-content:center;width:100%;';
+      navRow.appendChild(syncBtn);
+    }
     body.appendChild(navRow);
  
     // Bottom Row: Toggle + icon buttons
@@ -1146,6 +1155,47 @@ function confirmDeleteOrderList(item) {
     }).adminDeleteOrderList(item.rowIndex);
   }, 'ลบ');
   el('modalSave').className = 'btn btn-danger';
+  el('modal').classList.add('open');
+}
+
+function openSyncSheetModal(item) {
+  el('modalBody').innerHTML = '';
+
+  var info = document.createElement('div');
+  info.style.cssText = 'font-size:0.85rem;color:var(--text-2);line-height:1.6;margin-bottom:12px;';
+  info.innerHTML = '&#x1F504; ดึงข้อมูลสินค้าล่าสุดจากชีต <strong>' + escapeHtml(item.name) + '</strong><br>' +
+    '&#x2022; สินค้าที่รหัสตรงกันจะถูก<strong>อัปเดต</strong> (ชื่อ ราคา มัดจำ หยวน รูป ตัวเลือก สถานะ)<br>' +
+    '&#x2022; สินค้าใหม่ในชีตจะถูก<strong>เพิ่ม</strong><br>' +
+    '&#x2022; สินค้าที่หายไปจากชีต<strong>จะไม่ถูกลบ</strong> ออกจากเว็บ';
+  el('modalBody').appendChild(info);
+
+  var stockWrap = document.createElement('label');
+  stockWrap.style.cssText = 'display:flex;align-items:flex-start;gap:8px;padding:10px 12px;background:var(--warning-light);border:1.5px solid var(--warning);border-radius:var(--radius-sm);font-size:0.8rem;color:#7A5000;cursor:pointer;';
+  var stockChk = document.createElement('input');
+  stockChk.type = 'checkbox'; stockChk.id = 'syncStockChk';
+  stockChk.style.cssText = 'margin-top:2px;accent-color:var(--warning);cursor:pointer;';
+  var stockTxt = document.createElement('span');
+  stockTxt.innerHTML = '<strong>อัปเดตสต็อกคงเหลือจากชีตด้วย</strong><br>ระวัง: จะทับยอดสต็อกที่เว็บตัดไว้จากออเดอร์ที่ลูกค้าสั่งบนเว็บ';
+  stockWrap.appendChild(stockChk); stockWrap.appendChild(stockTxt);
+  el('modalBody').appendChild(stockWrap);
+
+  openModal('&#x1F504; ซิงก์สินค้าจากชีต', '', function() {
+    var saveBtn = el('modalSave'); saveBtn.disabled = true; saveBtn.textContent = 'กำลังซิงก์...';
+    google.script.run.withSuccessHandler(function(r) {
+      saveBtn.disabled = false; saveBtn.textContent = 'ซิงก์';
+      try {
+        var res = JSON.parse(r);
+        if (res.status === 'Success') {
+          closeModal();
+          toast('ซิงก์แล้ว: อัปเดต ' + res.updated + ' / เพิ่มใหม่ ' + res.added + ' รายการ', 'success');
+          if (currentPanel === 'products' && currentProductsSheetId === item.sheetId) loadProducts(item.sheetId);
+        } else { toast(res.message || 'เกิดข้อผิดพลาด', 'error'); }
+      } catch(e) { toast('เกิดข้อผิดพลาด', 'error'); }
+    }).withFailureHandler(function(e) {
+      saveBtn.disabled = false; saveBtn.textContent = 'ซิงก์';
+      toast('เกิดข้อผิดพลาด: ' + (e && e.message || ''), 'error');
+    }).adminSyncProductsFromSheet(item.rowIndex, el('syncStockChk').checked);
+  }, 'ซิงก์');
   el('modal').classList.add('open');
 }
 

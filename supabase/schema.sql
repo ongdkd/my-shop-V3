@@ -17,6 +17,11 @@ create table if not exists public.order_lists (
   created_at  timestamptz not null default now()
 );
 
+-- Remembers which Google Spreadsheet a list was imported from,
+-- so products can be re-synced from the sheet later.
+alter table public.order_lists
+  add column if not exists source_spreadsheet_id text not null default '';
+
 -- ── Products (was the Products sheet in each shop spreadsheet) ─
 create table if not exists public.products (
   id         uuid primary key default gen_random_uuid(),
