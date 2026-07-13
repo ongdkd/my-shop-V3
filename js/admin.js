@@ -75,13 +75,21 @@ var _modalMousedownTarget = null;
 document.getElementById('modal').addEventListener('mousedown', function(e) { _modalMousedownTarget = e.target; });
 document.getElementById('modal').addEventListener('mouseup', function(e) { if (e.target === this && _modalMousedownTarget === this) closeModal(); _modalMousedownTarget = null; });
 document.getElementById('modalSave').onclick = function() { if (modalSaveFn) modalSaveFn(); };
+// Escape closes the modal (or the mobile sidebar)
+document.addEventListener('keydown', function(e) {
+  if (e.key !== 'Escape') return;
+  if (document.getElementById('modal').classList.contains('open')) closeModal();
+  else if (sidebar.classList.contains('open')) toggleSidebar();
+});
 loadAllLists(function() { switchPanel('orderlists'); });
 
 // ── HELPERS ──
+var _toastTimer = null;
 function toast(msg, type) {
   var el = document.getElementById('toast');
-  el.textContent = msg; el.className = type || 'success'; el.style.display = 'block';
-  setTimeout(function() { el.style.display = 'none'; }, 3500);
+  el.textContent = msg; el.className = (type || 'success') + ' show';
+  if (_toastTimer) clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(function() { el.classList.remove('show'); _toastTimer = null; }, 3500);
 }
 
 // ── Beep — runs in parent window where AudioContext is already unlocked ──
