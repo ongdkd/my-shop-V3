@@ -438,5 +438,121 @@ $$;
 revoke all on function public.import_legacy_order_list(text, text, text, text, text, jsonb, jsonb) from public;
 grant execute on function public.import_legacy_order_list(text, text, text, text, text, jsonb, jsonb) to authenticated;
 
+-- ═══════════════════════════════════════════════════════════
+-- submit_pos_sale — records an in-person POS sale (admin only)
+-- Same atomic stock validation as submit_order, but: no customer
+-- phone required, always Full Price, and works on Closed lists
+-- too (POS sells in person after online ordering closes).
+-- items: [{ id, quantity, selectedOption }]
+-- ═══════════════════════════════════════════════════════════
+create or replace function public.submit_pos_sale(
+  p_list_id uuid,
+  p_items   jsonb
+) returns jsonb
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  it      jsonb;
+  prod    public.products%rowtype;
+  v_qty   numeric;
+  v_opt   text;
+  v_label text;
+  v_count integer := 0;
+  req     record;
+begin
+  if not public.is_admin() then
+    return jsonb_build_object('status', 'Error', 'message', 'Unauthorised');
+  end if;
+  if p_items is null or jsonb_typeof(p_items) <> 'array' or jsonb_array_length(p_items) = 0 then
+    return jsonb_build_object('status', 'Error', 'message', 'No order items received');
+  end if;
+  if jsonb_array_length(p_items) > 100 then
+    return jsonb_build_object('status', 'Error', 'message', 'Too many order items');
+  end if;
+
+  -- 1) validate every item
+  for it in select * from jsonb_array_elements(p_items) loop
+    if jsonb_typeof(it) <> 'object'
+       or coalesce(it->>'id', '') = ''
+       or length(it->>'id') > 100
+       or coalesce(it->>'quantity', '') !~ '^[1-9][0-9]*$'
+       or (it->>'quantity')::numeric > 100
+       or length(coalesce(it->>'selectedOption', '')) > 200 then
+      return jsonb_build_object('status', 'Error', 'message', 'Invalid order item');
+    end if;
+    select * into prod from public.products
+      where list_id = p_list_id and code = (it->>'id')
+      limit 1;
+    if not found then
+      return jsonb_build_object('status', 'Error', 'message', 'Product not found: ' || coalesce(it->>'id', ''));
+    end if;
+    -- POS sends option names without the ":barcode" suffix, so accept
+    -- both the raw stored value and its name part.
+    v_opt := btrim(coalesce(it->>'selectedOption', ''));
+    if btrim(prod.options) <> '' then
+      if v_opt = '' or not exists (
+        select 1 from unnest(string_to_array(prod.options, ',')) allowed(value)
+        where btrim(allowed.value) = v_opt
+           or btrim(split_part(allowed.value, ':', 1)) = v_opt
+      ) then
+        return jsonb_build_object('status', 'Error', 'message', 'Invalid product option: ' || prod.name);
+      end if;
+    elsif v_opt <> '' then
+      return jsonb_build_object('status', 'Error', 'message', 'Product has no options: ' || prod.name);
+    end if;
+  end loop;
+
+  -- 2) lock rows in a stable order and validate aggregate quantities
+  for req in
+    select item.value->>'id' as code, sum((item.value->>'quantity')::numeric) as qty
+    from jsonb_array_elements(p_items) as item(value)
+    group by item.value->>'id'
+    order by item.value->>'id'
+  loop
+    select * into prod from public.products
+      where list_id = p_list_id and code = req.code
+      for update;
+    if prod.remaining is not null and prod.remaining < req.qty then
+      return jsonb_build_object('status', 'Error', 'message', 'Stock not enough for ' || prod.name);
+    end if;
+  end loop;
+
+  -- 3) deduct stock + insert order rows
+  for it in select * from jsonb_array_elements(p_items) loop
+    select * into prod from public.products
+      where list_id = p_list_id and code = (it->>'id')
+      order by seq limit 1
+      for update;
+
+    v_qty := (it->>'quantity')::numeric;
+    v_opt := btrim(coalesce(it->>'selectedOption', ''));
+
+    if prod.remaining is not null then
+      update public.products set remaining = remaining - v_qty where id = prod.id;
+    end if;
+
+    v_label := case when v_opt <> '' then prod.name || ' (' || v_opt || ')' else prod.name end;
+
+    insert into public.orders
+      (list_id, customer, product, qty, pay_type, price, total,
+       yuan, total_yuan, full_price, total_full, remark)
+    values
+      (p_list_id, 'หน้าร้าน (POS)', v_label, v_qty, 'Full Price',
+       coalesce(prod.price, 0), coalesce(prod.price, 0) * v_qty,
+       coalesce(prod.yuan, 0), coalesce(prod.yuan, 0) * v_qty,
+       coalesce(prod.price, 0), coalesce(prod.price, 0) * v_qty,
+       'POS');
+    v_count := v_count + 1;
+  end loop;
+
+  return jsonb_build_object('status', 'Success', 'saved', v_count);
+end;
+$$;
+
+revoke all on function public.submit_pos_sale(uuid, jsonb) from public;
+grant execute on function public.submit_pos_sale(uuid, jsonb) to authenticated;
+
 -- Ask PostgREST to expose newly created/updated RPC functions immediately.
 notify pgrst, 'reload schema';

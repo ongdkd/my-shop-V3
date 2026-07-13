@@ -271,7 +271,10 @@ function qtyModalBgClick(e) {
 }
 
 function changeQty(delta) {
-  var max = (_qtyProduct && _qtyProduct.remaining) ? Number(_qtyProduct.remaining) : 999;
+  var max = 999;
+  if (_qtyProduct && _qtyProduct.remaining !== null && _qtyProduct.remaining !== undefined && _qtyProduct.remaining !== '') {
+    max = Math.max(1, Number(_qtyProduct.remaining) - getCartQty(_qtyProduct.rowIndex));
+  }
   _qtyValue = Math.max(1, Math.min(max, _qtyValue + delta));
   document.getElementById('qtyNum').textContent = _qtyValue;
 }
@@ -283,6 +286,16 @@ function addToCart() {
   if (opts.length && !_qtyOption) {
     posToast('กรุณาเลือกตัวเลือกก่อน', 'error');
     return;
+  }
+
+  // Stock guard — never let the cart exceed what's left
+  var rem = _qtyProduct.remaining;
+  if (rem !== null && rem !== undefined && rem !== '') {
+    var already = getCartQty(_qtyProduct.rowIndex);
+    if (already + _qtyValue > Number(rem)) {
+      posToast('สต็อกไม่พอ (เหลือ ' + Math.max(0, Number(rem) - already) + ' ชิ้น)', 'error');
+      return;
+    }
   }
 
   // Find existing cart line
@@ -490,8 +503,8 @@ function renderPayment() {
   // Done button
   var doneBtn = document.createElement('button');
   doneBtn.className = 'pay-done-btn';
-  doneBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> ชำระเงินแล้ว — กลับไป POS';
-  doneBtn.onclick = function() { resetPOS(); };
+  doneBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> ชำระเงินแล้ว — บันทึกการขาย';
+  doneBtn.onclick = function() { submitPosSale(doneBtn); };
   container.appendChild(doneBtn);
 
   // Generate QR
@@ -522,8 +535,130 @@ function resetPOS() {
   posToast('ชำระเงินเสร็จสิ้น ✓', 'success');
 }
 
+// Saves the sale to Supabase (order rows + stock deduction) through
+// the atomic submit_pos_sale RPC, then resets for the next customer.
+function submitPosSale(btn) {
+  if (!POS_CART.length) { resetPOS(); return; }
+  var items = POS_CART.map(function(item) {
+    return { id: item.product.id, quantity: item.qty, selectedOption: item.option || null };
+  });
+  var originalHtml = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '⏳ กำลังบันทึกการขาย...';
+  function restore() { btn.disabled = false; btn.innerHTML = originalHtml; }
+
+  google.script.run.withSuccessHandler(function(r) {
+    try {
+      var res = JSON.parse(r);
+      if (res.status === 'Success') {
+        // Keep on-screen stock in sync without refetching
+        POS_CART.forEach(function(item) {
+          var rem = item.product.remaining;
+          if (rem !== null && rem !== undefined && rem !== '') {
+            item.product.remaining = Math.max(0, Number(rem) - item.qty);
+          }
+        });
+        resetPOS();
+        posToast('บันทึกการขายแล้ว ✓ (' + (res.saved || items.length) + ' รายการ)', 'success');
+      } else {
+        restore();
+        posToast(res.message || 'บันทึกการขายไม่สำเร็จ', 'error');
+      }
+    } catch (e) { restore(); posToast('เกิดข้อผิดพลาด', 'error'); }
+  }).withFailureHandler(function() {
+    restore();
+    posToast('บันทึกการขายไม่สำเร็จ — กรุณาลองใหม่', 'error');
+  }).adminSubmitPosSale(POS_LIST_ID, items);
+}
+
 // ══════════════════════════════════
-// BARCODE SCANNER
+// SCANNED-CODE HANDLING
+// (shared by the camera popup and hardware barcode scanners)
+// ══════════════════════════════════
+function posStockLeft(product) {
+  var rem = product.remaining;
+  if (rem === null || rem === undefined || rem === '') return Infinity;
+  return Number(rem) - getCartQty(product.rowIndex);
+}
+
+function posAddDirect(product, optionName) {
+  if (posStockLeft(product) < 1) {
+    posToast('สต็อกไม่พอ: ' + product.name, 'error');
+    return;
+  }
+  var existingIdx = -1;
+  for (var k = 0; k < POS_CART.length; k++) {
+    if (POS_CART[k].product.rowIndex === product.rowIndex && POS_CART[k].option === optionName) {
+      existingIdx = k; break;
+    }
+  }
+  if (existingIdx !== -1) {
+    POS_CART[existingIdx].qty += 1;
+    POS_CART[existingIdx].lineTotal = POS_CART[existingIdx].qty * Number(product.price);
+  } else {
+    POS_CART.push({ product: product, qty: 1, option: optionName, lineTotal: Number(product.price) });
+  }
+  updateCartFab();
+  renderProducts(POS_PRODUCTS);
+  posToast('✓ ' + product.name + (optionName ? ' (' + optionName + ')' : ''), 'success');
+}
+
+// Returns true when the code matched a product (and was handled)
+function posHandleScannedCode(barcode) {
+  barcode = String(barcode || '').trim();
+  if (!barcode) return false;
+
+  // Step 1: Match by product ID — exact match, case-insensitive
+  var found = null;
+  var foundOptionName = null; // set if matched via option barcode
+  var bcLower = barcode.toLowerCase();
+
+  for (var i = 0; i < POS_PRODUCTS.length; i++) {
+    var p = POS_PRODUCTS[i];
+    var pid = String(p.id || '').trim().toLowerCase();
+    if (pid && pid === bcLower) { found = p; break; }
+  }
+
+  // Step 2: If no product ID match, search option barcodes
+  if (!found) {
+    for (var i2 = 0; i2 < POS_PRODUCTS.length; i2++) {
+      var p2 = POS_PRODUCTS[i2];
+      var optsWithBc = parseOptionsWithBarcodes(p2.options);
+      for (var j2 = 0; j2 < optsWithBc.length; j2++) {
+        var ob = optsWithBc[j2];
+        if (ob.barcode && ob.barcode.toLowerCase() === bcLower) {
+          found = p2;
+          foundOptionName = ob.name;
+          break;
+        }
+      }
+      if (found) break;
+    }
+  }
+
+  if (!found) {
+    // No match — show in search bar
+    var s = document.getElementById('posSearch');
+    s.value = barcode;
+    filterProducts(barcode);
+    posToast('ไม่พบสินค้า: ' + barcode, 'error');
+    return false;
+  }
+
+  var opts = parseOptions(found.options);
+  if (foundOptionName) {
+    posAddDirect(found, foundOptionName);
+  } else if (opts.length === 0) {
+    posAddDirect(found, '');
+  } else {
+    // Has options but scanned a product-level barcode — pick option in modal
+    openQtyModal(found);
+  }
+  return true;
+}
+
+// ══════════════════════════════════
+// BARCODE SCANNER (camera popup)
 // ══════════════════════════════════
 function openBarcodeScanner() {
   var scanToken = 'pos_scan_' + Date.now();
@@ -539,85 +674,7 @@ function openBarcodeScanner() {
       try { if (popup && !popup.closed) popup.close(); } catch(e) {}
     }, 100);
 
-    // Step 1: Match by product ID (Col A) — exact match, case-insensitive
-    var found = null;
-    var foundOptionName = null; // set if matched via option barcode
-    var bcLower = barcode.toLowerCase();
-
-    for (var i = 0; i < POS_PRODUCTS.length; i++) {
-      var p = POS_PRODUCTS[i];
-      // Check main product ID
-      var pid = String(p.id || '').trim().toLowerCase();
-      if (pid && pid === bcLower) { found = p; break; }
-    }
-
-    // Step 2: If no product ID match, search option barcodes
-    if (!found) {
-      for (var i2 = 0; i2 < POS_PRODUCTS.length; i2++) {
-        var p2 = POS_PRODUCTS[i2];
-        var optsWithBc = parseOptionsWithBarcodes(p2.options);
-        for (var j2 = 0; j2 < optsWithBc.length; j2++) {
-          var ob = optsWithBc[j2];
-          if (ob.barcode && ob.barcode.toLowerCase() === bcLower) {
-            found = p2;
-            foundOptionName = ob.name;
-            break;
-          }
-        }
-        if (found) break;
-      }
-    }
-
-    if (found) {
-      var opts = parseOptions(found.options);
-
-      if (foundOptionName) {
-        // Direct option barcode match — add to cart immediately with the matched option
-        var existingIdx2 = -1;
-        for (var k = 0; k < POS_CART.length; k++) {
-          if (POS_CART[k].product.rowIndex === found.rowIndex && POS_CART[k].option === foundOptionName) {
-            existingIdx2 = k; break;
-          }
-        }
-        if (existingIdx2 !== -1) {
-          POS_CART[existingIdx2].qty += 1;
-          POS_CART[existingIdx2].lineTotal = POS_CART[existingIdx2].qty * Number(found.price);
-        } else {
-          POS_CART.push({ product: found, qty: 1, option: foundOptionName, lineTotal: Number(found.price) });
-        }
-        updateCartFab();
-        renderProducts(POS_PRODUCTS);
-        posToast('✓ ' + found.name + ' (' + foundOptionName + ')', 'success');
-
-      } else if (opts.length === 0) {
-        // No options — add 1 directly to cart, skip modal
-        var existingIdx = -1;
-        for (var j = 0; j < POS_CART.length; j++) {
-          if (POS_CART[j].product.rowIndex === found.rowIndex && POS_CART[j].option === '') {
-            existingIdx = j; break;
-          }
-        }
-        if (existingIdx !== -1) {
-          POS_CART[existingIdx].qty += 1;
-          POS_CART[existingIdx].lineTotal = POS_CART[existingIdx].qty * Number(found.price);
-        } else {
-          POS_CART.push({ product: found, qty: 1, option: '', lineTotal: Number(found.price) });
-        }
-        updateCartFab();
-        renderProducts(POS_PRODUCTS);
-        posToast('✓ เพิ่ม ' + found.name + ' แล้ว', 'success');
-
-      } else {
-        // Has options but scanned product-level barcode — open modal to pick option
-        openQtyModal(found);
-      }
-    } else {
-      // No match — show in search bar
-      var s = document.getElementById('posSearch');
-      s.value = barcode;
-      filterProducts(barcode);
-      posToast('ไม่พบสินค้า: ' + barcode, 'error');
-    }
+    posHandleScannedCode(barcode);
   }
 
   // Primary bridge — direct function call from popup (same origin)
@@ -803,6 +860,22 @@ window.addEventListener('DOMContentLoaded', function() {
   var listName = (typeof POS_INIT_LIST_NAME !== 'undefined') ? POS_INIT_LIST_NAME : 'POS';
   var au       = (typeof POS_INIT_AU        !== 'undefined') ? POS_INIT_AU        : '';
   var ap       = (typeof POS_INIT_AP        !== 'undefined') ? POS_INIT_AP        : '';
+
+  // Hardware barcode scanners type the code then send Enter:
+  // exact code match adds the item instantly, no camera popup needed.
+  var searchInp = document.getElementById('posSearch');
+  if (searchInp) {
+    searchInp.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      var code = searchInp.value.trim();
+      if (!code) return;
+      if (posHandleScannedCode(code)) {
+        searchInp.value = '';
+        filterProducts('');
+      }
+    });
+  }
 
   if (!sheetId) {
     showLoading('ไม่พบรายการสินค้า', 'ปิดหน้าต่างนี้แล้วลองใหม่');

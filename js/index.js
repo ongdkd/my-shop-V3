@@ -95,6 +95,10 @@ function findProduct(id) { for(var i=0;i<products.length;i++) if(products[i].id=
 function findProductBySid(s) { for(var i=0;i<products.length;i++) if(sid(products[i].id)===s) return products[i]; return null; }
 function findCartItem(cartId) { for(var i=0;i<cart.length;i++) if(cart[i].cartId===cartId) return cart[i]; return null; }
 
+function cartQtyOfProduct(productId){
+  var s=0; for(var i=0;i<cart.length;i++) if(cart[i].productId===productId) s+=cart[i].qty; return s;
+}
+
 function addToCart(productId) {
   var product = findProduct(productId); if (!product) return;
   var option = null;
@@ -105,6 +109,14 @@ function addToCart(productId) {
       var s2 = sid(productId);
       var optEl = document.getElementById('popt-'+s2);
       if (optEl) { optEl.classList.add('invalid'); setTimeout(function(){optEl.classList.remove('invalid');},2000); }
+      return;
+    }
+  }
+  // Stock guard — cart can never exceed what's left
+  if (product.remaining !== Infinity) {
+    if (product.remaining <= 0) { showMessage('สินค้าหมดแล้วค่ะ','error'); return; }
+    if (cartQtyOfProduct(productId) + 1 > product.remaining) {
+      showMessage('สินค้ามีไม่พอค่ะ (เหลือ '+product.remaining+' ชิ้น)','error');
       return;
     }
   }
@@ -176,6 +188,13 @@ function renderCartSidebar() {
 
 function editCartQty(cid,d){
   var item=findCartItem(cid); if(!item) return;
+  if(d>0){
+    var prod=findProduct(item.productId);
+    if(prod && prod.remaining!==Infinity && cartQtyOfProduct(item.productId)+1>prod.remaining){
+      showMessage('สินค้ามีไม่พอค่ะ (เหลือ '+prod.remaining+' ชิ้น)','error');
+      return;
+    }
+  }
   item.qty=Math.max(1,item.qty+d);
   var q=document.getElementById('cqty-'+cid), p=document.getElementById('cprice-'+cid);
   if(q) q.textContent=item.qty; if(p) p.textContent=formatCurrency(item.unitPrice*item.qty);
@@ -263,13 +282,22 @@ function populateProductTable() {
         optHtml='<div class="options-wrapper"><select class="option-select" id="popt-'+s2+'" data-psid="'+s2+'">'+sel+'</select></div>';
       }
     }
+    // Stock badge: none for unlimited stock, warning when low, "หมด" when gone
+    var soldOut = (p.remaining !== Infinity && p.remaining <= 0);
+    var stockBadge = '';
+    if (p.remaining !== Infinity) {
+      if (soldOut) stockBadge = '<div class="stock-badge out">สินค้าหมดแล้ว</div>';
+      else if (p.remaining <= 5) stockBadge = '<div class="stock-badge low">&#x1F525; เหลือ '+p.remaining+' ชิ้น</div>';
+      else stockBadge = '<div class="stock-badge">เหลือ '+p.remaining+' ชิ้น</div>';
+    }
     var row=tbody.insertRow();
+    if (soldOut) row.className = 'sold-out';
     row.innerHTML=
       '<td><img src="'+escapeHtml(safeImg(p.image))+'" alt="'+escapeHtml(p.name||'')+'" class="product-image" loading="lazy" width="50" height="50" data-fb="1"></td>'+
-      '<td style="font-weight:600;">'+escapeHtml(p.name||'')+'</td>'+
+      '<td style="font-weight:600;"><span class="prod-name">'+escapeHtml(p.name||'')+'</span>'+stockBadge+'</td>'+
       '<td class="center-align" style="color:var(--primary);font-weight:700;">'+formatCurrency(Number(p.price)||0)+'</td>'+
-      '<td class="center-align"><div class="deposit-toggle"><span class="dep-price">'+formatCurrency(Number(p.deposit)||0)+'</span><label><input type="checkbox" class="depchk" data-psid="'+s2+'"> มัดจำ</label></div></td>'+
-      '<td class="prod-action-cell">'+optHtml+'<div class="prod-qty-row"><button class="add-to-cart-btn atcbtn" data-psid="'+s2+'">'+cartSvg+' + ตะกร้า</button></div></td>';
+      '<td class="center-align"><div class="deposit-toggle"><span class="dep-price">'+formatCurrency(Number(p.deposit)||0)+'</span><label><input type="checkbox" class="depchk" data-psid="'+s2+'"'+(soldOut?' disabled':'')+'> มัดจำ</label></div></td>'+
+      '<td class="prod-action-cell">'+optHtml+'<div class="prod-qty-row"><button class="add-to-cart-btn atcbtn" data-psid="'+s2+'"'+(soldOut?' disabled':'')+'>'+(soldOut?'หมดแล้ว':cartSvg+' + ตะกร้า')+'</button></div></td>';
   }
   var tbl=document.getElementById('productTable');
   tbl.onclick=function(e){
@@ -515,8 +543,8 @@ function filterProducts(){
   var t=document.getElementById('productSearch').value.toLowerCase();
   var rows=document.querySelectorAll('#productTable tbody tr');
   for(var i=0;i<rows.length;i++){
-    var td=rows[i].querySelector('td:nth-child(2)');
-    rows[i].style.display=(td&&td.textContent.toLowerCase().indexOf(t)!==-1)?'':'none';
+    var nameEl=rows[i].querySelector('.prod-name')||rows[i].querySelector('td:nth-child(2)');
+    rows[i].style.display=(nameEl&&nameEl.textContent.toLowerCase().indexOf(t)!==-1)?'':'none';
   }
 }
 function addSearchListeners(){
@@ -566,6 +594,8 @@ function selectOrderList(sheetId){
   var phone=(document.getElementById('customerPhone').value||'').trim();
   if(!phone){showMessage('กรุณากรอกเบอร์โทรก่อนเลือกรายการสั่งซื้อนะคะ','error');highlightInputError('customerPhone');return;}
   if(!isValidPhone(phone)){showMessage('เบอร์โทรไม่ถูกต้อง (06x/08x/09x 10 หลัก)','error');highlightInputError('customerPhone');return;}
+  // Remember validated details so returning customers skip retyping
+  try{localStorage.setItem('_custName',name);localStorage.setItem('_custPhone',phone);}catch(e){}
   selectedSheetId=sheetId;
   document.getElementById('headerUsername').textContent=name;
   document.getElementById('hubContainer').style.display='none';
@@ -658,6 +688,13 @@ document.getElementById('hubSearchClear').onclick = function(){document.getEleme
 document.getElementById('customerName').onkeydown = function(e){if(e.key==='Enter')e.preventDefault();};
 document.getElementById('customerPhone').onkeydown = function(e){if(e.key==='Enter')e.preventDefault();};
 window.addEventListener('beforeunload',function(e){if(currentOrder&&!isSubmitted){e.preventDefault();e.returnValue='';}});
+
+// Prefill remembered customer details for returning customers
+try{
+  var _savedCustName=localStorage.getItem('_custName'), _savedCustPhone=localStorage.getItem('_custPhone');
+  if(_savedCustName) document.getElementById('customerName').value=_savedCustName;
+  if(_savedCustPhone) document.getElementById('customerPhone').value=_savedCustPhone;
+}catch(e){}
 
 document.getElementById('bottomBar').style.display='none';
 loadHubPage();

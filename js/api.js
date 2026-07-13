@@ -692,6 +692,25 @@
       } catch (e) { return e.__json || err(e.message || e); }
     },
 
+    // Records an in-person POS sale through the atomic submit_pos_sale
+    // RPC (validates stock, deducts, inserts order rows in one
+    // transaction). items: [{ id, quantity, selectedOption }]
+    adminSubmitPosSale: async function (sheetId, items) {
+      try {
+        requireSb(); await requireAdmin();
+        if (!items || !items.length) return err('ไม่มีสินค้าในตะกร้า');
+        var r = await sb.rpc('submit_pos_sale', { p_list_id: sheetId, p_items: items });
+        if (r.error) {
+          var msg = String(r.error.message || '');
+          if (r.error.code === 'PGRST202' || msg.indexOf('submit_pos_sale') !== -1) {
+            return err('Supabase ยังไม่ได้ติดตั้งฟังก์ชันบันทึกการขาย POS — เปิด SQL Editor แล้วรันไฟล์ supabase/schema.sql เวอร์ชันล่าสุดทั้งหมด แล้วลองใหม่');
+          }
+          return err(msg);
+        }
+        return J(r.data);
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
     // Distinct customer names for one list — the summary dropdown only
     // needs names, not full order payloads.
     adminGetCustomers: async function (sheetId) {

@@ -288,3 +288,11 @@ td { padding: 12px; border-bottom: 1px solid var(--border); vertical-align: midd
   .summary-actions button { width: 100%; }
   #summary, #confirmation { flex: 1; overflow-y: auto; padding-bottom: 50px; -webkit-overflow-scrolling: touch; }
 }
+
+/* ── Stock badges (customer product list) ── */
+.stock-badge{display:inline-block;margin-top:4px;font-size:0.7rem;font-weight:600;color:var(--text-3);background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:1px 8px;white-space:nowrap;}
+.stock-badge.low{color:#B45309;background:var(--warning-light);border-color:var(--warning);}
+.stock-badge.out{color:var(--error);background:var(--error-light);border-color:var(--error);}
+#productTable tr.sold-out{opacity:0.55;}
+#productTable tr.sold-out .atcbtn{pointer-events:none;background:var(--surface-2);color:var(--text-3);border-color:var(--border);cursor:not-allowed;}
+#productTable .prod-name{display:block;}
