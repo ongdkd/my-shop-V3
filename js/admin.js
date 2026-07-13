@@ -931,6 +931,27 @@ function renderOrderLists() {
   var rb = makeBtn('btn btn-ghost btn-sm', '&#x21BB; รีเฟรช', function() { loadAllLists(renderOrderLists); });
   rb.style.marginLeft = '6px';
   el('topbarActions').appendChild(nb); el('topbarActions').appendChild(ob); el('topbarActions').appendChild(rb);
+
+  // Manual Google Sheets sync — only when the Apps Script web app is configured
+  var syncUrl = String(window.SYNC_WEBAPP_URL || '').trim();
+  if (syncUrl && syncUrl.indexOf('YOUR_') === -1) {
+    var syncBtn = makeBtn('btn btn-ghost btn-sm', '&#x1F504; ซิงก์ชีต', function() {
+      syncBtn.disabled = true; syncBtn.innerHTML = '&#x23F3; กำลังซิงก์...';
+      google.script.run.withSuccessHandler(function(r) {
+        syncBtn.disabled = false; syncBtn.innerHTML = '&#x1F504; ซิงก์ชีต';
+        try {
+          var res = JSON.parse(r);
+          if (res.status === 'Success') {
+            var failed = (res.summary || []).filter(function(s) { return s.error; });
+            if (failed.length) toast('ซิงก์เสร็จ แต่ ' + failed.length + ' รายการมีปัญหา — ดูรายละเอียดใน Apps Script', 'error');
+            else toast('ซิงก์ Google Sheets เรียบร้อย!', 'success');
+            loadAllLists(renderOrderLists);
+          } else { toast(res.message || 'ซิงก์ไม่สำเร็จ', 'error'); }
+        } catch(e) { toast('ซิงก์ไม่สำเร็จ', 'error'); }
+      }).adminRunSheetsSync();
+    });
+    el('topbarActions').appendChild(syncBtn);
+  }
  
   var wrap = document.createElement('div');
  
@@ -2095,7 +2116,7 @@ function openCreateOrderListModal() {
               var res = JSON.parse(r);
               if (res.status === 'Success') {
                 closeModal();
-                toast('สร้าง "' + res.name + '" แล้ว! 🎉', 'success');
+                toast('สร้าง "' + res.name + '" แล้ว!' + (res.url ? ' พร้อม Google Sheet สำรองข้อมูล 📊' : '') + ' 🎉', 'success');
                 loadAllLists(renderOrderLists);
               } else { toast(res.message || 'เกิดข้อผิดพลาด', 'error'); }
             } catch(e) { toast('เกิดข้อผิดพลาด', 'error'); }

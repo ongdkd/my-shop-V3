@@ -25,3 +25,16 @@ window.CLOUDINARY_UPLOAD_PRESET = 'gas_cover_img';
 //   * Application restriction: Websites (your production URL + localhost)
 //   * API restriction: Google Sheets API only
 window.GOOGLE_SHEETS_API_KEY = 'AIzaSyD1w0eSRpVvVqZxYJ-o-ubz9ahb8elyapw';
+
+// ── Google Sheets sync (optional) ───────────────────────────
+// Apps Script web app that syncs Supabase ⇄ Google Sheets and
+// creates a spreadsheet for every new order list.
+// Setup guide: apps-script/README.md
+//   * SYNC_WEBAPP_URL    — the /exec URL of the deployed web app
+//   * SYNC_WEBAPP_SECRET — must match SHARED_SECRET in the script's
+//     properties (note: this value is visible in the page source;
+//     it only stops strangers from triggering syncs, it is not a
+//     substitute for real authentication)
+// Leave both empty to disable the sync features in the admin UI.
+window.SYNC_WEBAPP_URL = '';
+window.SYNC_WEBAPP_SECRET = '';

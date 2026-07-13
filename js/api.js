@@ -181,6 +181,33 @@
     };
   }
 
+  // ── Apps Script sync web app (optional, see apps-script/README.md) ──
+  function syncWebappUrl() {
+    var url = String(window.SYNC_WEBAPP_URL || '').trim();
+    return url && url.indexOf('YOUR_') === -1 ? url : '';
+  }
+
+  async function callSyncWebapp(action, payload) {
+    var url = syncWebappUrl();
+    if (!url) throw new Error('ยังไม่ได้ตั้งค่า SYNC_WEBAPP_URL ใน js/config.js');
+    var body = { action: action, secret: String(window.SYNC_WEBAPP_SECRET || '') };
+    if (payload) for (var k in payload) body[k] = payload[k];
+    var resp;
+    try {
+      // Plain-text body keeps this a CORS "simple request" — Apps Script
+      // web apps cannot answer preflight OPTIONS requests.
+      resp = await fetch(url, { method: 'POST', body: JSON.stringify(body) });
+    } catch (e) {
+      throw new Error('เชื่อมต่อ Sync web app ไม่ได้ — ตรวจสอบ SYNC_WEBAPP_URL และการ deploy (Anyone)');
+    }
+    var data = null;
+    try { data = await resp.json(); } catch (e2) {}
+    if (!data || data.status !== 'Success') {
+      throw new Error((data && data.message) || ('Sync web app error ' + resp.status));
+    }
+    return data;
+  }
+
   function legacyProducts(rows) {
     if (!rows.length) throw new Error('ชีต Products ว่างเปล่า');
     var find = columnFinder(rows[0]);
@@ -617,7 +644,28 @@
           display: 'Show'
         }).select().single();
         if (r.error) return err(r.error.message);
-        return ok({ sheetId: r.data.id, name: name, url: '' });
+        // Create the backing Google Spreadsheet right away when the sync
+        // web app is configured. Non-fatal: the scheduled sync will create
+        // it on its next run if this call fails.
+        var sheetUrl = '';
+        if (syncWebappUrl()) {
+          try {
+            var made = await callSyncWebapp('createListSheet', { listId: r.data.id });
+            sheetUrl = String(made.url || '');
+          } catch (e2) {
+            console.warn('[api] could not create list spreadsheet now (scheduled sync will retry):', e2.message);
+          }
+        }
+        return ok({ sheetId: r.data.id, name: name, url: sheetUrl });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
+    // On-demand Supabase ⇄ Google Sheets sync via the Apps Script web app.
+    adminRunSheetsSync: async function () {
+      try {
+        requireSb(); await requireAdmin();
+        var res = await callSyncWebapp('syncNow', {});
+        return ok({ summary: res.summary || [] });
       } catch (e) { return e.__json || err(e.message || e); }
     },
 

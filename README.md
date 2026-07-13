@@ -14,6 +14,7 @@
 | `js/api.js` | **หัวใจของระบบ** — จำลอง `google.script.run` และย้ายทุกฟังก์ชันจาก code.gs ไปใช้ Supabase |
 | `js/config.js` | ⚙️ ใส่ค่า Supabase URL/Key และ Google Sheets API key ที่นี่ |
 | `supabase/schema.sql` | สร้างตาราง + สิทธิ์ + ฟังก์ชันส่งออเดอร์ (รันครั้งเดียว) |
+| `apps-script/sync.gs` | 🔄 *(ไม่บังคับ)* ซิงก์ Supabase ⇄ Google Sheets อัตโนมัติ + สร้างชีตให้รายการใหม่ — [วิธีติดตั้ง](apps-script/README.md) |
 
 ## วิธีติดตั้ง (ประมาณ 10 นาที)
 
