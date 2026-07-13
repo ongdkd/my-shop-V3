@@ -228,7 +228,8 @@
           <div class="field-label">ชื่อผู้ใช้ (Username) หรืออีเมล</div>
           <input class="text-input" type="text" id="usernameInput"
             placeholder="กรอกชื่อผู้ใช้หรืออีเมล"
-            autocomplete="username" maxlength="128">
+            autocomplete="username" maxlength="128"
+            autocapitalize="none" spellcheck="false" enterkeyhint="next">
         </div>
 
         <div class="field-wrap">
@@ -236,8 +237,8 @@
           <div class="pw-field-wrap" id="pwFieldWrap">
             <input class="pw-input" type="password" id="pwInput"
               placeholder="กรอกรหัสผ่าน"
-              autocomplete="current-password" maxlength="128">
-            <button class="pw-toggle" id="pwToggle" type="button" tabindex="-1">
+              autocomplete="current-password" maxlength="128" enterkeyhint="go">
+            <button class="pw-toggle" id="pwToggle" type="button" tabindex="-1" aria-label="แสดง/ซ่อนรหัสผ่าน">
               <svg id="eyeIcon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
                 <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
                 <circle cx="12" cy="12" r="3"/>

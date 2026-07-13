@@ -6,11 +6,11 @@
 <title>Admin — Order Hub</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&family=Sora:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/admin.css?v=20260712c">
+<link rel="stylesheet" href="css/admin.css?v=20260713a">
 </head>
 <body>
-<div id="toast"></div>
-<div id="modal">
+<div id="toast" role="status" aria-live="polite"></div>
+<div id="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
   <div class="modal-box">
     <div class="modal-title" id="modalTitle">แก้ไขข้อมูล</div>
     <div id="modalBody"></div>
@@ -62,13 +62,7 @@
         <div class="user-email" id="userEmail">กำลังโหลด...</div>
       </div>
 
-      <button id="logoutBtn" style="
-        margin-top:8px; width:100%; padding:7px 12px;
-        background:none; border:1.5px solid var(--border);
-        border-radius:8px; color:var(--text-3); font-size:0.75rem;
-        cursor:pointer; transition:all 0.15s;
-      " onmouseover="this.style.color='var(--error)';this.style.borderColor='var(--error)'"
-        onmouseout="this.style.color='var(--text-3)';this.style.borderColor='var(--border)'">
+      <button id="logoutBtn" class="logout-btn">
         🚪 ออกจากระบบ
       </button>
     </div>
@@ -76,7 +70,7 @@
   <div class="main">
     <div class="topbar">
       <div style="display:flex; align-items:center;">
-        <button id="menuBtn" class="menu-btn">
+        <button id="menuBtn" class="menu-btn" aria-label="เปิดเมนู">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
         </button>
         <div>
@@ -103,6 +97,6 @@ if (window.__sb) {
   });
 }
 </script>
-<script src="js/admin.js?v=20260712c"></script>
+<script src="js/admin.js?v=20260713a"></script>
 </body>
 </html>
