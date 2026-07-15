@@ -820,6 +820,39 @@ function generateBarcode(value, fieldId) {
         background: '#ffffff',
         lineColor: '#1A1D3A'
       });
+
+      // Show the barcode as a real <img> — canvases can't be long-press
+      // saved on mobile — plus an explicit download button.
+      var dataUrl = canvas.toDataURL('image/png');
+      canvas.style.display = 'none';
+
+      var img = barcodeWrap.querySelector('.bc-img');
+      if (!img) {
+        img = document.createElement('img');
+        img.className = 'bc-img';
+        img.alt = 'barcode';
+        img.style.cssText = 'max-width:100%;display:block;margin:0 auto;';
+        canvas.parentNode.insertBefore(img, canvas);
+      }
+      img.src = dataUrl;
+
+      var dlBtn = barcodeWrap.querySelector('.bc-dl-btn');
+      if (!dlBtn) {
+        dlBtn = document.createElement('button');
+        dlBtn.type = 'button';
+        dlBtn.className = 'bc-dl-btn';
+        dlBtn.innerHTML = '&#x2B07; บันทึกรูปบาร์โค้ด';
+        dlBtn.style.cssText = 'display:block;margin:8px auto 0;padding:6px 16px;font-size:0.75rem;font-weight:700;font-family:var(--font);background:var(--surface);color:var(--text-2);border:1.5px solid var(--border-strong);border-radius:999px;cursor:pointer;';
+        barcodeWrap.appendChild(dlBtn);
+      }
+      dlBtn.onclick = function(e) {
+        e.preventDefault(); e.stopPropagation();
+        var a = document.createElement('a');
+        a.href = img.src;
+        a.download = 'barcode_' + String(value).replace(/[^a-zA-Z0-9_-]/g, '_') + '.png';
+        document.body.appendChild(a); a.click(); a.remove();
+      };
+
       barcodeWrap.style.display = 'block';
     } catch(e) {
       toast('ไม่สามารถสร้างบาร์โค้ดได้: ตรวจสอบ ID อีกครั้ง', 'error');

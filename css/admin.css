@@ -389,7 +389,10 @@ button{font-family:var(--font);cursor:pointer;border:none;}
     border-radius:var(--radius-lg) var(--radius-lg) 0 0;
     max-width:100%;
     width:100%;
-    max-height:92vh;
+    /* vh ignores the mobile URL bar, pushing the sheet's title
+       off-screen; dvh tracks the real visible height */
+    max-height:85vh;
+    max-height:92dvh;
     padding:8px 16px 32px;
   }
   /* Bottom sheet handle */
