@@ -77,6 +77,45 @@ create table if not exists public.stock_items (
   created_at timestamptz not null default now()
 );
 
+-- Keeps products copied from the warehouse linked to their master item.
+-- Shop stock remains independent; only catalog details are synchronized.
+alter table public.products
+  add column if not exists source_stock_item_id uuid;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'products_source_stock_item_fk'
+      and conrelid = 'public.products'::regclass
+  ) then
+    alter table public.products
+      add constraint products_source_stock_item_fk
+      foreign key (source_stock_item_id)
+      references public.stock_items(id)
+      on delete set null;
+  end if;
+end $$;
+
+create index if not exists products_source_stock_item_idx
+  on public.products(source_stock_item_id);
+
+-- Safely link old single products when their non-empty warehouse barcode is
+-- unique. Option products used random parent codes, so they are deliberately
+-- not guessed here.
+with unique_stock_codes as (
+  select btrim(code) as code, max(id::text)::uuid as stock_item_id
+  from public.stock_items
+  where parent_id is null and btrim(code) <> ''
+  group by btrim(code)
+  having count(*) = 1
+)
+update public.products p
+set source_stock_item_id = u.stock_item_id
+from unique_stock_codes u
+where p.source_stock_item_id is null
+  and btrim(p.code) = u.code;
+
 -- ── Restock-notify recipient list (was the Whitelist sheet) ──
 create table if not exists public.notify_emails (
   email text primary key

@@ -2809,6 +2809,16 @@ function renderStockContent() {
   renderStockCards(cardGrid, stockSearchQuery);
 }
 
+function defaultStockImportQty(product) {
+  // The quantity picker maps to products.remaining only for single products.
+  // Option products keep their per-option warehouse counts and currently import
+  // as an unlimited option group, so their picker stays at 1.
+  if (product.children && product.children.length) return 1;
+  if (product.stock === null || product.stock === undefined || product.stock === '') return 1;
+  var available = Math.floor(Number(product.stock));
+  return isFinite(available) ? Math.max(0, available) : 1;
+}
+
 function renderStockCards(container, query) {
   container.innerHTML = '';
   var filtered = stockCache.filter(function(p) {
@@ -2825,7 +2835,9 @@ function renderStockCards(container, query) {
   }
 
   filtered.forEach(function(p) {
-    if (!_stockQtyMap[p.rowIndex]) _stockQtyMap[p.rowIndex] = 1;
+    if (_stockQtyMap[p.rowIndex] === undefined) {
+      _stockQtyMap[p.rowIndex] = defaultStockImportQty(p);
+    }
 
     var card = document.createElement('div');
     card.className = 'stock-sel-card';
@@ -2937,7 +2949,8 @@ function renderStockCards(container, query) {
     }; })(p, valSpan);
     plusBtn.onclick  = (function(pp, vs) { return function(e) {
       e.stopPropagation();
-      var maxV = pp.stock !== null ? pp.stock : 999;
+      var finiteMax = (pp.children && pp.children.length) ? null : pp.stock;
+      var maxV = finiteMax !== null && finiteMax !== undefined ? Math.max(0, Math.floor(Number(finiteMax) || 0)) : 999;
       var v = _stockQtyMap[pp.rowIndex]; if (v < maxV) { _stockQtyMap[pp.rowIndex] = v + 1; vs.textContent = _stockQtyMap[pp.rowIndex]; }
     }; })(p, valSpan);
     stepper.appendChild(minusBtn); stepper.appendChild(valSpan); stepper.appendChild(plusBtn);
@@ -3220,7 +3233,10 @@ function openCreateStockModal() {
             var res = JSON.parse(r);
             if (res.status === 'Success') { closeModal(); toast('เพิ่มสินค้าในคลังแล้ว!', 'success'); loadStock(renderStockContent); }
             else { toast(res.message || 'เกิดข้อผิดพลาด', 'error'); }
-          } catch(e) { toast('เกิดข้อผิดพลาด', 'error'); }
+          } catch(e) {
+            saveBtn6.disabled = false; saveBtn6.textContent = 'บันทึกการแก้ไข';
+            toast('เกิดข้อผิดพลาด', 'error');
+          }
         }).adminCreateStockProduct(product, resolvedOpts);
       });
     });
@@ -3838,6 +3854,30 @@ function openBulkStockModal() {
 }
 
 
+function appendLinkedProductSyncOption(container, inputId, linkedListCount) {
+  var count = Number(linkedListCount) || 0;
+  var wrap = document.createElement('label');
+  wrap.className = 'sf-full';
+  wrap.style.cssText = 'display:flex;align-items:flex-start;gap:9px;padding:11px 13px;background:var(--primary-light);border:1.5px solid var(--primary);border-radius:10px;cursor:' + (count ? 'pointer' : 'default') + ';';
+
+  var checkbox = document.createElement('input');
+  checkbox.type = 'checkbox'; checkbox.id = inputId;
+  checkbox.disabled = count < 1;
+  checkbox.style.cssText = 'margin-top:2px;accent-color:var(--primary);cursor:' + (count ? 'pointer' : 'not-allowed') + ';';
+
+  var textWrap = document.createElement('span');
+  var title = document.createElement('strong');
+  title.textContent = 'อัปเดตสินค้าที่นำเข้ารายการแล้วด้วย (' + count + ' รายการ)';
+  var note = document.createElement('span');
+  note.style.cssText = 'display:block;margin-top:3px;font-size:0.75rem;color:var(--text-2);line-height:1.45;';
+  note.textContent = count
+    ? 'อัปเดตชื่อ ราคา รูปภาพ สถานะ และตัวเลือก โดยไม่เปลี่ยนจำนวนคงเหลือของแต่ละรายการ'
+    : 'ยังไม่มีสินค้าที่เชื่อมกับคลังนี้ รายการเก่าที่มีบาร์โค้ดตรงกันจะเชื่อมหลังรัน schema.sql ล่าสุด';
+  textWrap.appendChild(title); textWrap.appendChild(note);
+  wrap.appendChild(checkbox); wrap.appendChild(textWrap); container.appendChild(wrap);
+  return checkbox;
+}
+
 function openEditStockModal(prod) {
   el('modalBody').innerHTML = '';
 
@@ -3909,11 +3949,36 @@ function openEditStockModal(prod) {
   };
   addChildBtn.appendChild(addChildBtnEl); grid.appendChild(addChildBtn);
 
+  appendLinkedProductSyncOption(grid, 'sepSyncLinked', prod.linkedListCount);
+
   openModal('✏️ แก้ไขสินค้า', '', function() {
     var name = el('sepName').value.trim(), id = el('sepId') ? el('sepId').value.trim() : prod.id;
     if (!name) { toast('กรุณากรอกชื่อสินค้า', 'error'); return; }
     stopBarcodeScanner();
     var saveBtn6 = el('modalSave'); saveBtn6.disabled = true; saveBtn6.textContent = 'กำลังบันทึก...';
+    var syncLinked = !!(el('sepSyncLinked') && el('sepSyncLinked').checked);
+
+    function finishStockEdit(addedOptions) {
+      function finish(message, type) {
+        saveBtn6.disabled = false; saveBtn6.textContent = 'บันทึกการแก้ไข';
+        closeModal(); toast(message, type || 'success'); loadStock(renderStockContent);
+      }
+      var baseMessage = addedOptions
+        ? 'แก้ไขและเพิ่ม ' + addedOptions + ' ตัวเลือกแล้ว!'
+        : 'แก้ไขแล้ว!';
+      if (!syncLinked) { finish(baseMessage); return; }
+
+      google.script.run.withSuccessHandler(function(syncResult) {
+        try {
+          var syncRes = JSON.parse(syncResult);
+          if (syncRes.status === 'Success') {
+            finish(baseMessage + ' อัปเดต ' + (syncRes.updatedLists || 0) + ' รายการสั่งซื้อ');
+          } else {
+            finish(baseMessage + ' แต่ซิงก์รายการไม่สำเร็จ: ' + (syncRes.message || 'เกิดข้อผิดพลาด'), 'error');
+          }
+        } catch(e) { finish(baseMessage + ' แต่ซิงก์รายการไม่สำเร็จ', 'error'); }
+      }).adminSyncStockProductToLinked(prod.rowIndex);
+    }
 
     // Collect new inline options
     var newOpts = collectOptionRows('sepNewOptSection');
@@ -3922,19 +3987,21 @@ function openEditStockModal(prod) {
       resolveAllOptionImages(newOpts, function(resolvedNewOpts) {
         // First update parent row
         google.script.run.withSuccessHandler(function(r) {
-          saveBtn6.disabled = false; saveBtn6.textContent = 'บันทึกการแก้ไข';
           try {
             var res = JSON.parse(r);
-            if (res.status !== 'Success') { toast(res.message || 'เกิดข้อผิดพลาด', 'error'); return; }
+            if (res.status !== 'Success') {
+              saveBtn6.disabled = false; saveBtn6.textContent = 'บันทึกการแก้ไข';
+              toast(res.message || 'เกิดข้อผิดพลาด', 'error'); return;
+            }
             // Then append new children if any
-            if (!resolvedNewOpts.length) { closeModal(); toast('แก้ไขแล้ว!', 'success'); loadStock(renderStockContent); return; }
+            if (!resolvedNewOpts.length) { finishStockEdit(0); return; }
             var pend = resolvedNewOpts.length;
             var ok = 0;
             resolvedNewOpts.forEach(function(opt) {
               google.script.run.withSuccessHandler(function(r2) {
                 try { var res2 = JSON.parse(r2); if (res2.status === 'Success') ok++; } catch(ex) {}
                 pend--;
-                if (pend === 0) { closeModal(); toast('แก้ไขและเพิ่ม ' + ok + ' ตัวเลือกแล้ว!', 'success'); loadStock(renderStockContent); }
+                if (pend === 0) finishStockEdit(ok);
               }).adminAppendStockChild(prod.rowIndex, { id: opt.id, name: opt.name, image: opt.image || '', stock: opt.stock });
             });
           } catch(e) { toast('เกิดข้อผิดพลาด', 'error'); }
@@ -3974,22 +4041,45 @@ function openAddStockChildModal(parent) {
   imgWrapA.appendChild(makeImageField('scaImage', '', 'รูปภาพตัวเลือก'));
   grid.appendChild(imgWrapA);
 
+  appendLinkedProductSyncOption(grid, 'scaSyncLinked', parent.linkedListCount);
+
   openModal('➕ เพิ่มตัวเลือก: ' + escapeHtml(parent.name), '', function() {
     var name = el('scaName').value.trim(), id = el('scaId').value.trim();
     if (!name) { toast('กรุณากรอกชื่อตัวเลือก', 'error'); return; }
     stopBarcodeScanner();
     var sb = el('modalSave'); sb.disabled = true; sb.textContent = 'กำลังบันทึก...';
+    var syncLinked = !!(el('scaSyncLinked') && el('scaSyncLinked').checked);
     resolveImage('scaImage', function(imgUrl) {
       // Create product object and one option
       var productData = { id: parent.id, name: parent.name, image: parent.image || '', price: parent.price, deposit: parent.deposit, yuan: parent.yuan, stock: '', status: parent.status || 'Open' };
       // We add a new row at the sheet level — use adminCreateStockProduct with just one option
       google.script.run.withSuccessHandler(function(r) {
-        sb.disabled = false; sb.textContent = 'เพิ่มตัวเลือก';
         try {
           var res = JSON.parse(r);
-          if (res.status === 'Success') { closeModal(); toast('เพิ่มตัวเลือกแล้ว!', 'success'); loadStock(renderStockContent); }
-          else { toast(res.message || 'เกิดข้อผิดพลาด', 'error'); }
-        } catch(ex) { toast('เกิดข้อผิดพลาด', 'error'); }
+          if (res.status !== 'Success') {
+            sb.disabled = false; sb.textContent = 'เพิ่มตัวเลือก';
+            toast(res.message || 'เกิดข้อผิดพลาด', 'error'); return;
+          }
+          if (!syncLinked) {
+            closeModal(); toast('เพิ่มตัวเลือกแล้ว!', 'success'); loadStock(renderStockContent); return;
+          }
+          google.script.run.withSuccessHandler(function(syncResult) {
+            sb.disabled = false; sb.textContent = 'เพิ่มตัวเลือก';
+            try {
+              var syncRes = JSON.parse(syncResult);
+              closeModal();
+              if (syncRes.status === 'Success') {
+                toast('เพิ่มตัวเลือกแล้ว และอัปเดต ' + (syncRes.updatedLists || 0) + ' รายการสั่งซื้อ', 'success');
+              } else {
+                toast('เพิ่มตัวเลือกแล้ว แต่ซิงก์รายการไม่สำเร็จ: ' + (syncRes.message || 'เกิดข้อผิดพลาด'), 'error');
+              }
+              loadStock(renderStockContent);
+            } catch(ex2) { closeModal(); toast('เพิ่มตัวเลือกแล้ว แต่ซิงก์รายการไม่สำเร็จ', 'error'); loadStock(renderStockContent); }
+          }).adminSyncStockProductToLinked(parent.rowIndex);
+        } catch(ex) {
+          sb.disabled = false; sb.textContent = 'เพิ่มตัวเลือก';
+          toast('เกิดข้อผิดพลาด', 'error');
+        }
       }).adminAppendStockChild(parent.rowIndex, { id: id, name: name, image: imgUrl || '', stock: el('scaStock').value });
     });
   }, 'เพิ่มตัวเลือก');
@@ -4056,20 +4146,43 @@ function openEditStockChildModal(child, parent) {
   scImgGroup.appendChild(scImgHidden);
   grid.appendChild(scImgGroup);
 
+  appendLinkedProductSyncOption(grid, 'scSyncLinked', parent.linkedListCount);
+
   openModal('&#x270F;&#xFE0F; แก้ไขตัวเลือก', '', function() {
     var name = el('scName').value.trim(), id = el('scId').value.trim();
     if (!name) { toast('กรุณากรอกชื่อตัวเลือก', 'error'); return; }
     stopBarcodeScanner();
     var saveBtn7 = el('modalSave'); saveBtn7.disabled = true; saveBtn7.textContent = 'กำลังบันทึก...';
+    var syncLinked = !!(el('scSyncLinked') && el('scSyncLinked').checked);
     resolveImage('scImage', function(imgResolved) {
       var finalImg = imgResolved || el('scImageUrl').value.trim() || child.image || parent.image || '';
       google.script.run.withSuccessHandler(function(r) {
-        saveBtn7.disabled = false; saveBtn7.textContent = 'บันทึกการแก้ไข';
         try {
           var res = JSON.parse(r);
-          if (res.status === 'Success') { closeModal(); toast('แก้ไขตัวเลือกแล้ว!', 'success'); loadStock(renderStockContent); }
-          else { toast(res.message || 'เกิดข้อผิดพลาด', 'error'); }
-        } catch(e) { toast('เกิดข้อผิดพลาด', 'error'); }
+          if (res.status !== 'Success') {
+            saveBtn7.disabled = false; saveBtn7.textContent = 'บันทึกการแก้ไข';
+            toast(res.message || 'เกิดข้อผิดพลาด', 'error'); return;
+          }
+          if (!syncLinked) {
+            closeModal(); toast('แก้ไขตัวเลือกแล้ว!', 'success'); loadStock(renderStockContent); return;
+          }
+          google.script.run.withSuccessHandler(function(syncResult) {
+            saveBtn7.disabled = false; saveBtn7.textContent = 'บันทึกการแก้ไข';
+            try {
+              var syncRes = JSON.parse(syncResult);
+              closeModal();
+              if (syncRes.status === 'Success') {
+                toast('แก้ไขตัวเลือกแล้ว และอัปเดต ' + (syncRes.updatedLists || 0) + ' รายการสั่งซื้อ', 'success');
+              } else {
+                toast('แก้ไขตัวเลือกแล้ว แต่ซิงก์รายการไม่สำเร็จ: ' + (syncRes.message || 'เกิดข้อผิดพลาด'), 'error');
+              }
+              loadStock(renderStockContent);
+            } catch(ex2) { closeModal(); toast('แก้ไขตัวเลือกแล้ว แต่ซิงก์รายการไม่สำเร็จ', 'error'); loadStock(renderStockContent); }
+          }).adminSyncStockProductToLinked(parent.rowIndex);
+        } catch(e) {
+          saveBtn7.disabled = false; saveBtn7.textContent = 'บันทึกการแก้ไข';
+          toast('เกิดข้อผิดพลาด', 'error');
+        }
       }).adminUpdateStockRow(child.rowIndex, 1, id, name,
           finalImg, parent.price, parent.deposit, parent.yuan,
           el('scStock').value, parent.status);

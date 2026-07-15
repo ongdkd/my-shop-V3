@@ -1062,6 +1062,18 @@
         if (r.error) return err(r.error.message);
         var data = r.data || [];
 
+        var linked = await sb.from('products')
+          .select('source_stock_item_id,list_id')
+          .not('source_stock_item_id', 'is', null);
+        if (linked.error) return err(linked.error.message);
+        var linkedListsByStock = {};
+        (linked.data || []).forEach(function (row) {
+          var sourceId = row.source_stock_item_id;
+          if (!sourceId) return;
+          var lists = linkedListsByStock[sourceId] || (linkedListsByStock[sourceId] = {});
+          lists[row.list_id] = true;
+        });
+
         var parents = data.filter(function (x) { return !x.parent_id; });
         var childrenByParent = {};
         data.forEach(function (x) {
@@ -1096,6 +1108,7 @@
             yuan: num(p.yuan),
             stock: p.stock === null || p.stock === undefined ? null : Number(p.stock),
             status: p.status || 'Open',
+            linkedListCount: Object.keys(linkedListsByStock[p.id] || {}).length,
             children: kids
           };
         });
@@ -1164,6 +1177,60 @@
         }).eq('id', sid);
         if (r.error) return err(r.error.message);
         return ok({});
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
+    // Copies warehouse catalog fields to products that were previously pushed
+    // into order lists. The per-list `remaining` value is intentionally not
+    // touched because each shop tracks its own sellable quantity.
+    adminSyncStockProductToLinked: async function (parentRowIndex) {
+      try {
+        requireSb(); await requireAdmin();
+        var parentId = _stockRowMap[parentRowIndex];
+        if (!parentId) return err('ไม่พบสินค้าในคลัง (กรุณารีเฟรช)');
+
+        var parentResult = await sb.from('stock_items')
+          .select('id,parent_id,code,name,image,price,deposit,yuan,status')
+          .eq('id', parentId)
+          .single();
+        if (parentResult.error) return err(parentResult.error.message);
+        if (parentResult.data.parent_id) return err('กรุณาซิงก์จากสินค้าหลัก');
+
+        var childrenResult = await sb.from('stock_items')
+          .select('id,seq,code,name')
+          .eq('parent_id', parentId)
+          .order('seq', { ascending: true });
+        if (childrenResult.error) return err(childrenResult.error.message);
+
+        var parent = parentResult.data;
+        var children = childrenResult.data || [];
+        var payload = {
+          name: String(parent.name || ''),
+          image: String(parent.image || ''),
+          price: num(parent.price),
+          deposit: num(parent.deposit),
+          yuan: num(parent.yuan),
+          status: parent.status || 'Open',
+          options: children.map(function (child) {
+            return String(child.name || '') + ':' + String(child.code || '');
+          }).join(',')
+        };
+        // Option products use an independent parent code. For single products,
+        // the warehouse barcode remains the product barcode in every shop.
+        if (!children.length) payload.code = String(parent.code || '');
+
+        var updated = await sb.from('products')
+          .update(payload)
+          .eq('source_stock_item_id', parentId)
+          .select('id,list_id');
+        if (updated.error) return err(updated.error.message);
+
+        var listIds = {};
+        (updated.data || []).forEach(function (row) { listIds[row.list_id] = true; });
+        return ok({
+          updatedProducts: (updated.data || []).length,
+          updatedLists: Object.keys(listIds).length
+        });
       } catch (e) { return e.__json || err(e.message || e); }
     },
 
@@ -1242,6 +1309,7 @@
           if (!kids.length) {
             rows.push({
               list_id: targetSheetId,
+              source_stock_item_id: p.id,
               code: p.code || randomCode(),
               name: p.name, image: p.image || '',
               price: num(p.price), deposit: num(p.deposit),
@@ -1256,6 +1324,7 @@
             }).join(',');
             rows.push({
               list_id: targetSheetId,
+              source_stock_item_id: p.id,
               code: randomCode(),
               name: p.name, image: p.image || '',
               price: num(p.price), deposit: num(p.deposit),
