@@ -352,10 +352,13 @@ function confirmOrder(){
   isSubmitted=true;
   var btn=document.getElementById('confirmButton'); btn.disabled=true; btn.textContent='กำลังยืนยัน...';
   currentOrder=summaryCache;
+  // Reuse the same checkout id across retries of this same summary,
+  // so a network hiccup + retry can never create a duplicate order
+  summaryCache.checkoutId = summaryCache.checkoutId || (window.__newCheckoutId ? window.__newCheckoutId() : null);
   var oi=[];
   for(var i=0;i<summaryCache.items.length;i++){var it=summaryCache.items[i];oi.push({id:it.id,quantity:it.quantity,isDeposit:it.isDeposit,selectedOption:it.selectedOption||null});}
   google.script.run.withSuccessHandler(handleSubmitOk).withFailureHandler(handleSubmitFail)
-    .submitOrderToSheet(selectedSheetId,summaryCache.customerName,summaryCache.customerPhone||'',oi);
+    .submitOrderToSheet(selectedSheetId,summaryCache.customerName,summaryCache.customerPhone||'',oi,summaryCache.checkoutId);
 }
 
 function onOrderSuccess(){

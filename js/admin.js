@@ -16,12 +16,6 @@ var PLACEHOLDER = 'https://www.svgrepo.com/show/508699/landscape-placeholder.svg
 
 // ── INIT ──
 var _au = sessionStorage.getItem('_au') || '';
-var _ap = sessionStorage.getItem('_ap') || '';
-
-// Set session token so isAdmin_() works for all subsequent admin function calls
-if (_au && _ap) {
-  google.script.run.adminSetSessionToken(_au, _ap);
-}
 
 google.script.run.withSuccessHandler(function(email) {
   document.getElementById('userEmail').textContent = email || _au || 'ไม่ทราบ';
@@ -238,54 +232,12 @@ function makeOptionsField(fieldId, initialOptions) {
     hdr.appendChild(badge); hdr.appendChild(delBtn);
     rowDiv.appendChild(hdr);
 
-    // Option: image + name side by side
-    var optImgFieldId = fieldId + '_opt_img_' + idx;
+    // Name input — no per-option image here: shop products only store
+    // "name:barcode" text, so an image picker would silently discard files.
+    // (Per-option images live on warehouse items, which do persist them.)
     var nameRow = document.createElement('div');
-    nameRow.style.cssText = 'display:flex;gap:10px;align-items:flex-start;margin-bottom:10px;';
-
-    // Thumbnail
-    var optThumbWrap = document.createElement('div');
-    optThumbWrap.style.cssText = 'flex-shrink:0;display:flex;flex-direction:column;align-items:center;gap:4px;';
-    var optThumb = document.createElement('div');
-    optThumb.id = optImgFieldId + '_thumb';
-    optThumb.style.cssText = 'width:56px;height:56px;border-radius:10px;border:1.5px solid var(--border);background:var(--surface-2);overflow:hidden;position:relative;cursor:pointer;display:flex;align-items:center;justify-content:center;';
-    var optThumbImg = document.createElement('img'); optThumbImg.id = optImgFieldId + '_preview';
-    optThumbImg.style.cssText = 'width:100%;height:100%;object-fit:cover;display:none;';
-    var optThumbIcon = document.createElement('div');
-    optThumbIcon.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>';
-    optThumbIcon.style.cssText = 'display:flex;flex-direction:column;align-items:center;pointer-events:none;';
-    function applyOptImg(fid, ti, ic, th, file) {
-      if (!file) return;
-      var rdr = new FileReader();
-      rdr.onload = function(ev) {
-        pendingImg[fid] = ev.target.result;
-        ti.src = ev.target.result; ti.style.display = 'block'; ic.style.display = 'none';
-        th.style.borderColor = 'var(--success)';
-      };
-      rdr.readAsDataURL(file);
-    }
-    // Gallery input (no capture)
-    var optFileInp = document.createElement('input'); optFileInp.type = 'file'; optFileInp.accept = 'image/*';
-    optFileInp.style.cssText = 'position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;';
-    optFileInp.onchange = (function(fid, ti, ic, th) { return function() { applyOptImg(fid, ti, ic, th, this.files && this.files[0]); }; })(optImgFieldId, optThumbImg, optThumbIcon, optThumb);
-    optThumb.appendChild(optThumbIcon); optThumb.appendChild(optThumbImg); optThumb.appendChild(optFileInp);
-    // Camera input (capture="environment")
-    var optCamInp = document.createElement('input'); optCamInp.type = 'file'; optCamInp.accept = 'image/*';
-    optCamInp.setAttribute('capture', 'environment'); optCamInp.style.display = 'none';
-    optCamInp.onchange = (function(fid, ti, ic, th) { return function() { applyOptImg(fid, ti, ic, th, this.files && this.files[0]); }; })(optImgFieldId, optThumbImg, optThumbIcon, optThumb);
-    // Camera button below thumbnail
-    var optCamBtn = document.createElement('button'); optCamBtn.type = 'button';
-    optCamBtn.innerHTML = '📷';
-    optCamBtn.style.cssText = 'width:56px;padding:3px 0;font-size:0.68rem;font-weight:700;font-family:var(--font);background:var(--primary);color:#fff;border:none;border-radius:6px;cursor:pointer;margin-top:3px;';
-    optCamBtn.onclick = function() { optCamInp.click(); };
-    // Hidden URL store
-    var optImgHidden = document.createElement('input'); optImgHidden.type = 'hidden';
-    optImgHidden.id = optImgFieldId; optImgHidden.className = 'opt-img-hidden';
-    optThumbWrap.appendChild(optCamInp);
-    optThumbWrap.appendChild(optThumb); optThumbWrap.appendChild(optCamBtn); optThumbWrap.appendChild(optImgHidden);
-
-    // Name input
-    var nameCol = document.createElement('div'); nameCol.style.cssText = 'flex:1;min-width:0;';
+    nameRow.style.cssText = 'margin-bottom:10px;';
+    var nameCol = document.createElement('div'); nameCol.style.cssText = 'min-width:0;';
     var nameLabel = document.createElement('label');
     nameLabel.textContent = 'ชื่อตัวเลือก';
     nameLabel.style.cssText = 'font-size:0.78rem;font-weight:600;color:var(--text-2);display:block;margin-bottom:4px;';
@@ -299,8 +251,7 @@ function makeOptionsField(fieldId, initialOptions) {
       updateHidden();
     };
     nameCol.appendChild(nameLabel); nameCol.appendChild(nameInp);
-
-    nameRow.appendChild(optThumbWrap); nameRow.appendChild(nameCol);
+    nameRow.appendChild(nameCol);
     rowDiv.appendChild(nameRow);
 
     // Barcode field for this option
@@ -950,6 +901,72 @@ function getVisibleLists() {
 }
 
 // ════════════════════════════════
+// BACKUP / EXPORT
+// ════════════════════════════════
+function csvCell(v) {
+  var s = v === null || v === undefined ? '' : String(v);
+  return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+function downloadTextFile(name, text, mime) {
+  var blob = new Blob([text], { type: mime + ';charset=utf-8' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(function() { URL.revokeObjectURL(url); }, 4000);
+}
+
+// Downloads a restore-grade JSON of every table plus an Excel-friendly
+// CSV of all orders (UTF-8 BOM so Thai text opens correctly in Excel)
+function exportBackup(btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'กำลังสำรอง...'; }
+  function restoreBtn() { if (btn) { btn.disabled = false; btn.innerHTML = '&#x1F4BE; สำรองข้อมูล'; } }
+  google.script.run.withSuccessHandler(function(r) {
+    restoreBtn();
+    try {
+      var res = JSON.parse(r);
+      if (res.status !== 'Success') { toast(res.message || 'สำรองข้อมูลไม่สำเร็จ', 'error'); return; }
+      var d = res.data || {};
+      var now = new Date();
+      var stamp = now.getFullYear() +
+        String(now.getMonth() + 1).padStart(2, '0') +
+        String(now.getDate()).padStart(2, '0') + '-' +
+        String(now.getHours()).padStart(2, '0') +
+        String(now.getMinutes()).padStart(2, '0');
+
+      downloadTextFile('orderhub-backup-' + stamp + '.json',
+        JSON.stringify({ exportedAt: res.exportedAt, data: d }, null, 1),
+        'application/json');
+
+      var listName = {};
+      (d.order_lists || []).forEach(function(l) { listName[l.id] = l.name; });
+      var head = ['วันที่', 'รายการ', 'ลูกค้า', 'สินค้า', 'จำนวน', 'ประเภท',
+                  'ราคา/ชิ้น', 'รวม', 'หยวน', 'รวมหยวน', 'ราคาเต็ม', 'รวมราคาเต็ม', 'เบอร์/หมายเหตุ'];
+      var lines = [head.join(',')];
+      (d.orders || []).forEach(function(o) {
+        lines.push([
+          o.created_at, listName[o.list_id] || '', o.customer, o.product, o.qty, o.pay_type,
+          o.price, o.total, o.yuan, o.total_yuan, o.full_price, o.total_full, o.remark
+        ].map(csvCell).join(','));
+      });
+      // Slight delay so browsers allow the second download
+      setTimeout(function() {
+        downloadTextFile('orderhub-orders-' + stamp + '.csv', '\uFEFF' + lines.join('\r\n'), 'text/csv');
+      }, 500);
+
+      toast('สำรองข้อมูลแล้ว: รายการ ' + (d.order_lists || []).length +
+            ' / สินค้า ' + (d.products || []).length +
+            ' / ออเดอร์ ' + (d.orders || []).length +
+            ' / คลัง ' + (d.stock_items || []).length, 'success');
+    } catch(e) { toast('สำรองข้อมูลไม่สำเร็จ', 'error'); }
+  }).withFailureHandler(function() {
+    restoreBtn();
+    toast('สำรองข้อมูลไม่สำเร็จ — กรุณาลองใหม่', 'error');
+  }).adminExportAllData();
+}
+
+// ════════════════════════════════
 // ORDER LISTS (Combined with Overview)
 // ════════════════════════════════
 function renderOrderLists() {
@@ -963,7 +980,9 @@ function renderOrderLists() {
   });
   var rb = makeBtn('btn btn-ghost btn-sm', '&#x21BB; รีเฟรช', function() { loadAllLists(renderOrderLists); });
   rb.style.marginLeft = '6px';
-  el('topbarActions').appendChild(nb); el('topbarActions').appendChild(ob); el('topbarActions').appendChild(rb);
+  var bb = makeBtn('btn btn-ghost btn-sm', '&#x1F4BE; สำรองข้อมูล', function() { exportBackup(bb); });
+  bb.title = 'ดาวน์โหลดข้อมูลทั้งหมด (JSON) + ออเดอร์ (CSV)';
+  el('topbarActions').appendChild(nb); el('topbarActions').appendChild(ob); el('topbarActions').appendChild(rb); el('topbarActions').appendChild(bb);
  
   var wrap = document.createElement('div');
  
@@ -2055,7 +2074,7 @@ function openCreateOrderListModal() {
 
   var info = document.createElement('div');
   info.style.cssText = 'background:#f0efff;border:1.5px solid #c4c0f7;border-radius:var(--radius-sm);padding:8px 12px;font-size:0.76rem;color:#4A4190;margin-top:6px;display:none;';
-  info.innerHTML = '📋 ระบบจะคัดลอก Template ให้อัตโนมัติ แล้วล้างข้อมูลใน <strong>Products</strong> และ <strong>Orders</strong> ให้เลยค่ะ';
+  info.innerHTML = '✨ ระบบจะสร้างรายการว่างให้ทันที — เพิ่มสินค้าได้เลยหลังสร้าง แล้วค่อยเปิดรับออเดอร์เมื่อพร้อมค่ะ';
 
   var f1 = div('modal-field');
   f1.style.marginBottom = '0';
@@ -2079,8 +2098,9 @@ function openCreateOrderListModal() {
   var f3 = div('modal-field');
   var l3 = document.createElement('label'); l3.textContent = 'สถานะเริ่มต้น';
   var s3 = document.createElement('select'); s3.id = 'cStatus';
-  var o1 = document.createElement('option'); o1.value = 'Open'; o1.textContent = 'เปิดรับออเดอร์';
-  var o2 = document.createElement('option'); o2.value = 'Closed'; o2.textContent = 'ปิดรับออเดอร์';
+  // Default Closed: add products first, then open the list when it's ready
+  var o1 = document.createElement('option'); o1.value = 'Closed'; o1.textContent = 'ปิดรับออเดอร์ (เปิดทีหลังเมื่อพร้อม)';
+  var o2 = document.createElement('option'); o2.value = 'Open'; o2.textContent = 'เปิดรับออเดอร์ทันที';
   s3.appendChild(o1); s3.appendChild(o2);
   f3.appendChild(l3); f3.appendChild(s3);
   el('modalBody').appendChild(f3);
@@ -2415,12 +2435,9 @@ function openBulkAddModal() {
           odel.onclick = (function(row, oi2) { return function() { row.opts.splice(oi2, 1); var bl = document.getElementById('bulkList'); if (bl) renderBulkRows(bl); }; })(row, oi);
           ohdr.appendChild(olbl); ohdr.appendChild(odel); oc.appendChild(ohdr);
 
-          // Image + name row
+          // Name row — no option image: shop products only store
+          // "name:barcode", so uploaded option images were discarded
           var oTop = document.createElement('div'); oTop.style.cssText = 'display:flex;gap:10px;align-items:flex-start;margin-bottom:8px;';
-          var oImgKey = 'bulk_opt_img_' + idx + '_' + oi;
-          var oImgB = makeBulkImgBox(oImgKey, opt.image && !opt.image.startsWith('__pending__') ? opt.image : '', function(v) { opt.image = v; });
-          oImgB.el.style.width = '52px'; oImgB.el.style.height = '52px';
-          oTop.appendChild(oImgB.el);
           var oNameGrp = document.createElement('div'); oNameGrp.style.cssText = 'flex:1;min-width:0;';
           var oNLbl = document.createElement('label'); oNLbl.textContent = 'ชื่อตัวเลือก';
           oNLbl.style.cssText = 'display:block;font-size:0.68rem;font-weight:700;color:var(--text-3);text-transform:uppercase;margin-bottom:3px;';
@@ -2544,27 +2561,12 @@ function openBulkAddModal() {
               finalStock, Number(row.yuan) || 0, optsStr);
       }
 
-      // Upload option images first if any pending
+      // Only the main product image is uploaded — shop product options
+      // are "name:barcode" text and cannot store images
       var pendingKey = 'bulk_img_' + idx;
 
       function resolveOptsAndSave(mainImgUrl) {
-        if (!row.opts || !row.opts.length) { doSaveRow(mainImgUrl, row.opts || []); return; }
-        var optsToUpload = row.opts.filter(function(o) { return pendingImg['bulk_opt_img_' + idx + '_' + row.opts.indexOf(o)]; });
-        if (!optsToUpload.length) { doSaveRow(mainImgUrl, row.opts); return; }
-        var optp = optsToUpload.length;
-        optsToUpload.forEach(function(o) {
-          var oKey = 'bulk_opt_img_' + idx + '_' + row.opts.indexOf(o);
-          var ob64 = pendingImg[oKey];
-          google.script.run
-            .withSuccessHandler(function(r) {
-              delete pendingImg[oKey]; var url = '';
-              try { var res = JSON.parse(r); if (res.status === 'Success') url = res.url; } catch(ex) {}
-              o.image = url; optp--;
-              if (optp === 0) doSaveRow(mainImgUrl, row.opts);
-            })
-            .withFailureHandler(function() { delete pendingImg[oKey]; optp--; if (optp === 0) doSaveRow(mainImgUrl, row.opts); })
-            .adminUploadImage(ob64);
-        });
+        doSaveRow(mainImgUrl, row.opts || []);
       }
 
       if (pendingImg[pendingKey]) {
@@ -2987,7 +2989,12 @@ function pushSelectedToShop(targetSheetId) {
     if (btn) { btn.disabled = false; btn.innerHTML = '&#x1F4E4; นำสินค้าเข้า'; }
     try {
       var res = JSON.parse(r);
-      if (res.status === 'Success') { toast('นำสินค้าเข้าแล้ว ' + res.pushed + ' รายการ', 'success'); loadStock(renderStockContent); }
+      if (res.status === 'Success') {
+        var msg = 'นำสินค้าเข้าแล้ว ' + res.pushed + ' รายการ';
+        if (res.deducted) msg += ' • ตัดสต็อกคลังแล้ว';
+        toast(msg, 'success');
+        loadStock(renderStockContent);
+      }
       else { toast(res.message || 'เกิดข้อผิดพลาด', 'error'); }
     } catch(e) { toast('เกิดข้อผิดพลาด', 'error'); }
   }).adminPushStockToShop(targetSheetId, items);
@@ -4579,15 +4586,12 @@ function resolveImage(fieldId, callback) {
 }
 
 function openPOSMode(listItem) {
-  var au = sessionStorage.getItem('_au') || '';
-  var ap = sessionStorage.getItem('_ap') || '';
+  // POS shares the Supabase session — no credentials in the URL
   google.script.run.withSuccessHandler(function(baseUrl) {
     var url = baseUrl
       + '?page=pos'
       + '&sheetId='  + encodeURIComponent(listItem.sheetId)
-      + '&listName=' + encodeURIComponent(listItem.name)
-      + '&au='       + encodeURIComponent(au)
-      + '&ap='       + encodeURIComponent(ap);
+      + '&listName=' + encodeURIComponent(listItem.name);
     window.open(url, '_blank');
   }).getWebAppUrl();
 }

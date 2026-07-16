@@ -365,18 +365,13 @@
       return { ok: true };
     },
 
-    adminSetSessionToken: async function (username, password) {
+    // Legacy shim kept for compatibility — reports whether a Supabase
+    // session exists. Passwords are never accepted here (they used to
+    // ride along in POS URLs, which is unsafe).
+    adminSetSessionToken: async function () {
       if (!sb) return false;
       var s = await getSession();
-      if (s) return true;
-      if (username && password) {
-        var r = await sb.auth.signInWithPassword({
-          email: toAdminEmail(username),
-          password: String(password).trim()
-        });
-        return !r.error;
-      }
-      return false;
+      return !!s;
     },
 
     getAdminEmail: async function () {
@@ -429,16 +424,25 @@
     },
 
     // ── Submit order (public, atomic via RPC) ────────────────
-    submitOrderToSheet: async function (sheetId, customerName, customerPhone, orderItems) {
+    submitOrderToSheet: async function (sheetId, customerName, customerPhone, orderItems, checkoutId) {
       try {
         requireSb();
         if (!orderItems || !orderItems.length) return err('No order items received');
-        var r = await sb.rpc('submit_order', {
+        var params = {
           p_list_id: sheetId,
           p_customer: String(customerName || ''),
           p_phone: String(customerPhone || ''),
           p_items: orderItems
-        });
+        };
+        // checkout id makes retries idempotent (no duplicate orders)
+        if (checkoutId) params.p_checkout_id = checkoutId;
+        var r = await sb.rpc('submit_order', params);
+        if (r.error && r.error.code === 'PGRST202' && params.p_checkout_id) {
+          // Database not migrated yet (old 4-arg signature) — degrade
+          // gracefully so customer checkout never breaks.
+          delete params.p_checkout_id;
+          r = await sb.rpc('submit_order', params);
+        }
         if (r.error) return err(r.error.message);
         return J(r.data);
       } catch (e) { return err(e.message || e); }
@@ -695,11 +699,18 @@
     // Records an in-person POS sale through the atomic submit_pos_sale
     // RPC (validates stock, deducts, inserts order rows in one
     // transaction). items: [{ id, quantity, selectedOption }]
-    adminSubmitPosSale: async function (sheetId, items) {
+    adminSubmitPosSale: async function (sheetId, items, checkoutId) {
       try {
         requireSb(); await requireAdmin();
         if (!items || !items.length) return err('ไม่มีสินค้าในตะกร้า');
-        var r = await sb.rpc('submit_pos_sale', { p_list_id: sheetId, p_items: items });
+        var params = { p_list_id: sheetId, p_items: items };
+        if (checkoutId) params.p_checkout_id = checkoutId;
+        var r = await sb.rpc('submit_pos_sale', params);
+        if (r.error && r.error.code === 'PGRST202' && params.p_checkout_id) {
+          // Old 2-arg signature still installed — retry without the id
+          delete params.p_checkout_id;
+          r = await sb.rpc('submit_pos_sale', params);
+        }
         if (r.error) {
           var msg = String(r.error.message || '');
           if (r.error.code === 'PGRST202' || msg.indexOf('submit_pos_sale') !== -1) {
@@ -708,6 +719,45 @@
           return err(msg);
         }
         return J(r.data);
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
+    // Full data export for backups — the Supabase free tier has no
+    // point-in-time recovery, so this download is the shop's safety net.
+    adminExportAllData: async function () {
+      try {
+        requireSb(); await requireAdmin();
+        async function fetchAll(table) {
+          var out = [], from = 0, page = 1000;
+          while (true) {
+            var r = await sb.from(table).select('*')
+              .order('seq', { ascending: true })
+              .range(from, from + page - 1);
+            if (r.error) throw new Error(table + ': ' + r.error.message);
+            out = out.concat(r.data || []);
+            if (!r.data || r.data.length < page) break;
+            from += page;
+            if (from >= 100000) break;
+          }
+          return out;
+        }
+        var results = await Promise.all([
+          fetchAll('order_lists'),
+          fetchAll('products'),
+          fetchAll('orders'),
+          fetchAll('stock_items'),
+          sb.from('notify_emails').select('*')
+        ]);
+        return ok({
+          exportedAt: new Date().toISOString(),
+          data: {
+            order_lists: results[0],
+            products: results[1],
+            orders: results[2],
+            stock_items: results[3],
+            notify_emails: results[4].error ? [] : (results[4].data || [])
+          }
+        });
       } catch (e) { return e.__json || err(e.message || e); }
     },
 
@@ -1289,6 +1339,11 @@
         var byId = {};
         (all.data || []).forEach(function (row) { byId[row.id] = row; });
 
+        // Reserved-inventory model: pushing N units allocates them to the
+        // list, so the warehouse loses N. Validate everything up front so
+        // a failed push never half-deducts.
+        var deductions = []; // {id, stock: newValue}
+
         for (var i = 0; i < items.length; i++) {
           var item = items[i];
           var pid = _stockRowMap[item.parentRowIndex];
@@ -1307,13 +1362,19 @@
           }
 
           if (!kids.length) {
+            var qty = Number(item.qty) || 1;
+            var tracked = p.stock !== null && p.stock !== undefined && p.stock !== '';
+            if (tracked && Number(p.stock) < qty) {
+              return err('สต็อกในคลังไม่พอสำหรับ "' + p.name + '" (เหลือ ' + Number(p.stock) + ' ชิ้น)');
+            }
+            if (tracked) deductions.push({ id: p.id, stock: Number(p.stock) - qty });
             rows.push({
               list_id: targetSheetId,
               source_stock_item_id: p.id,
               code: p.code || randomCode(),
               name: p.name, image: p.image || '',
               price: num(p.price), deposit: num(p.deposit),
-              remaining: item.qty || 1,
+              remaining: qty,
               status: p.status || 'Open',
               yuan: num(p.yuan),
               options: ''
@@ -1322,13 +1383,23 @@
             var optStr = kids.map(function (k) {
               return (k.name || '') + ':' + (k.code || '');
             }).join(',');
+            // Option groups allocate ALL tracked option stock to the list
+            // (sum of children); untracked children keep the group unlimited.
+            var allTracked = kids.every(function (k) {
+              return k.stock !== null && k.stock !== undefined && k.stock !== '';
+            });
+            var sumStock = null;
+            if (allTracked) {
+              sumStock = kids.reduce(function (s, k) { return s + Number(k.stock); }, 0);
+              kids.forEach(function (k) { deductions.push({ id: k.id, stock: 0 }); });
+            }
             rows.push({
               list_id: targetSheetId,
               source_stock_item_id: p.id,
               code: randomCode(),
               name: p.name, image: p.image || '',
               price: num(p.price), deposit: num(p.deposit),
-              remaining: null,
+              remaining: sumStock,
               status: p.status || 'Open',
               yuan: num(p.yuan),
               options: optStr
@@ -1338,9 +1409,28 @@
         if (!rows.length) return err('ไม่มีสินค้าที่นำเข้าได้');
         var r = await sb.from('products').insert(rows);
         if (r.error) return err(r.error.message);
-        return ok({ pushed: rows.length });
+
+        // Deduct warehouse stock after the products were created
+        if (deductions.length) {
+          var d = await sb.from('stock_items').upsert(deductions, { onConflict: 'id' });
+          if (d.error) {
+            return err('นำสินค้าเข้าแล้ว แต่ตัดสต็อกคลังไม่สำเร็จ: ' + d.error.message + ' — กรุณาปรับสต็อกคลังเอง');
+          }
+        }
+        return ok({ pushed: rows.length, deducted: deductions.length });
       } catch (e) { return e.__json || err(e.message || e); }
     }
+  };
+
+  // Checkout ids make order submission retries idempotent
+  window.__newCheckoutId = function () {
+    try {
+      if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+    } catch (e) {}
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+      var r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
   };
 
   window.__api = API;

@@ -537,8 +537,11 @@ function resetPOS() {
 
 // Saves the sale to Supabase (order rows + stock deduction) through
 // the atomic submit_pos_sale RPC, then resets for the next customer.
+var _posCheckoutId = null;
 function submitPosSale(btn) {
   if (!POS_CART.length) { resetPOS(); return; }
+  // Same id across retries of this payment → no duplicate sales
+  _posCheckoutId = _posCheckoutId || (window.__newCheckoutId ? window.__newCheckoutId() : null);
   var items = POS_CART.map(function(item) {
     return { id: item.product.id, quantity: item.qty, selectedOption: item.option || null };
   });
@@ -558,6 +561,7 @@ function submitPosSale(btn) {
             item.product.remaining = Math.max(0, Number(rem) - item.qty);
           }
         });
+        _posCheckoutId = null; // next sale gets a fresh checkout id
         resetPOS();
         posToast('บันทึกการขายแล้ว ✓ (' + (res.saved || items.length) + ' รายการ)', 'success');
       } else {
@@ -568,7 +572,7 @@ function submitPosSale(btn) {
   }).withFailureHandler(function() {
     restore();
     posToast('บันทึกการขายไม่สำเร็จ — กรุณาลองใหม่', 'error');
-  }).adminSubmitPosSale(POS_LIST_ID, items);
+  }).adminSubmitPosSale(POS_LIST_ID, items, _posCheckoutId);
 }
 
 // ══════════════════════════════════
@@ -858,8 +862,6 @@ function hideLoading() {
 window.addEventListener('DOMContentLoaded', function() {
   var sheetId  = (typeof POS_INIT_SHEET_ID  !== 'undefined') ? POS_INIT_SHEET_ID  : '';
   var listName = (typeof POS_INIT_LIST_NAME !== 'undefined') ? POS_INIT_LIST_NAME : 'POS';
-  var au       = (typeof POS_INIT_AU        !== 'undefined') ? POS_INIT_AU        : '';
-  var ap       = (typeof POS_INIT_AP        !== 'undefined') ? POS_INIT_AP        : '';
 
   // Hardware barcode scanners type the code then send Enter:
   // exact code match adds the item instantly, no camera popup needed.
@@ -906,13 +908,6 @@ window.addEventListener('DOMContentLoaded', function() {
       .adminGetProducts(sheetId);
   }
 
-  // Auth first so isAdmin_() passes on the server, then load products
-  if (au && ap) {
-    google.script.run
-      .withSuccessHandler(function() { loadProducts(); })
-      .withFailureHandler(function()  { loadProducts(); })
-      .adminSetSessionToken(au, ap);
-  } else {
-    loadProducts();
-  }
+  // The Supabase session is shared with the admin page — no URL credentials
+  loadProducts();
 });

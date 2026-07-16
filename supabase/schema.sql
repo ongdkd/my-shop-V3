@@ -60,6 +60,21 @@ create table if not exists public.orders (
 );
 create index if not exists orders_list_idx on public.orders(list_id);
 
+-- Groups the line items of one checkout and enables idempotent retries
+alter table public.orders
+  add column if not exists checkout_id uuid;
+create index if not exists orders_checkout_idx on public.orders(checkout_id);
+
+-- One row per completed checkout attempt: a retry with the same id hits
+-- the primary key and is answered with the original success instead of
+-- creating duplicate orders / double-deducting stock.
+create table if not exists public.checkout_requests (
+  id         uuid primary key,
+  created_at timestamptz not null default now()
+);
+alter table public.checkout_requests enable row level security;
+-- (its insert policy is created after is_admin() is defined, below)
+
 -- ── Stock / warehouse (was the "Stock" sheet in Shop_Util) ───
 -- parent_id NULL = parent product (level 0); set = option row (level 1)
 create table if not exists public.stock_items (
@@ -151,6 +166,14 @@ $$;
 
 revoke all on function public.is_admin() from public;
 grant execute on function public.is_admin() to authenticated;
+
+-- POS sales run as the signed-in admin (security invoker), so the
+-- idempotency guard table needs an explicit admin insert policy.
+-- Public checkouts go through the security-definer submit_order,
+-- which bypasses RLS; anon has no direct access.
+drop policy if exists checkout_admin_insert on public.checkout_requests;
+create policy checkout_admin_insert on public.checkout_requests
+  for insert to authenticated with check (public.is_admin());
 
 -- Database invariants protect data even when requests bypass the UI.
 create unique index if not exists products_list_code_uidx
@@ -249,11 +272,16 @@ create policy admin_users_admin_read on public.admin_users
 -- (replaces LockService + stock deduction in code.gs)
 -- items: [{ id, quantity, isDeposit, selectedOption }]
 -- ═══════════════════════════════════════════════════════════
+-- Old signature must be dropped: keeping both would make PostgREST
+-- report an ambiguous function call.
+drop function if exists public.submit_order(uuid, text, text, jsonb);
+
 create or replace function public.submit_order(
-  p_list_id  uuid,
-  p_customer text,
-  p_phone    text,
-  p_items    jsonb
+  p_list_id     uuid,
+  p_customer    text,
+  p_phone       text,
+  p_items       jsonb,
+  p_checkout_id uuid default null
 ) returns jsonb
 language plpgsql
 security definer
@@ -341,6 +369,17 @@ begin
     end if;
   end loop;
 
+  -- Idempotency guard — AFTER all validations so a rejected attempt can
+  -- be retried, but BEFORE any write. A duplicate id means this checkout
+  -- already succeeded: answer Success without writing anything twice.
+  if p_checkout_id is not null then
+    begin
+      insert into public.checkout_requests(id) values (p_checkout_id);
+    exception when unique_violation then
+      return jsonb_build_object('status', 'Success', 'duplicate', true);
+    end;
+  end if;
+
   -- 2) deduct stock + insert order rows
   for it in select * from jsonb_array_elements(p_items) loop
     select * into prod from public.products
@@ -361,22 +400,22 @@ begin
 
     insert into public.orders
       (list_id, customer, product, qty, pay_type, price, total,
-       yuan, total_yuan, full_price, total_full, remark)
+       yuan, total_yuan, full_price, total_full, remark, checkout_id)
     values
       (p_list_id, btrim(p_customer), v_label, v_qty,
        case when v_is_dep then 'Deposit' else 'Full Price' end,
        v_unit, v_unit * v_qty,
        coalesce(prod.yuan, 0), coalesce(prod.yuan, 0) * v_qty,
        coalesce(prod.price, 0), coalesce(prod.price, 0) * v_qty,
-       v_phone);
+       v_phone, p_checkout_id);
   end loop;
 
   return jsonb_build_object('status', 'Success');
 end;
 $$;
 
-revoke all on function public.submit_order(uuid, text, text, jsonb) from public;
-grant execute on function public.submit_order(uuid, text, text, jsonb) to anon, authenticated;
+revoke all on function public.submit_order(uuid, text, text, jsonb, uuid) from public;
+grant execute on function public.submit_order(uuid, text, text, jsonb, uuid) to anon, authenticated;
 
 -- ═══════════════════════════════════════════════════════════
 -- import_legacy_order_list — one-time Google Sheets migration
@@ -484,9 +523,12 @@ grant execute on function public.import_legacy_order_list(text, text, text, text
 -- too (POS sells in person after online ordering closes).
 -- items: [{ id, quantity, selectedOption }]
 -- ═══════════════════════════════════════════════════════════
+drop function if exists public.submit_pos_sale(uuid, jsonb);
+
 create or replace function public.submit_pos_sale(
-  p_list_id uuid,
-  p_items   jsonb
+  p_list_id     uuid,
+  p_items       jsonb,
+  p_checkout_id uuid default null
 ) returns jsonb
 language plpgsql
 security invoker
@@ -558,6 +600,15 @@ begin
     end if;
   end loop;
 
+  -- Idempotency guard (see submit_order): duplicate retry = already saved
+  if p_checkout_id is not null then
+    begin
+      insert into public.checkout_requests(id) values (p_checkout_id);
+    exception when unique_violation then
+      return jsonb_build_object('status', 'Success', 'duplicate', true);
+    end;
+  end if;
+
   -- 3) deduct stock + insert order rows
   for it in select * from jsonb_array_elements(p_items) loop
     select * into prod from public.products
@@ -576,13 +627,13 @@ begin
 
     insert into public.orders
       (list_id, customer, product, qty, pay_type, price, total,
-       yuan, total_yuan, full_price, total_full, remark)
+       yuan, total_yuan, full_price, total_full, remark, checkout_id)
     values
       (p_list_id, 'หน้าร้าน (POS)', v_label, v_qty, 'Full Price',
        coalesce(prod.price, 0), coalesce(prod.price, 0) * v_qty,
        coalesce(prod.yuan, 0), coalesce(prod.yuan, 0) * v_qty,
        coalesce(prod.price, 0), coalesce(prod.price, 0) * v_qty,
-       'POS');
+       'POS', p_checkout_id);
     v_count := v_count + 1;
   end loop;
 
@@ -590,8 +641,8 @@ begin
 end;
 $$;
 
-revoke all on function public.submit_pos_sale(uuid, jsonb) from public;
-grant execute on function public.submit_pos_sale(uuid, jsonb) to authenticated;
+revoke all on function public.submit_pos_sale(uuid, jsonb, uuid) from public;
+grant execute on function public.submit_pos_sale(uuid, jsonb, uuid) to authenticated;
 
 -- Ask PostgREST to expose newly created/updated RPC functions immediately.
 notify pgrst, 'reload schema';

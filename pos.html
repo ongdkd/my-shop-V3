@@ -8,14 +8,13 @@
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&family=Sora:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 <script>
-// URL params replace the old Apps Script template variables
+// URL params replace the old Apps Script template variables.
+// Auth comes from the shared Supabase session — never from the URL.
 var __posQuery = new URLSearchParams(location.search);
 var POS_INIT_SHEET_ID  = __posQuery.get('sheetId')  || '';
 var POS_INIT_LIST_NAME = __posQuery.get('listName') || 'POS';
-var POS_INIT_AU        = __posQuery.get('au') || '';
-var POS_INIT_AP        = __posQuery.get('ap') || '';
 </script>
-<link rel="stylesheet" href="css/pos.css?v=20260714a">
+<link rel="stylesheet" href="css/pos.css?v=20260714b">
 </head>
 <body>
 
@@ -144,10 +143,10 @@ var POS_INIT_AP        = __posQuery.get('ap') || '';
   </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="js/config.js?v=20260714a"></script>
-<script src="js/api.js?v=20260714a"></script>
-<script src="js/pos.js?v=20260714a"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.7/dist/umd/supabase.min.js" integrity="sha384-BmlQlKlDvXvKoxkn5OQuUo/aJQCTXeB+Kls6EccBmG4Kf8AXvp89RtO9MtPxP/r5" crossorigin="anonymous"></script>
+<script src="js/config.js?v=20260714b"></script>
+<script src="js/api.js?v=20260714b"></script>
+<script src="js/pos.js?v=20260714b"></script>
 
 </body>
 </html>
