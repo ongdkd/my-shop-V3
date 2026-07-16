@@ -164,3 +164,7 @@ button{font-family:var(--font);cursor:pointer;border:none;transition:all 0.15s;}
 @keyframes pos-spin{to{transform:rotate(360deg);}}
 .pos-loading-title{font-size:0.95rem;font-weight:700;color:var(--text);}
 .pos-loading-sub{font-size:0.78rem;color:var(--text-3);}
+
+/* Prevent double-tap zoom on rapid tapping (steppers, product cards)
+   without disabling pinch-zoom accessibility */
+button,.pos-prod-card,.qty-step-btn,.sum-qty-btn{touch-action:manipulation;}

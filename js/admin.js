@@ -593,7 +593,7 @@ function makeBarcodeIdField(fieldId, currentVal, fullWidth) {
   var barcodeWrap = document.createElement('div');
   barcodeWrap.id = fieldId + '_barcode';
   barcodeWrap.className = 'bc-preview-wrap';
-  barcodeWrap.style.display = 'block';
+  // stays hidden until a barcode is actually rendered (generateBarcode shows it)
 
   var bcCanvas = document.createElement('canvas');
   bcCanvas.id = fieldId + '_canvas';
@@ -2927,7 +2927,7 @@ function renderStockCards(container, query) {
         cstock9.style.cssText += 'padding:1px 5px;font-size:0.65rem;';
         optRow9.appendChild(cstock9);
         var cEditBtn9 = document.createElement('button'); cEditBtn9.type = 'button';
-        cEditBtn9.innerHTML = SVG_EDIT; cEditBtn9.style.cssText = 'width:20px;height:20px;border:1px solid var(--border);border-radius:4px;background:var(--surface);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;';
+        cEditBtn9.innerHTML = SVG_EDIT; cEditBtn9.style.cssText = 'width:34px;height:34px;border:1px solid var(--border);border-radius:8px;background:var(--surface);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;';
         cEditBtn9.onclick = (function(c9, par9) { return function(e) { e.stopPropagation(); openEditStockChildModal(c9, par9); }; })(child, p);
         optRow9.appendChild(cEditBtn9); optList.appendChild(optRow9);
       });
