@@ -340,11 +340,18 @@ begin
     if lower(btrim(prod.status)) <> 'open' then
       return jsonb_build_object('status', 'Error', 'message', 'Product is closed: ' || prod.name);
     end if;
+    -- A ฿0 deposit must never reserve stock for free
+    if coalesce((it->>'isDeposit')::boolean, false) and coalesce(prod.deposit, 0) <= 0 then
+      return jsonb_build_object('status', 'Error', 'message', 'Deposit not available for ' || prod.name);
+    end if;
+    -- Options are stored as "name:barcode"; accept the raw value or the
+    -- display name so clients never need to show barcodes to customers.
     v_opt := btrim(coalesce(it->>'selectedOption', ''));
     if btrim(prod.options) <> '' then
       if v_opt = '' or not exists (
         select 1 from unnest(string_to_array(prod.options, ',')) allowed(value)
         where btrim(allowed.value) = v_opt
+           or btrim(split_part(allowed.value, ':', 1)) = v_opt
       ) then
         return jsonb_build_object('status', 'Error', 'message', 'Invalid product option: ' || prod.name);
       end if;
@@ -389,14 +396,16 @@ begin
 
     v_qty    := (it->>'quantity')::numeric;
     v_is_dep := coalesce((it->>'isDeposit')::boolean, false);
-    v_opt    := coalesce(it->>'selectedOption', '');
+    v_opt    := btrim(coalesce(it->>'selectedOption', ''));
 
     if prod.remaining is not null then
       update public.products set remaining = remaining - v_qty where id = prod.id;
     end if;
 
     v_unit  := case when v_is_dep then coalesce(prod.deposit, 0) else coalesce(prod.price, 0) end;
-    v_label := case when v_opt <> '' then prod.name || ' (' || v_opt || ')' else prod.name end;
+    -- Record only the display name (never "name:barcode") so web and POS
+    -- orders of the same option group together in every report.
+    v_label := case when v_opt <> '' then prod.name || ' (' || split_part(v_opt, ':', 1) || ')' else prod.name end;
 
     insert into public.orders
       (list_id, customer, product, qty, pay_type, price, total,

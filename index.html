@@ -15,7 +15,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://unpkg.com/@dotlottie/player-component@latest/dist/dotlottie-player.mjs" type="module"></script>
-<link rel="stylesheet" href="css/index.css?v=20260714b">
+<link rel="stylesheet" href="css/index.css?v=20260717a">
 </head>
 <body>
 <div id="message" style="display:none;"></div>
@@ -24,7 +24,7 @@
 <div id="cartSidebar">
   <div class="cart-header">
     <h3>&#x1F6D2; ตะกร้าสินค้า</h3>
-    <button class="cart-close-btn" id="cartCloseBtn">&#x2715;</button>
+    <button class="cart-close-btn" id="cartCloseBtn" aria-label="ปิดตะกร้า">&#x2715;</button>
   </div>
   <div id="cartItemsList"></div>
   <div class="cart-footer">
@@ -35,7 +35,7 @@
         <span class="cart-total-amount" id="cartTotal">฿0.00</span>
       </div>
     </div>
-    <button class="cart-checkout-btn" id="checkoutBtn" disabled>ยืนยันรายการสั่งซื้อ &#x2713;</button>
+    <button class="cart-checkout-btn" id="checkoutBtn" disabled>ตรวจสอบคำสั่งซื้อ &#x2192;</button>
   </div>
 </div>
 
@@ -69,7 +69,7 @@
       <div class="hub-search-group">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         <input type="text" id="hubSearch" placeholder="ค้นหา...">
-        <button id="hubSearchClear">&#x2715;</button>
+        <button id="hubSearchClear" aria-label="ล้างคำค้นหา">&#x2715;</button>
       </div>
     </div>
     <div class="hub-grid" id="hubGrid">
@@ -85,7 +85,7 @@
   <div id="sideMenu">
     <div class="side-menu-header">
       <span>&#x1F6CD;&#xFE0F; เลือกรายการสั่งซื้อ</span>
-      <button class="side-menu-close" id="sideMenuCloseBtn">&#x2715;</button>
+      <button class="side-menu-close" id="sideMenuCloseBtn" aria-label="ปิดเมนู">&#x2715;</button>
     </div>
     <div id="sideMenuList" class="side-menu-list"></div>
     <div class="side-menu-footer">
@@ -95,7 +95,7 @@
 
   <div id="mainContent">
     <div class="page-header">
-      <button class="menu-btn" id="menuToggleBtn">
+      <button class="menu-btn" id="menuToggleBtn" aria-label="เปิดเมนูเลือกรายการ">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </button>
       <div class="workbook-pill" id="workbookName">...</div>
@@ -108,7 +108,7 @@
       <div class="search-pill">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         <input type="text" id="productSearch" placeholder="ค้นหาสินค้า...">
-        <button id="clearSearch">&#x2715;</button>
+        <button id="clearSearch" aria-label="ล้างคำค้นหา">&#x2715;</button>
       </div>
     </div>
 
@@ -151,7 +151,7 @@
       </div>
       <div class="summary-actions">
         <button class="btn-edit" id="editOrderBtn">&#x2190; แก้ไข</button>
-        <button class="btn-confirm" id="confirmButton">ยืนยันคำสั่งซื้อ &#x2192;</button>
+        <button class="btn-confirm" id="confirmButton">ยืนยันและส่งคำสั่งซื้อ &#x2192;</button>
       </div>
     </div>
   </div>
@@ -163,11 +163,11 @@
     </div>
     <div class="card" id="receipt">
       <h3>&#x1F9FE; รายละเอียดการสั่งซื้อ</h3>
-      <p class="notice" style="margin-top:4px;">*รบกวนดาวน์โหลดหรือแคปภาพใบเสร็จส่งให้แม่ค้าด้วยค่ะ*</p>
+      <p class="notice" style="margin-top:4px;">*รบกวนดาวน์โหลดหรือแคปภาพใบยืนยันคำสั่งซื้อส่งให้แม่ค้าด้วยค่ะ*</p>
       <div id="orderSummary" style="margin-top:10px;"></div>
       <div class="receipt-footer">
         <div id="orderTotal" class="total-price"></div>
-        <button class="btn-download" id="downloadBtn">&#x2B07; ดาวน์โหลดใบเสร็จ</button>
+        <button class="btn-download" id="downloadBtn">&#x2B07; ดาวน์โหลดใบยืนยันคำสั่งซื้อ</button>
       </div>
     </div>
     <div class="card payment-info">
@@ -189,8 +189,8 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.7/dist/umd/supabase.min.js" integrity="sha384-BmlQlKlDvXvKoxkn5OQuUo/aJQCTXeB+Kls6EccBmG4Kf8AXvp89RtO9MtPxP/r5" crossorigin="anonymous"></script>
-<script src="js/config.js?v=20260714b"></script>
-<script src="js/api.js?v=20260714b"></script>
-<script src="js/index.js?v=20260714b"></script>
+<script src="js/config.js?v=20260717a"></script>
+<script src="js/api.js?v=20260717a"></script>
+<script src="js/index.js?v=20260717a"></script>
 </body>
 </html>

@@ -457,24 +457,31 @@ function renderPayment() {
   hero.innerHTML = '<div class="pay-amount-label">ยอดที่ต้องชำระ</div><div class="pay-amount-value">' + fmt(totalPrice) + '</div>';
   container.appendChild(hero);
 
-  // QR Card
+  // Payment card — the shop's real payment channels (same as the
+  // customer page). The old generated QR encoded an internal string
+  // that no banking app could actually pay.
   var qrCard = document.createElement('div');
   qrCard.className = 'pay-qr-card';
 
   var qrLabel = document.createElement('div');
   qrLabel.style.cssText = 'font-size:0.85rem;font-weight:600;color:var(--text-2);';
-  qrLabel.textContent = '📷 QR Code ชำระเงิน';
+  qrLabel.textContent = '💳 ช่องทางการชำระเงิน';
   qrCard.appendChild(qrLabel);
 
   var qrWrap = document.createElement('div');
   qrWrap.className = 'pay-qr-wrap';
-  qrWrap.id = 'payQrCode';
+  var qrImg = document.createElement('img');
+  qrImg.src = 'https://i.imgur.com/LDTUtnz.jpeg';
+  qrImg.alt = 'QR ชำระเงินของร้าน';
+  qrImg.style.cssText = 'width:168px;height:auto;border-radius:8px;display:block;margin:0 auto;';
+  qrWrap.appendChild(qrImg);
   qrCard.appendChild(qrWrap);
 
-  var qrSub = document.createElement('div');
-  qrSub.className = 'pay-qr-label';
-  qrSub.textContent = 'ใช้แอปธนาคารสแกน QR เพื่อชำระเงิน';
-  qrCard.appendChild(qrSub);
+  var payInfo = document.createElement('div');
+  payInfo.className = 'pay-qr-label';
+  payInfo.style.cssText = 'line-height:1.7;text-align:center;';
+  payInfo.innerHTML = 'TrueMoney: 0802927553<br>ธนาคารกสิกร: 094-8-44664-2<br>ชื่อบัญชี: ปิยธิดา ก.';
+  qrCard.appendChild(payInfo);
 
   container.appendChild(qrCard);
 
@@ -507,24 +514,6 @@ function renderPayment() {
   doneBtn.onclick = function() { submitPosSale(doneBtn); };
   container.appendChild(doneBtn);
 
-  // Generate QR
-  setTimeout(function() {
-    var qrEl = document.getElementById('payQrCode');
-    if (!qrEl) return;
-    qrEl.innerHTML = '';
-    try {
-      new QRCode(qrEl, {
-        text: 'ORDER_HUB|' + POS_LIST_ID + '|' + totalPrice.toFixed(2),
-        width: 168,
-        height: 168,
-        colorDark: '#1A1D3A',
-        colorLight: '#ffffff',
-        correctLevel: QRCode.CorrectLevel.M
-      });
-    } catch(e) {
-      qrEl.innerHTML = '<div style="font-size:0.78rem;color:var(--text-3);text-align:center;padding:20px;">QR ไม่พร้อมใช้งาน</div>';
-    }
-  }, 200);
 }
 
 function resetPOS() {

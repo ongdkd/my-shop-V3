@@ -39,4 +39,23 @@ const warehouseSync = api.slice(
 );
 assert.ok(!warehouseSync.includes('remaining:'), 'warehouse catalog sync must not overwrite per-list stock');
 
+const posPage = await readFile(new URL('../pos.html', import.meta.url), 'utf8');
+const loginPage = await readFile(new URL('../admin-login.html', import.meta.url), 'utf8');
+const storefrontPage = await readFile(new URL('../index.html', import.meta.url), 'utf8');
+const pos = await readFile(new URL('../js/pos.js', import.meta.url), 'utf8');
+
+assert.ok(schema.includes('Deposit not available for'), 'submit_order must reject zero/negative deposits server-side');
+assert.ok(storefront.includes('Number(product.deposit) > 0'), 'storefront must never build a zero-deposit cart line');
+assert.ok(schema.includes("split_part(v_opt, ':', 1)"), 'order labels must strip option barcodes');
+assert.ok(schema.includes("split_part(allowed.value, ':', 1)"), 'submit_order must accept option display names');
+assert.ok(storefront.includes('function optLabel('), 'storefront must display option names without barcodes');
+assert.ok(storefront.includes('function customerNameError('), 'storefront must enforce the @ customer-name rule');
+assert.ok(storefront.includes('function confirmDiscardCart('), 'leaving with a filled cart must ask for confirmation');
+assert.ok(storefront.includes('aria-pressed'), 'variant chips must expose their selected state');
+assert.ok(storefront.includes('role="button" tabindex="0"'), 'hub cards must be keyboard accessible');
+assert.ok(posPage.includes("location.replace('admin-login.html')"), 'unauthenticated POS access must redirect to login');
+assert.ok(!pos.includes('ORDER_HUB|'), 'POS must not render a fake non-payable QR payload');
+assert.ok(!loginPage.includes('tabindex="-1"'), 'password toggle must stay in keyboard tab order');
+assert.ok(storefrontPage.includes('ตรวจสอบคำสั่งซื้อ'), 'cart button must say review, not confirm');
+
 console.log('Project safety checks passed.');
