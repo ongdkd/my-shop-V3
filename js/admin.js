@@ -2250,7 +2250,7 @@ function openCreateOrderListModal() {
 // Images can be added later via edit, or pasted/dragged per row.
 // ════════════════════════════════════════════════════════════
 // ── Shared image pick box for bulk add modals ──
-// One tap opens an app chooser for camera or files. The browser's native
+// One tap opens an app chooser for camera, files, or an image URL. The native
 // chooser is not reliable because Android may route it straight to Photos.
 function makeBulkImgBox(pendingKey, existingUrl, onChange) {
   var wrap = document.createElement('div');
@@ -2281,6 +2281,14 @@ function makeBulkImgBox(pendingKey, existingUrl, onChange) {
     rdr.readAsDataURL(file);
   }
 
+  function applyUrl(url) {
+    delete pendingImg[pendingKey];
+    prev.src = url; prev.style.display = 'block';
+    box.style.borderColor = 'var(--success)';
+    var s2 = box.querySelector('svg'); if (s2) s2.style.display = 'none';
+    if (onChange) onChange(url);
+  }
+
   var fi = document.createElement('input'); fi.type = 'file'; fi.accept = 'image/*';
   fi.className = 'img-source-input';
   fi.onclick = function(e) { e.stopPropagation(); };
@@ -2291,7 +2299,7 @@ function makeBulkImgBox(pendingKey, existingUrl, onChange) {
 
   var cameraCapture = makeCameraCapture(function(file) { applyFile(file); });
   wrap.appendChild(cameraCapture.input);
-  bindImageActionPicker(box, cameraCapture.input, fi);
+  bindImageActionPicker(box, cameraCapture.input, fi, applyUrl);
 
   return { el: wrap, preview: prev };
 }
@@ -3388,7 +3396,12 @@ function makeOptionRow(sectionId, opt, idx) {
     rdr.readAsDataURL(file);
   });
   imgBox.appendChild(optionCamera.input);
-  bindImageActionPicker(thumb, optionCamera.input, fileInpOpt);
+  bindImageActionPicker(thumb, optionCamera.input, fileInpOpt, function(url) {
+    delete pendingImg[imgFieldId];
+    thumbImg.src = url; thumbImg.style.display = 'block'; placeholderIcon.style.display = 'none';
+    thumb.className = 'opt-img-thumb has-img';
+    hiddenUrl.value = url;
+  });
 
   // The thumbnail opens the app chooser; each action has its own file input.
   var hiddenUrl = document.createElement('input');
@@ -4468,7 +4481,7 @@ function closeImageActionPicker(refocus) {
   return true;
 }
 
-function openImageActionPicker(trigger, cameraInput, fileInput) {
+function openImageActionPicker(trigger, cameraInput, fileInput, onUrl) {
   closeImageActionPicker(false);
   _imageActionTrigger = trigger;
 
@@ -4490,7 +4503,7 @@ function openImageActionPicker(trigger, cameraInput, fileInput) {
   var options = document.createElement('div');
   options.className = 'image-action-options';
 
-  function addAction(label, sublabel, iconHtml, input) {
+  function addAction(label, sublabel, iconHtml, action) {
     var button = document.createElement('button');
     button.type = 'button';
     button.className = 'image-action-option';
@@ -4499,9 +4512,7 @@ function openImageActionPicker(trigger, cameraInput, fileInput) {
       '<span class="image-action-sublabel">' + sublabel + '</span>';
     button.onclick = function(e) {
       e.preventDefault();
-      closeImageActionPicker(false);
-      input.value = '';
-      input.click();
+      action();
     };
     options.appendChild(button);
     return button;
@@ -4509,9 +4520,66 @@ function openImageActionPicker(trigger, cameraInput, fileInput) {
 
   var cameraIcon = '<svg viewBox="0 0 48 48"><path d="M15 14l3-5h12l3 5h5a5 5 0 015 5v18a5 5 0 01-5 5H10a5 5 0 01-5-5V19a5 5 0 015-5h5z" fill="#ff5f91"/><circle cx="24" cy="28" r="10" fill="#fff"/><circle cx="24" cy="28" r="6" fill="#4777e8"/><circle cx="36" cy="20" r="2" fill="#fff"/></svg>';
   var filesIcon = '<svg viewBox="0 0 48 48"><path d="M5 14a5 5 0 015-5h10l4 5h14a5 5 0 015 5v3H5v-8z" fill="#79b7ff"/><path d="M6 19h36a4 4 0 014 5l-4 15a5 5 0 01-5 4H10a5 5 0 01-5-5V20l1-1z" fill="#3987ed"/></svg>';
-  var firstAction = addAction('กล้อง', 'ถ่ายรูปใหม่', cameraIcon, cameraInput);
-  addAction('ไฟล์', 'เลือกรูปจากเครื่อง', filesIcon, fileInput);
+  var urlIcon = '<svg viewBox="0 0 48 48"><circle cx="24" cy="24" r="20" fill="#7656e8"/><path d="M20 29l-2 2a6 6 0 01-8-8l5-5a6 6 0 018 0" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"/><path d="M28 19l2-2a6 6 0 018 8l-5 5a6 6 0 01-8 0" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"/><path d="M18 30l12-12" stroke="#fff" stroke-width="4" stroke-linecap="round"/></svg>';
+  var firstAction = addAction('กล้อง', 'ถ่ายรูปใหม่', cameraIcon, function() {
+    closeImageActionPicker(false);
+    cameraInput.value = '';
+    cameraInput.click();
+  });
+  addAction('ไฟล์', 'เลือกจากเครื่อง', filesIcon, function() {
+    closeImageActionPicker(false);
+    fileInput.value = '';
+    fileInput.click();
+  });
+  var urlAction = addAction('URL', 'วางลิงก์รูปภาพ', urlIcon, function() {
+    options.style.display = 'none';
+    urlPanel.style.display = 'block';
+    title.textContent = 'เพิ่มรูปภาพจาก URL';
+    urlInput.focus();
+  });
   sheet.appendChild(options);
+
+  var urlPanel = document.createElement('div');
+  urlPanel.className = 'image-url-panel';
+  urlPanel.style.display = 'none';
+  var urlInput = document.createElement('input');
+  urlInput.type = 'url';
+  urlInput.className = 'image-url-input';
+  urlInput.placeholder = 'https://example.com/image.jpg';
+  urlInput.setAttribute('aria-label', 'URL รูปภาพ');
+  var urlError = document.createElement('div');
+  urlError.className = 'image-url-error';
+  var urlActions = document.createElement('div');
+  urlActions.className = 'image-url-actions';
+  var urlBack = document.createElement('button');
+  urlBack.type = 'button';
+  urlBack.className = 'image-url-back';
+  urlBack.textContent = 'ย้อนกลับ';
+  urlBack.onclick = function() {
+    urlPanel.style.display = 'none';
+    options.style.display = 'grid';
+    title.textContent = 'เลือกการทำงาน';
+    urlAction.focus();
+  };
+  var urlApply = document.createElement('button');
+  urlApply.type = 'button';
+  urlApply.className = 'image-url-apply';
+  urlApply.textContent = 'ใช้รูปนี้';
+  function applyEnteredUrl() {
+    var url = urlInput.value.trim();
+    if (!/^https:\/\//i.test(url)) {
+      urlError.textContent = 'กรุณาใช้ลิงก์รูปภาพที่ขึ้นต้นด้วย https://';
+      urlInput.focus();
+      return;
+    }
+    if (onUrl) onUrl(url);
+    closeImageActionPicker(false);
+  }
+  urlApply.onclick = applyEnteredUrl;
+  urlInput.onkeydown = function(e) { if (e.key === 'Enter') { e.preventDefault(); applyEnteredUrl(); } };
+  urlActions.appendChild(urlBack); urlActions.appendChild(urlApply);
+  urlPanel.appendChild(urlInput); urlPanel.appendChild(urlError); urlPanel.appendChild(urlActions);
+  sheet.appendChild(urlPanel);
 
   var cancel = document.createElement('button');
   cancel.type = 'button';
@@ -4525,18 +4593,18 @@ function openImageActionPicker(trigger, cameraInput, fileInput) {
   firstAction.focus();
 }
 
-function bindImageActionPicker(trigger, cameraInput, fileInput) {
+function bindImageActionPicker(trigger, cameraInput, fileInput, onUrl) {
   trigger.setAttribute('role', 'button');
   trigger.setAttribute('tabindex', '0');
-  trigger.setAttribute('aria-label', 'เลือกกล้องหรือไฟล์รูปภาพ');
+  trigger.setAttribute('aria-label', 'เลือกกล้อง ไฟล์ หรือ URL รูปภาพ');
   trigger.onclick = function(e) {
     e.preventDefault();
-    openImageActionPicker(trigger, cameraInput, fileInput);
+    openImageActionPicker(trigger, cameraInput, fileInput, onUrl);
   };
   trigger.onkeydown = function(e) {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
-      openImageActionPicker(trigger, cameraInput, fileInput);
+      openImageActionPicker(trigger, cameraInput, fileInput, onUrl);
     }
   };
 }
@@ -4550,7 +4618,7 @@ function makeImageField(fieldId, currentUrl, labelText) {
   var fileInp = document.createElement('input'); fileInp.type = 'file'; fileInp.accept = 'image/*'; fileInp.className = 'img-source-input';
   fileInp.onclick = function(e) { e.stopPropagation(); };
   fileInp.onchange = function() { handleImgSelect(this, fieldId); };
-  var lbTxt = div('img-upload-label', '&#x1F5BC;&#xFE0F; แตะเพื่อเลือกรูป (กล้อง/แกลเลอรี)');
+  var lbTxt = div('img-upload-label', '&#x1F5BC;&#xFE0F; แตะเพื่อเลือกรูป (กล้อง/ไฟล์/URL)');
   var subTxt = div('img-upload-sublabel', 'PNG, JPG, WEBP · ลากไฟล์มาวางได้');
   var statusEl = document.createElement('div'); statusEl.className = 'img-upload-status'; statusEl.id = fieldId + 'Status';
   var prevImg = document.createElement('img'); prevImg.className = 'img-upload-preview'; prevImg.id = fieldId + 'Preview'; prevImg.style.display = 'none';
@@ -4563,13 +4631,20 @@ function makeImageField(fieldId, currentUrl, labelText) {
 
   var cameraCapture = makeCameraCapture(function() { handleImgSelect(cameraCapture.input, fieldId); });
   wrap.appendChild(cameraCapture.input);
-  bindImageActionPicker(uploadWrap, cameraCapture.input, fileInp);
 
-  // The upload zone opens an app chooser for camera or files.
+  // The upload zone opens an app chooser for camera, files, or URL.
   var urlInp = document.createElement('input'); urlInp.type = 'text'; urlInp.id = fieldId;
   urlInp.placeholder = 'หรือวาง URL รูปภาพโดยตรง'; urlInp.value = currentUrl || '';
   urlInp.style.marginTop = '8px';
   wrap.appendChild(urlInp);
+  bindImageActionPicker(uploadWrap, cameraCapture.input, fileInp, function(url) {
+    delete pendingImg[fieldId];
+    urlInp.value = url;
+    prevImg.src = url; prevImg.style.display = 'block';
+    uploadWrap.className = 'img-upload-wrap done';
+    statusEl.className = 'img-upload-status done';
+    statusEl.textContent = 'ใช้รูปภาพจาก URL แล้ว';
+  });
   var _onPaste = function(e) {
     if (!document.getElementById('modal').classList.contains('open')) return;
     if (!document.getElementById(fieldId + 'Wrap')) return;
