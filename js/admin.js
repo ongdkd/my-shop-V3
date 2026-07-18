@@ -3073,25 +3073,6 @@ function renderStockContent() {
   statRow.appendChild(makeStat('สต็อกรวม', totalStock, 'success'));
   wrap.appendChild(statRow);
 
-  // ── Search bar ──
-  var searchCard = document.createElement('div');
-  searchCard.style.cssText = 'margin-bottom:12px;position:relative;';
-  var searchInp = document.createElement('input'); searchInp.type = 'search';
-  searchInp.placeholder = '🔍 ค้นหาสินค้า...';
-  searchInp.value = stockSearchQuery;
-  searchInp.style.cssText = [
-    'width:100%;padding:11px 16px;font-size:0.9rem;font-family:var(--font);',
-    'border:1.5px solid var(--border);border-radius:var(--radius-md);',
-    'background:var(--surface);outline:none;transition:border-color 0.15s;'
-  ].join('');
-  searchInp.onfocus = function() { searchInp.style.borderColor = 'var(--primary)'; };
-  searchInp.onblur  = function() { searchInp.style.borderColor = 'var(--border)'; };
-  searchInp.oninput = function() {
-    stockSearchQuery = searchInp.value.toLowerCase().trim();
-    renderStockCards(cardGrid, stockSearchQuery);
-  };
-  searchCard.appendChild(searchInp); wrap.appendChild(searchCard);
-
   // ── Card grid ──
   _stockSelected = {}; _stockQtyMap = {};
   var cardGrid = document.createElement('div'); cardGrid.id = 'stockCardGrid';
@@ -3100,8 +3081,23 @@ function renderStockContent() {
 
   // ── Sticky import bar — follows the scroll so importing never needs a trip back to the top ──
   var pushBar = document.createElement('div');
-  pushBar.className = 'sticky-save-bar';
-  pushBar.style.cssText = 'margin-top:12px;border:1.5px solid var(--border);border-radius:var(--radius-md);flex-wrap:wrap;';
+  pushBar.className = 'sticky-save-bar stock-command-overlay';
+
+  // Keep product search in the always-visible command overlay so mobile
+  // users do not need to scroll back to the top between scans/selections.
+  var searchCard = document.createElement('div'); searchCard.className = 'stock-overlay-search';
+  var searchInp = document.createElement('input'); searchInp.type = 'search';
+  searchInp.className = 'stock-overlay-search-input';
+  searchInp.placeholder = '🔍 ค้นหาชื่อหรือบาร์โค้ด...';
+  searchInp.setAttribute('aria-label', 'ค้นหาสินค้าในคลัง');
+  searchInp.value = stockSearchQuery;
+  searchInp.oninput = function() {
+    stockSearchQuery = searchInp.value.toLowerCase().trim();
+    renderStockCards(cardGrid, stockSearchQuery);
+  };
+  searchCard.appendChild(searchInp);
+
+  var overlayActions = document.createElement('div'); overlayActions.className = 'stock-overlay-actions';
   var selCount = document.createElement('span');
   selCount.className = 'save-count'; selCount.id = 'stockSelCount';
   selCount.style.cssText = 'flex:0 0 auto;white-space:nowrap;';
@@ -3119,10 +3115,12 @@ function renderStockContent() {
   }
   var pushBtn = makeBtn('btn btn-primary', '📤 นำสินค้าเข้า', function() { pushSelectedToShop(shopSel.value); });
   pushBtn.id = 'stockPushBtn'; pushBtn.style.cssText = 'white-space:nowrap;padding:10px 16px;font-size:0.85rem;';
-  pushBar.appendChild(selCount);
-  pushBar.appendChild(selAllBtn);
-  pushBar.appendChild(shopSel);
-  pushBar.appendChild(pushBtn);
+  overlayActions.appendChild(selCount);
+  overlayActions.appendChild(selAllBtn);
+  overlayActions.appendChild(shopSel);
+  overlayActions.appendChild(pushBtn);
+  pushBar.appendChild(searchCard);
+  pushBar.appendChild(overlayActions);
   wrap.appendChild(pushBar);
 
   el('content').appendChild(wrap);
@@ -3381,6 +3379,41 @@ function pushSelectedToShop(targetSheetId) {
   }).adminPushStockToShop(targetSheetId, items);
 }
 
+function openMatchedStockEditor(item, refreshed) {
+  item = item || {};
+  var parent = null, child = null;
+  if (item.isOption) {
+    parent = stockCache.find(function(p) {
+      return p.stockItemId === item.parentId || (p.children || []).some(function(c) { return c.stockItemId === item.id; });
+    });
+    if (parent) {
+      child = (parent.children || []).find(function(c) {
+        return c.stockItemId === item.id || String(c.id || '').trim().toLowerCase() === String(item.code || '').trim().toLowerCase();
+      });
+    }
+  } else {
+    parent = stockCache.find(function(p) {
+      return p.stockItemId === item.id || String(p.id || '').trim().toLowerCase() === String(item.code || '').trim().toLowerCase();
+    });
+  }
+
+  if (item.isOption && parent && child) {
+    toast('พบบาร์โค้ดแล้ว — เปิดแก้ไขสต็อกตัวเลือก', 'success');
+    openEditStockChildModal(child, parent);
+    return;
+  }
+  if (!item.isOption && parent) {
+    toast('พบบาร์โค้ดแล้ว — เปิดแก้ไขสินค้า', 'success');
+    openEditStockModal(parent);
+    return;
+  }
+  if (!refreshed) {
+    loadStock(function() { openMatchedStockEditor(item, true); });
+    return;
+  }
+  toast('พบสินค้า แต่เปิดหน้าแก้ไขไม่สำเร็จ — กรุณารีเฟรชคลัง', 'error');
+}
+
 // ── Create Stock Product — barcode-first duplicate check ──
 function openCreateStockModal() {
   el('modalBody').innerHTML = '';
@@ -3390,7 +3423,7 @@ function openCreateStockModal() {
   intro.textContent = 'สแกนหรือกรอกบาร์โค้ดก่อน ระบบจะตรวจสอบว่าสินค้านี้มีอยู่ในคลังแล้วหรือยัง';
   el('modalBody').appendChild(intro);
 
-  var group = document.createElement('div'); group.className = 'sf-group';
+  var group = document.createElement('div'); group.className = 'sf-group stock-barcode-lookup';
   var label = document.createElement('label'); label.htmlFor = 'stockLookupBarcode'; label.textContent = 'บาร์โค้ดสินค้า *';
   var row = document.createElement('div'); row.className = 'sf-bc-row';
   var input = document.createElement('input');
@@ -3406,29 +3439,6 @@ function openCreateStockModal() {
   row.appendChild(input); row.appendChild(scanBtn); row.appendChild(randomBtn);
   group.appendChild(label); group.appendChild(row); el('modalBody').appendChild(group);
 
-  var resultBox = document.createElement('div'); resultBox.id = 'stockBarcodeLookupResult';
-  resultBox.style.cssText = 'display:none;margin-top:14px;padding:12px;border-radius:var(--radius-sm);font-size:0.8rem;line-height:1.5;';
-  el('modalBody').appendChild(resultBox);
-
-  function showExisting(item) {
-    resultBox.innerHTML = '';
-    resultBox.style.display = 'block';
-    resultBox.style.background = 'var(--warning-light)';
-    resultBox.style.color = '#8B5E00';
-    var title = document.createElement('div'); title.style.fontWeight = '800'; title.textContent = 'พบสินค้าในคลังแล้ว';
-    var detail = document.createElement('div');
-    detail.textContent = item.isOption
-      ? (item.parentName + ' — ' + item.name + ' (' + item.code + ')')
-      : (item.name + ' (' + item.code + ')');
-    var viewBtn = document.createElement('button'); viewBtn.type = 'button'; viewBtn.className = 'btn btn-ghost btn-sm';
-    viewBtn.style.marginTop = '8px'; viewBtn.textContent = 'ดูสินค้าในคลัง';
-    viewBtn.onclick = function() {
-      stockSearchQuery = String(item.code || '').toLowerCase();
-      closeModal(); renderStockContent();
-    };
-    resultBox.appendChild(title); resultBox.appendChild(detail); resultBox.appendChild(viewBtn);
-  }
-
   function runLookup() {
     var barcode = input.value.trim();
     if (!barcode) { toast('กรุณากรอกบาร์โค้ด', 'error'); input.focus(); return; }
@@ -3438,7 +3448,7 @@ function openCreateStockModal() {
       try {
         var res = JSON.parse(r);
         if (res.status !== 'Success') { toast(res.message || 'ตรวจสอบบาร์โค้ดไม่สำเร็จ', 'error'); return; }
-        if (res.found) { showExisting(res.item || {}); return; }
+        if (res.found) { openMatchedStockEditor(res.item || {}, false); return; }
         openCreateStockForm(barcode);
       } catch (e) { toast('ตรวจสอบบาร์โค้ดไม่สำเร็จ', 'error'); }
     }).withFailureHandler(function() {
