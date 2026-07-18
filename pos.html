@@ -14,7 +14,7 @@ var __posQuery = new URLSearchParams(location.search);
 var POS_INIT_SHEET_ID  = __posQuery.get('sheetId')  || '';
 var POS_INIT_LIST_NAME = __posQuery.get('listName') || 'POS';
 </script>
-<link rel="stylesheet" href="css/pos.css?v=20260717b">
+<link rel="stylesheet" href="css/pos.css?v=20260718d">
 </head>
 <body>
 
@@ -43,6 +43,10 @@ var POS_INIT_LIST_NAME = __posQuery.get('listName') || 'POS';
       <div class="pos-topbar-title" id="posTitle">🖥️ POS — เลือกสินค้า</div>
       <div class="pos-topbar-sub" id="posSub">เพิ่มสินค้าเข้าตะกร้า</div>
     </div>
+    <button class="pos-history-btn" onclick="openPosHistory()" aria-label="ประวัติการขาย">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></svg>
+      <span>ยอดขาย</span>
+    </button>
   </div>
 
   <div class="pos-search-bar">
@@ -112,6 +116,27 @@ var POS_INIT_LIST_NAME = __posQuery.get('listName') || 'POS';
 </div>
 
 <!-- ════════════════════════════════ -->
+<!-- SCREEN 4 : POS SALES HISTORY    -->
+<!-- ════════════════════════════════ -->
+<div class="screen" id="screen-history">
+  <div class="pos-topbar">
+    <button class="pos-back-btn" onclick="goScreen('pos','history')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+    </button>
+    <div class="pos-topbar-center">
+      <div class="pos-topbar-title">📊 ประวัติการขาย</div>
+      <div class="pos-topbar-sub" id="historySubtitle">ยอดขายหน้าร้าน</div>
+    </div>
+    <button class="pos-refresh-btn" id="historyRefreshBtn" onclick="loadPosHistory(true)" aria-label="รีเฟรชประวัติการขาย">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3"><path d="M20 6v5h-5"/><path d="M4 18v-5h5"/><path d="M6.1 9a7 7 0 0 1 11.8-2.6L20 11M4 13l2.1 4.6A7 7 0 0 0 17.9 15"/></svg>
+    </button>
+  </div>
+  <div class="history-scroll" id="historyContent">
+    <div class="history-loading"><div class="history-spinner"></div><span>กำลังโหลดยอดขาย...</span></div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════ -->
 <!-- QTY MODAL                        -->
 <!-- ════════════════════════════════ -->
 <div id="qty-modal" onclick="qtyModalBgClick(event)">
@@ -145,7 +170,7 @@ var POS_INIT_LIST_NAME = __posQuery.get('listName') || 'POS';
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.7/dist/umd/supabase.min.js" integrity="sha384-BmlQlKlDvXvKoxkn5OQuUo/aJQCTXeB+Kls6EccBmG4Kf8AXvp89RtO9MtPxP/r5" crossorigin="anonymous"></script>
 <script src="js/config.js?v=20260717b"></script>
-<script src="js/api.js?v=20260717b"></script>
+<script src="js/api.js?v=20260718d"></script>
 <script>
 // Guard: POS is admin-only — send signed-out visitors to the login page
 // instead of showing a half-working interface with an error overlay
@@ -155,7 +180,7 @@ if (window.__sb) {
   });
 }
 </script>
-<script src="js/pos.js?v=20260717b"></script>
+<script src="js/pos.js?v=20260718d"></script>
 
 </body>
 </html>

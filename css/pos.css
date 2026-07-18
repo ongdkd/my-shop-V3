@@ -24,6 +24,11 @@ button{font-family:var(--font);cursor:pointer;border:none;transition:all 0.15s;}
 .pos-topbar-center{flex:1;min-width:0;}
 .pos-topbar-title{font-size:1rem;font-weight:700;color:var(--text);white-space:nowrap;}
 .pos-topbar-sub{font-size:0.72rem;color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.pos-history-btn{height:36px;padding:0 11px;border-radius:var(--radius-sm);display:flex;align-items:center;gap:6px;flex-shrink:0;background:var(--primary-light);border:1.5px solid var(--primary);color:var(--primary);font-size:0.75rem;font-weight:700;}
+.pos-history-btn:hover{background:var(--primary);color:#fff;}
+.pos-refresh-btn{width:36px;height:36px;border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center;flex-shrink:0;background:var(--surface-2);border:1.5px solid var(--border);color:var(--text-2);}
+.pos-refresh-btn:hover{background:var(--primary-light);border-color:var(--primary);color:var(--primary);}
+.pos-refresh-btn:disabled{opacity:0.55;cursor:wait;}
 
 /* ── SCREEN 1: SEARCH + SCAN ── */
 #screen-pos{background:var(--bg);}
@@ -107,6 +112,33 @@ button{font-family:var(--font);cursor:pointer;border:none;transition:all 0.15s;}
 .pay-done-btn:hover{background:#009d78;}
 .pay-done-btn:active{transform:scale(0.98);}
 
+/* ── SCREEN 4: POS SALES HISTORY ── */
+#screen-history{background:var(--bg);}
+.history-scroll{flex:1;overflow-y:auto;padding:14px;-webkit-overflow-scrolling:touch;}
+.history-hero{padding:20px;border-radius:var(--radius-lg);background:linear-gradient(135deg,var(--primary),var(--primary-dark));color:#fff;box-shadow:0 8px 24px rgba(108,99,255,0.24);}
+.history-hero-label{font-size:0.76rem;font-weight:600;opacity:0.82;}
+.history-hero-value{margin-top:4px;font-size:2rem;font-weight:800;line-height:1.15;}
+.history-hero-sub{margin-top:7px;font-size:0.7rem;opacity:0.76;}
+.history-stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:10px 0 18px;}
+.history-stat{padding:13px 14px;border:1.5px solid var(--border);border-radius:var(--radius-md);background:var(--surface);box-shadow:var(--shadow-sm);}
+.history-stat-label{font-size:0.68rem;font-weight:600;color:var(--text-3);}
+.history-stat-value{margin-top:2px;font-size:1rem;font-weight:800;color:var(--text);}
+.history-section-head{display:flex;align-items:center;justify-content:space-between;margin:0 2px 9px;}
+.history-section-title{font-size:0.84rem;font-weight:800;color:var(--text);}
+.history-section-count{font-size:0.68rem;color:var(--text-3);}
+.history-sale-card{margin-bottom:10px;padding:13px 14px;border:1.5px solid var(--border);border-radius:var(--radius-md);background:var(--surface);box-shadow:var(--shadow-sm);}
+.history-sale-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;}
+.history-sale-time{font-size:0.8rem;font-weight:700;color:var(--text);}
+.history-sale-meta{margin-top:2px;font-size:0.68rem;color:var(--text-3);}
+.history-sale-total{font-size:0.94rem;font-weight:800;color:var(--success);white-space:nowrap;}
+.history-sale-items{margin-top:9px;padding-top:8px;border-top:1px dashed var(--border);}
+.history-sale-item{display:flex;justify-content:space-between;gap:12px;padding:3px 0;font-size:0.75rem;color:var(--text-2);}
+.history-sale-item span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.history-sale-item span:last-child{white-space:nowrap;color:var(--text-3);}
+.history-loading,.history-empty{min-height:240px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--text-3);font-size:0.82rem;text-align:center;}
+.history-spinner{width:30px;height:30px;border:3px solid var(--primary-light);border-top-color:var(--primary);border-radius:50%;animation:pos-spin 0.75s linear infinite;}
+.history-warning{margin:10px 0;padding:10px 12px;border-radius:var(--radius-sm);background:var(--warning-light);color:#8B5E00;font-size:0.7rem;font-weight:600;text-align:center;}
+
 /* ── QTY MODAL ── */
 #qty-modal{position:fixed;inset:0;z-index:500;display:none;align-items:flex-end;justify-content:center;background:rgba(26,29,58,0.5);backdrop-filter:blur(2px);}
 #qty-modal.open{display:flex;}
@@ -168,3 +200,9 @@ button{font-family:var(--font);cursor:pointer;border:none;transition:all 0.15s;}
 /* Prevent double-tap zoom on rapid tapping (steppers, product cards)
    without disabling pinch-zoom accessibility */
 button,.pos-prod-card,.qty-step-btn,.sum-qty-btn{touch-action:manipulation;}
+
+@media(max-width:380px){
+  .pos-history-btn{width:36px;padding:0;justify-content:center;}
+  .pos-history-btn span{display:none;}
+  .history-hero-value{font-size:1.7rem;}
+}

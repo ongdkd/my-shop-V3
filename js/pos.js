@@ -5,6 +5,7 @@ var POS_PRODUCTS = [];      // Loaded from parent / Google Apps Script
 var POS_CART = [];          // [{product, qty, option, lineTotal}]
 var POS_LIST_NAME = '';
 var POS_LIST_ID = '';
+var POS_HISTORY_DATA = null;
 
 var _qtyProduct = null;
 var _qtyValue = 1;
@@ -21,6 +22,7 @@ function openPOS(products, listName, listId) {
   POS_LIST_NAME = listName || 'รายการสั่งซื้อ';
   POS_LIST_ID = listId || '';
   POS_CART = [];
+  POS_HISTORY_DATA = null;
 
   document.getElementById('posTitle').textContent = '🖥️ POS — ' + POS_LIST_NAME;
   document.getElementById('posSub').textContent = POS_PRODUCTS.length + ' รายการสินค้า';
@@ -35,7 +37,7 @@ function openPOS(products, listName, listId) {
 // ══════════════════════════════════
 // SCREEN NAVIGATION
 // ══════════════════════════════════
-var SCREEN_ORDER = ['pos', 'summary', 'payment'];
+var SCREEN_ORDER = ['pos', 'summary', 'payment', 'history'];
 
 function goScreen(to, from) {
   SCREEN_ORDER.forEach(function(id) {
@@ -76,6 +78,124 @@ function posGoBack() {
     try { window.parent.closePOSMode && window.parent.closePOSMode(); } catch(e) {}
   }
   if (window.closePOSMode) window.closePOSMode();
+}
+
+// ══════════════════════════════════
+// POS SALES HISTORY
+// ══════════════════════════════════
+function openPosHistory() {
+  goScreen('history', 'pos');
+  var subtitle = document.getElementById('historySubtitle');
+  if (subtitle) subtitle.textContent = POS_LIST_NAME || 'ยอดขายหน้าร้าน';
+  if (POS_HISTORY_DATA) renderPosHistory(POS_HISTORY_DATA);
+  else loadPosHistory(false);
+}
+
+function loadPosHistory(force) {
+  if (!POS_LIST_ID) { posToast('ไม่พบรายการสินค้า', 'error'); return; }
+  if (!force && POS_HISTORY_DATA) { renderPosHistory(POS_HISTORY_DATA); return; }
+
+  var container = document.getElementById('historyContent');
+  var refreshBtn = document.getElementById('historyRefreshBtn');
+  if (refreshBtn) refreshBtn.disabled = true;
+  if (container) container.innerHTML = '<div class="history-loading"><div class="history-spinner"></div><span>กำลังโหลดยอดขาย...</span></div>';
+
+  google.script.run.withSuccessHandler(function(r) {
+    if (refreshBtn) refreshBtn.disabled = false;
+    try {
+      var res = JSON.parse(r);
+      if (res.status !== 'Success') {
+        renderPosHistoryError(res.message || 'โหลดประวัติการขายไม่สำเร็จ');
+        return;
+      }
+      POS_HISTORY_DATA = res;
+      renderPosHistory(res);
+    } catch (e) { renderPosHistoryError('อ่านข้อมูลประวัติการขายไม่สำเร็จ'); }
+  }).withFailureHandler(function() {
+    if (refreshBtn) refreshBtn.disabled = false;
+    renderPosHistoryError('โหลดประวัติการขายไม่สำเร็จ — กรุณาลองใหม่');
+  }).adminGetPosHistory(POS_LIST_ID);
+}
+
+function renderPosHistoryError(message) {
+  var container = document.getElementById('historyContent');
+  if (!container) return;
+  container.innerHTML = '';
+  var empty = document.createElement('div'); empty.className = 'history-empty';
+  empty.innerHTML = '<div style="font-size:2rem;">⚠️</div>';
+  var text = document.createElement('div'); text.textContent = message;
+  empty.appendChild(text); container.appendChild(empty);
+}
+
+function renderPosHistory(data) {
+  var container = document.getElementById('historyContent');
+  if (!container) return;
+  container.innerHTML = '';
+
+  var hero = document.createElement('div'); hero.className = 'history-hero';
+  var heroLabel = document.createElement('div'); heroLabel.className = 'history-hero-label'; heroLabel.textContent = 'ยอดขายรวมทั้งหมด';
+  var heroValue = document.createElement('div'); heroValue.className = 'history-hero-value'; heroValue.textContent = fmt(data.totalSales || 0);
+  var heroSub = document.createElement('div'); heroSub.className = 'history-hero-sub'; heroSub.textContent = 'เฉพาะยอดขายที่บันทึกผ่าน POS ของรายการนี้';
+  hero.appendChild(heroLabel); hero.appendChild(heroValue); hero.appendChild(heroSub); container.appendChild(hero);
+
+  var stats = document.createElement('div'); stats.className = 'history-stats';
+  function addStat(label, value) {
+    var card = document.createElement('div'); card.className = 'history-stat';
+    var l = document.createElement('div'); l.className = 'history-stat-label'; l.textContent = label;
+    var v = document.createElement('div'); v.className = 'history-stat-value'; v.textContent = value;
+    card.appendChild(l); card.appendChild(v); stats.appendChild(card);
+  }
+  addStat('ยอดขายวันนี้', fmt(data.todaySales || 0));
+  addStat('จำนวนออเดอร์', Number(data.transactionCount || 0).toLocaleString('th-TH') + ' รายการ');
+  container.appendChild(stats);
+
+  if (data.truncated) {
+    var warning = document.createElement('div'); warning.className = 'history-warning';
+    warning.textContent = 'ข้อมูลมีมากกว่า 100,000 รายการ ยอดรวมนี้อาจไม่ครบทั้งหมด';
+    container.appendChild(warning);
+  }
+
+  var sales = data.sales || [];
+  var sectionHead = document.createElement('div'); sectionHead.className = 'history-section-head';
+  var sectionTitle = document.createElement('div'); sectionTitle.className = 'history-section-title'; sectionTitle.textContent = 'ออเดอร์ล่าสุด';
+  var sectionCount = document.createElement('div'); sectionCount.className = 'history-section-count';
+  sectionCount.textContent = sales.length + ' จาก ' + Number(data.transactionCount || 0).toLocaleString('th-TH');
+  sectionHead.appendChild(sectionTitle); sectionHead.appendChild(sectionCount); container.appendChild(sectionHead);
+
+  if (!sales.length) {
+    var empty = document.createElement('div'); empty.className = 'history-empty';
+    empty.innerHTML = '<div style="font-size:2.2rem;">🧾</div><div>ยังไม่มีประวัติการขายผ่าน POS</div>';
+    container.appendChild(empty); return;
+  }
+
+  sales.forEach(function(sale) {
+    var card = document.createElement('div'); card.className = 'history-sale-card';
+    var head = document.createElement('div'); head.className = 'history-sale-head';
+    var left = document.createElement('div');
+    var time = document.createElement('div'); time.className = 'history-sale-time';
+    var stamp = new Date(sale.createdAt);
+    time.textContent = isNaN(stamp.getTime()) ? 'ไม่ทราบเวลา' : stamp.toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' });
+    var meta = document.createElement('div'); meta.className = 'history-sale-meta';
+    meta.textContent = Number(sale.quantity || 0).toLocaleString('th-TH') + ' ชิ้น · ' + (sale.items || []).length + ' รายการสินค้า';
+    left.appendChild(time); left.appendChild(meta);
+    var total = document.createElement('div'); total.className = 'history-sale-total'; total.textContent = fmt(sale.total || 0);
+    head.appendChild(left); head.appendChild(total); card.appendChild(head);
+
+    var items = document.createElement('div'); items.className = 'history-sale-items';
+    (sale.items || []).forEach(function(item) {
+      var row = document.createElement('div'); row.className = 'history-sale-item';
+      var name = document.createElement('span'); name.textContent = item.product || 'สินค้า';
+      var amount = document.createElement('span'); amount.textContent = '×' + Number(item.qty || 0).toLocaleString('th-TH') + ' · ' + fmt(item.total || 0);
+      row.appendChild(name); row.appendChild(amount); items.appendChild(row);
+    });
+    card.appendChild(items); container.appendChild(card);
+  });
+
+  if (data.historyLimited) {
+    var limited = document.createElement('div'); limited.className = 'history-warning';
+    limited.textContent = 'แสดง 100 ออเดอร์ล่าสุด โดยยอดขายรวมยังคำนวณจากข้อมูลทั้งหมด';
+    container.appendChild(limited);
+  }
 }
 
 // ══════════════════════════════════
@@ -551,6 +671,7 @@ function submitPosSale(btn) {
           }
         });
         _posCheckoutId = null; // next sale gets a fresh checkout id
+        POS_HISTORY_DATA = null; // refresh totals/history after the next open
         resetPOS();
         posToast('บันทึกการขายแล้ว ✓ (' + (res.saved || items.length) + ' รายการ)', 'success');
       } else {

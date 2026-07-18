@@ -722,6 +722,72 @@
       } catch (e) { return e.__json || err(e.message || e); }
     },
 
+    // POS-only sales history for one order list. Order rows are grouped by
+    // checkout_id so a basket with several products appears as one sale.
+    adminGetPosHistory: async function (sheetId) {
+      try {
+        requireSb(); await requireAdmin();
+        var rows = [], from = 0, pageSize = 1000, truncated = false;
+        while (true) {
+          var r = await sb.from('orders')
+            .select('id,checkout_id,product,qty,total,created_at')
+            .eq('list_id', sheetId)
+            .eq('remark', 'POS')
+            .order('created_at', { ascending: false })
+            .range(from, from + pageSize - 1);
+          if (r.error) return err(r.error.message);
+          rows = rows.concat(r.data || []);
+          if (!r.data || r.data.length < pageSize) break;
+          from += pageSize;
+          if (from >= 100000) { truncated = true; break; }
+        }
+
+        var sales = [], byCheckout = {};
+        var totalSales = 0, totalItems = 0, todaySales = 0;
+        var today = new Date();
+        var todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+        var tomorrowStart = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1).getTime();
+
+        rows.forEach(function (row) {
+          var createdAt = row.created_at || '';
+          // now() is stable within one PostgreSQL transaction, so legacy POS
+          // rows without checkout_id can still be grouped by exact timestamp.
+          var key = row.checkout_id || ('legacy:' + createdAt);
+          var sale = byCheckout[key];
+          if (!sale) {
+            sale = byCheckout[key] = {
+              id: key,
+              checkoutId: row.checkout_id || '',
+              createdAt: createdAt,
+              total: 0,
+              quantity: 0,
+              items: []
+            };
+            sales.push(sale);
+          }
+          var lineTotal = num(row.total);
+          var qty = num(row.qty);
+          sale.total += lineTotal;
+          sale.quantity += qty;
+          sale.items.push({ product: row.product || '', qty: qty, total: lineTotal });
+          totalSales += lineTotal;
+          totalItems += qty;
+          var stamp = new Date(createdAt).getTime();
+          if (stamp >= todayStart && stamp < tomorrowStart) todaySales += lineTotal;
+        });
+
+        return ok({
+          sales: sales.slice(0, 100),
+          totalSales: totalSales,
+          todaySales: todaySales,
+          transactionCount: sales.length,
+          totalItems: totalItems,
+          historyLimited: sales.length > 100,
+          truncated: truncated
+        });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
     // Full data export for backups — the Supabase free tier has no
     // point-in-time recovery, so this download is the shop's safety net.
     adminExportAllData: async function () {
