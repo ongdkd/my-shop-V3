@@ -461,3 +461,8 @@ button{font-family:var(--font);cursor:pointer;border:none;}
   .summary-form-grid{grid-template-columns:1fr;}
   .summary-form-grid--2,.summary-form-grid--3{grid-template-columns:1fr;}
 }
+
+/* Typeable import-quantity input inside the stock stepper */
+.qty-stepper-input{width:64px;min-height:42px;text-align:center;font-weight:700;font-size:0.95rem;font-family:var(--font);color:var(--text);background:var(--surface);border:1.5px solid var(--border-strong);border-radius:10px;outline:none;-moz-appearance:textfield;}
+.qty-stepper-input::-webkit-outer-spin-button,.qty-stepper-input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0;}
+.qty-stepper-input:focus{border-color:var(--primary);}

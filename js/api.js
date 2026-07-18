@@ -302,7 +302,7 @@
 
   async function fetchProducts(listId) {
     var r = await sb.from('products')
-      .select('id,seq,list_id,code,name,image,price,deposit,remaining,status,yuan,options')
+      .select('id,seq,list_id,code,name,image,price,deposit,remaining,status,yuan,options,source_stock_item_id')
       .eq('list_id', listId)
       .order('seq', { ascending: true });
     if (r.error) throw r.error;
@@ -819,11 +819,51 @@
             remaining: r.remaining === null || r.remaining === undefined ? null : Number(r.remaining),
             status: r.status || 'Open',
             yuan: num(r.yuan),
-            options: r.options ? String(r.options) : ''
+            options: r.options ? String(r.options) : '',
+            sourceStockItemId: r.source_stock_item_id || ''
           };
         });
         _prodRowMap[sheetId] = map;
         return ok({ products: products });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
+    // Moves a linked product's unsold units back into the warehouse
+    // (reverse of "push"): product remaining -> 0, warehouse stock += N.
+    adminReturnProductStock: async function (sheetId, productRowIndex) {
+      try {
+        requireSb(); await requireAdmin();
+        var pid = (_prodRowMap[sheetId] || {})[productRowIndex];
+        if (!pid) return err('ไม่พบสินค้า (กรุณารีเฟรชหน้า)');
+
+        var pr = await sb.from('products')
+          .select('id,name,remaining,source_stock_item_id')
+          .eq('id', pid).single();
+        if (pr.error) return err(pr.error.message);
+        var p = pr.data;
+        if (!p.source_stock_item_id) return err('สินค้านี้ไม่ได้ลิงก์กับคลัง จึงคืนสต็อกไม่ได้');
+        if (p.remaining === null || p.remaining === undefined) return err('สินค้านี้ไม่จำกัดจำนวน ไม่มีสต็อกให้คืน');
+        var qty = Number(p.remaining);
+        if (!(qty > 0)) return err('ไม่มีสต็อกเหลือให้คืนค่ะ');
+
+        var sr = await sb.from('stock_items').select('id,stock').eq('id', p.source_stock_item_id).single();
+        if (sr.error) return err('ไม่พบสินค้าในคลัง: ' + sr.error.message);
+
+        // Zero the list stock first so a mid-way failure can only
+        // under-count the warehouse, never double-count sellable stock
+        var u1 = await sb.from('products').update({ remaining: 0 }).eq('id', pid);
+        if (u1.error) return err(u1.error.message);
+
+        var newStock = sr.data.stock === null || sr.data.stock === undefined
+          ? null                        // unlimited warehouse stays unlimited
+          : Number(sr.data.stock) + qty;
+        if (newStock !== null) {
+          var u2 = await sb.from('stock_items').update({ stock: newStock }).eq('id', p.source_stock_item_id);
+          if (u2.error) {
+            return err('ตั้งสต็อกรายการเป็น 0 แล้ว แต่บวกคืนคลังไม่สำเร็จ: ' + u2.error.message + ' — กรุณาปรับคลังเอง (+' + qty + ')');
+          }
+        }
+        return ok({ returned: qty });
       } catch (e) { return e.__json || err(e.message || e); }
     },
 

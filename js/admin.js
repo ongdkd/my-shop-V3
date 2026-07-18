@@ -826,9 +826,12 @@ function openModal(title, bodyHtml, saveFn, saveLabel) {
   if (bodyHtml) {
     el('modalBody').innerHTML = bodyHtml;
   }
-  
+
+  // Always reset the save button — a previous flow that disabled it
+  // must never leave the next modal stuck unsaveable
   el('modalSave').textContent = saveLabel || 'บันทึก';
   el('modalSave').className = 'btn btn-primary';
+  el('modalSave').disabled = false;
   modalSaveFn = saveFn;
   el('modal').classList.add('open');
 }
@@ -1639,6 +1642,11 @@ function renderProductsTable(products, sheetId, holder) {
       var actWrap = document.createElement('div'); actWrap.style.cssText = 'display:flex;gap:5px;';
       var editBtn = makeBtn('btn-icon prod-edit', SVG_EDIT);
       editBtn.title = 'แก้ไข'; editBtn.setAttribute('data-row', p.rowIndex);
+      if (p.sourceStockItemId && p.remaining !== null && p.remaining > 0) {
+        var retBtn = makeBtn('btn-icon prod-return', '&#x21A9;');
+        retBtn.title = 'คืนสต็อกเข้าคลัง'; retBtn.setAttribute('data-row', p.rowIndex); retBtn.setAttribute('data-name', p.name);
+        actWrap.appendChild(retBtn);
+      }
       var delBtn = makeBtn('btn-icon prod-del', SVG_TRASH);
       delBtn.title = 'ลบ'; delBtn.style.cssText = 'color:var(--error);border-color:var(--error);';
       delBtn.setAttribute('data-row', p.rowIndex); delBtn.setAttribute('data-name', p.name);
@@ -1682,6 +1690,9 @@ function renderProductsTable(products, sheetId, holder) {
       var pSld = document.createElement('span'); pSld.className = 'toggle-slider';
       pTL.appendChild(pCk); pTL.appendChild(pSld); pTW.appendChild(pTL);
       var pEB = makeBtn('btn-icon prod-edit', SVG_EDIT); pEB.title = 'แก้ไข'; pEB.setAttribute('data-row', pGrid.rowIndex); pEB.style.cssText = 'width:28px;height:28px;margin-left:2px;'; pTW.appendChild(pEB);
+      if (pGrid.sourceStockItemId && pGrid.remaining !== null && pGrid.remaining > 0) {
+        var pRB = makeBtn('btn-icon prod-return', '&#x21A9;'); pRB.title = 'คืนสต็อกเข้าคลัง'; pRB.setAttribute('data-row', pGrid.rowIndex); pRB.setAttribute('data-name', pGrid.name); pRB.style.cssText = 'width:28px;height:28px;'; pTW.appendChild(pRB);
+      }
       var pDB = makeBtn('btn-icon prod-del', SVG_TRASH); pDB.title = 'ลบ'; pDB.setAttribute('data-row', pGrid.rowIndex); pDB.setAttribute('data-name', pGrid.name); pDB.style.cssText = 'color:var(--error);border-color:var(--error);width:28px;height:28px;'; pTW.appendChild(pDB);
       pAct.appendChild(pTW); pBdy.appendChild(pAct); pCard.appendChild(pBdy);
       grid.appendChild(pCard);
@@ -1752,13 +1763,51 @@ function renderProductsTable(products, sheetId, holder) {
       openEditProductModal(parseInt(eb.getAttribute('data-row'), 10));
       return;
     }
-    var db = e.target.closest('.prod-del'); 
+    var rb2 = e.target.closest('.prod-return');
+    if (rb2) {
+      confirmReturnStock(sheetId, parseInt(rb2.getAttribute('data-row'), 10), rb2.getAttribute('data-name'));
+      return;
+    }
+    var db = e.target.closest('.prod-del');
     if (db) {
       var row = parseInt(db.getAttribute('data-row'), 10);
       var name = db.getAttribute('data-name');
       confirmDeleteProduct(sheetId, row, name);
     }
   };
+}
+
+// Reverse of "push": send a linked product's unsold stock back to the
+// warehouse (list stock -> 0, warehouse += N)
+function confirmReturnStock(sheetId, rowIndex, name) {
+  var prod = currentProductsCache.find(function(p) { return p.rowIndex === rowIndex; });
+  var qty = prod && prod.remaining !== null ? Number(prod.remaining) : 0;
+  el('modalBody').innerHTML = '';
+  var wrap = document.createElement('div'); wrap.style.cssText = 'text-align:center;padding:8px 0;';
+  wrap.innerHTML = '<div style="font-size:2.5rem;margin-bottom:12px;">&#x21A9;</div>' +
+    '<div style="font-weight:700;font-size:0.95rem;margin-bottom:8px;">คืนสต็อกเข้าคลัง?</div>' +
+    '<div style="font-size:0.85rem;color:var(--text-2);">คืน <strong>' + escapeHtml(name) + '</strong> จำนวน <strong>' + qty + ' ชิ้น</strong> กลับเข้าคลังสินค้า</div>' +
+    '<div style="font-size:0.78rem;color:var(--text-3);margin-top:6px;">สต็อกในรายการนี้จะเป็น 0 (สั่งซื้อไม่ได้จนกว่าจะนำเข้าใหม่)</div>';
+  el('modalBody').appendChild(wrap);
+
+  openModal('&#x21A9; คืนสต็อกเข้าคลัง', '', function() {
+    var saveBtn = el('modalSave'); saveBtn.disabled = true; saveBtn.textContent = 'กำลังคืน...';
+    google.script.run.withSuccessHandler(function(r) {
+      saveBtn.disabled = false;
+      try {
+        var res = JSON.parse(r);
+        if (res.status === 'Success') {
+          closeModal();
+          toast('คืนสต็อกเข้าคลังแล้ว ' + res.returned + ' ชิ้น', 'success');
+          loadProducts(sheetId);
+        } else { toast(res.message || 'เกิดข้อผิดพลาด', 'error'); }
+      } catch(e) { toast('เกิดข้อผิดพลาด', 'error'); }
+    }).withFailureHandler(function() {
+      saveBtn.disabled = false;
+      toast('คืนสต็อกไม่สำเร็จ', 'error');
+    }).adminReturnProductStock(sheetId, rowIndex);
+  }, 'คืนสต็อก');
+  el('modal').classList.add('open');
 }
 
 function saveAllStock() {
@@ -2200,19 +2249,22 @@ function openCreateOrderListModal() {
 // Images can be added later via edit, or pasted/dragged per row.
 // ════════════════════════════════════════════════════════════
 // ── Shared image pick box for bulk add modals ──
+// One tap opens the phone's native chooser (camera OR gallery) — the
+// file input has no `capture` attribute, so mobile browsers offer both.
 function makeBulkImgBox(pendingKey, existingUrl, onChange) {
-  // Wrapper: thumbnail + camera button below
   var wrap = document.createElement('div');
   wrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:5px;flex-shrink:0;';
 
-  // Thumbnail box (tap = gallery picker)
   var box = document.createElement('div');
   box.style.cssText = 'position:relative;width:64px;height:64px;border-radius:10px;border:1.5px solid var(--border);background:var(--surface-2);overflow:hidden;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:border-color 0.15s;';
   var svgHtml = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>';
   box.innerHTML = svgHtml;
   var prev = document.createElement('img');
   prev.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:none;';
-  if (existingUrl) { prev.src = existingUrl; prev.style.display = 'block'; box.style.borderColor = 'var(--success)'; box.innerHTML = ''; }
+  // Re-renders (add option / add product) must not lose a picked image:
+  // restore the preview from the pending upload buffer
+  var shownUrl = existingUrl || pendingImg[pendingKey] || '';
+  if (shownUrl) { prev.src = shownUrl; prev.style.display = 'block'; box.style.borderColor = 'var(--success)'; box.innerHTML = ''; }
   box.appendChild(prev);
 
   function applyFile(file) {
@@ -2228,26 +2280,12 @@ function makeBulkImgBox(pendingKey, existingUrl, onChange) {
     rdr.readAsDataURL(file);
   }
 
-  // Gallery input (no capture — opens photo picker / gallery)
   var fi = document.createElement('input'); fi.type = 'file'; fi.accept = 'image/*';
   fi.style.cssText = 'position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;';
+  fi.setAttribute('aria-label', 'เลือกรูป (กล้องหรือแกลเลอรี)');
   fi.onchange = function() { applyFile(this.files && this.files[0]); };
   box.appendChild(fi);
   wrap.appendChild(box);
-
-  // Camera button (capture="environment" — opens camera directly)
-  var camBtn = document.createElement('button'); camBtn.type = 'button';
-  camBtn.innerHTML = '📷';
-  camBtn.title = 'ถ่ายรูป';
-  camBtn.style.cssText = 'width:64px;padding:4px 0;font-size:0.7rem;font-weight:700;font-family:var(--font);background:var(--primary);color:#fff;border:none;border-radius:7px;cursor:pointer;';
-
-  var camFi = document.createElement('input'); camFi.type = 'file'; camFi.accept = 'image/*';
-  camFi.setAttribute('capture', 'environment');
-  camFi.style.display = 'none';
-  camFi.onchange = function() { applyFile(this.files && this.files[0]); };
-  camBtn.onclick = function() { camFi.click(); };
-  wrap.appendChild(camFi);
-  wrap.appendChild(camBtn);
 
   return { el: wrap, preview: prev };
 }
@@ -2425,13 +2463,13 @@ function openBulkAddModal() {
 
         row.opts.forEach(function(opt, oi) {
           var oc = document.createElement('div');
-          oc.style.cssText = 'border:1.5px solid var(--primary-light);border-left:3px solid var(--primary);border-radius:10px;padding:10px 12px;background:var(--surface-2);';
+          oc.className = 'opt-card'; oc.style.cssText = 'padding:10px 12px;';
 
           var ohdr = document.createElement('div'); ohdr.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;';
-          var olbl = document.createElement('span'); olbl.style.cssText = 'font-size:0.7rem;font-weight:800;color:var(--primary);';
+          var olbl = document.createElement('span'); olbl.className = 'opt-card-label opt-badge';
           olbl.textContent = 'ตัวเลือก ' + (oi + 1 < 10 ? '0' + (oi + 1) : oi + 1);
           var odel = document.createElement('button'); odel.type = 'button'; odel.innerHTML = '×';
-          odel.style.cssText = 'background:none;border:none;color:var(--text-3);font-size:1rem;cursor:pointer;padding:0 2px;';
+          odel.className = 'opt-card-del';
           odel.onclick = (function(row, oi2) { return function() { row.opts.splice(oi2, 1); var bl = document.getElementById('bulkList'); if (bl) renderBulkRows(bl); }; })(row, oi);
           ohdr.appendChild(olbl); ohdr.appendChild(odel); oc.appendChild(ohdr);
 
@@ -2537,7 +2575,17 @@ function openBulkAddModal() {
           }).join(',');
         }
         var finalId    = row.mode === 'single' ? row.id.trim() : '';
-        var finalStock = row.mode === 'single' ? (row.stock.trim() || '') : '';
+        // Shop products track one stock pool: for option products use the
+        // sum of the per-option amounts (all blank = unlimited)
+        var finalStock = '';
+        if (row.mode === 'single') {
+          finalStock = row.stock.trim() || '';
+        } else if (resolvedOpts && resolvedOpts.length) {
+          var allHave = resolvedOpts.every(function(o) { return String(o.stock || '').trim() !== ''; });
+          if (allHave) {
+            finalStock = resolvedOpts.reduce(function(s, o) { return s + (Number(o.stock) || 0); }, 0);
+          }
+        }
 
         google.script.run
           .withSuccessHandler(function(r) {
@@ -2821,12 +2869,28 @@ function defaultStockImportQty(product) {
   return isFinite(available) ? Math.max(0, available) : 1;
 }
 
+// 0 = has stock to allocate (or unlimited), 1 = everything at zero
+function stockAvailabilityRank(p) {
+  if (p.children && p.children.length) {
+    var anyAvail = p.children.some(function(c) {
+      return c.stock === null || Number(c.stock) > 0;
+    });
+    return anyAvail ? 0 : 1;
+  }
+  if (p.stock === null || p.stock === undefined) return 0;
+  return Number(p.stock) > 0 ? 0 : 1;
+}
+
 function renderStockCards(container, query) {
   container.innerHTML = '';
   var filtered = stockCache.filter(function(p) {
     if (!query) return true;
     var haystack = (p.name + ' ' + p.id + ' ' + p.children.map(function(c){ return c.name + ' ' + c.id; }).join(' ')).toLowerCase();
     return haystack.indexOf(query) !== -1;
+  });
+  // Items with stock left come first; zeroed-out items sink to the bottom
+  filtered = filtered.slice().sort(function(a, b) {
+    return stockAvailabilityRank(a) - stockAvailabilityRank(b);
   });
 
   if (!filtered.length) {
@@ -2939,23 +3003,38 @@ function renderStockCards(container, query) {
     // Footer: stepper + action buttons
     var footRow = document.createElement('div'); footRow.style.cssText = 'display:flex;align-items:center;gap:5px;margin-top:auto;padding-top:8px;border-top:1px solid var(--border);';
 
-    // +/- stepper
+    // +/- stepper with a typeable amount (clamped to warehouse stock)
     var stepper = document.createElement('div'); stepper.className = 'qty-stepper';
-    var minusBtn = document.createElement('button'); minusBtn.type = 'button'; minusBtn.className = 'qty-stepper-btn'; minusBtn.textContent = '−';
-    var valSpan  = document.createElement('span');  valSpan.className = 'qty-stepper-val'; valSpan.id = 'stockqty_' + p.rowIndex;
-    valSpan.textContent = _stockQtyMap[p.rowIndex];
-    var plusBtn  = document.createElement('button'); plusBtn.type = 'button'; plusBtn.className = 'qty-stepper-btn'; plusBtn.textContent = '+';
-    minusBtn.onclick = (function(pp, vs) { return function(e) {
-      e.stopPropagation();
-      var v = _stockQtyMap[pp.rowIndex]; if (v > 1) { _stockQtyMap[pp.rowIndex] = v - 1; vs.textContent = _stockQtyMap[pp.rowIndex]; }
-    }; })(p, valSpan);
-    plusBtn.onclick  = (function(pp, vs) { return function(e) {
-      e.stopPropagation();
+    var maxQtyOf = function(pp) {
       var finiteMax = (pp.children && pp.children.length) ? null : pp.stock;
-      var maxV = finiteMax !== null && finiteMax !== undefined ? Math.max(0, Math.floor(Number(finiteMax) || 0)) : 999;
-      var v = _stockQtyMap[pp.rowIndex]; if (v < maxV) { _stockQtyMap[pp.rowIndex] = v + 1; vs.textContent = _stockQtyMap[pp.rowIndex]; }
-    }; })(p, valSpan);
-    stepper.appendChild(minusBtn); stepper.appendChild(valSpan); stepper.appendChild(plusBtn);
+      return finiteMax !== null && finiteMax !== undefined ? Math.max(0, Math.floor(Number(finiteMax) || 0)) : 999;
+    };
+    var minusBtn = document.createElement('button'); minusBtn.type = 'button'; minusBtn.className = 'qty-stepper-btn'; minusBtn.textContent = '−';
+    minusBtn.setAttribute('aria-label', 'ลดจำนวนนำเข้า');
+    var qtyInp = document.createElement('input');
+    qtyInp.type = 'number'; qtyInp.min = '1'; qtyInp.className = 'qty-stepper-input';
+    qtyInp.id = 'stockqty_' + p.rowIndex;
+    qtyInp.value = _stockQtyMap[p.rowIndex];
+    qtyInp.setAttribute('aria-label', 'จำนวนนำเข้า ' + p.name);
+    qtyInp.onclick = function(e) { e.stopPropagation(); };
+    var plusBtn  = document.createElement('button'); plusBtn.type = 'button'; plusBtn.className = 'qty-stepper-btn'; plusBtn.textContent = '+';
+    plusBtn.setAttribute('aria-label', 'เพิ่มจำนวนนำเข้า');
+    var syncQty = (function(pp, inp) { return function(v) {
+      v = Math.floor(Number(v));
+      if (!isFinite(v) || v < 1) v = 1;
+      var maxV = maxQtyOf(pp);
+      if (maxV > 0 && v > maxV) v = maxV;
+      _stockQtyMap[pp.rowIndex] = v;
+      inp.value = v;
+    }; })(p, qtyInp);
+    minusBtn.onclick = (function(pp, inp) { return function(e) {
+      e.stopPropagation(); syncQty(_stockQtyMap[pp.rowIndex] - 1);
+    }; })(p, qtyInp);
+    plusBtn.onclick = (function(pp, inp) { return function(e) {
+      e.stopPropagation(); syncQty(_stockQtyMap[pp.rowIndex] + 1);
+    }; })(p, qtyInp);
+    qtyInp.onchange = function() { syncQty(this.value); };
+    stepper.appendChild(minusBtn); stepper.appendChild(qtyInp); stepper.appendChild(plusBtn);
     footRow.appendChild(stepper);
 
     var spacer = document.createElement('div'); spacer.style.cssText = 'flex:1;';
@@ -3080,93 +3159,11 @@ function openCreateStockModal() {
       bcGroup.appendChild(bcLbl); bcGroup.appendChild(bcRow); grid.appendChild(bcGroup);
     }
 
-    // ── Image zone ──
+    // ── Image field — same shared component as the edit modal, so
+    // add and edit look identical (tap = camera/gallery, paste, URL) ──
     var imgGroup = document.createElement('div'); imgGroup.className = 'sf-group sf-full';
-    var imgLbl = document.createElement('label'); imgLbl.textContent = 'รูปภาพสินค้า';
-    imgGroup.appendChild(imgLbl);
-
-    var imgZone = document.createElement('div'); imgZone.className = 'sf-img-zone'; imgZone.id = 'spImageZone';
-    // Gallery input (no capture — lets user pick from gallery)
-    var fileInpSp = document.createElement('input'); fileInpSp.type = 'file'; fileInpSp.accept = 'image/*';
-    fileInpSp.className = 'sf-img-file-inp';
-    fileInpSp.onchange = function() {
-      var f = this.files && this.files[0]; if (!f) return;
-      var rdr = new FileReader();
-      rdr.onload = function(ev) {
-        pendingImg['spImage'] = ev.target.result;
-        var t = document.getElementById('spImageZone');
-        if (t) { t.className = 'sf-img-zone has-img'; t.querySelector('.sf-img-thumb img').src = ev.target.result; t.querySelector('.sf-img-thumb img').style.display = 'block'; t.querySelector('.sf-img-zone-title').textContent = 'เปลี่ยนรูป'; }
-        el('spImage').value = '';
-      };
-      rdr.readAsDataURL(f);
-    };
-
-    var thumbDiv = document.createElement('div'); thumbDiv.className = 'sf-img-thumb';
-    var thumbI = document.createElement('img'); thumbI.style.display = 'none';
-    var thumbIcon = document.createElementNS('http://www.w3.org/2000/svg','svg');
-    thumbIcon.setAttribute('width','24'); thumbIcon.setAttribute('height','24'); thumbIcon.setAttribute('viewBox','0 0 24 24'); thumbIcon.setAttribute('fill','none'); thumbIcon.setAttribute('stroke','var(--text-3)'); thumbIcon.setAttribute('stroke-width','1.5');
-    thumbIcon.innerHTML = '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>';
-    thumbDiv.appendChild(thumbIcon); thumbDiv.appendChild(thumbI);
-
-    var imgTextDiv = document.createElement('div'); imgTextDiv.className = 'sf-img-zone-text';
-    var imgTitle = document.createElement('div'); imgTitle.className = 'sf-img-zone-title'; imgTitle.textContent = 'คลิกหรือลากรูปมาวาง';
-    var imgSub = document.createElement('div'); imgSub.className = 'sf-img-zone-sub'; imgSub.textContent = 'PNG, JPG, WEBP · หรือ Ctrl+V เพื่อวาง';
-    imgTextDiv.appendChild(imgTitle); imgTextDiv.appendChild(imgSub);
-
-    var urlHidden = document.createElement('input'); urlHidden.type = 'hidden'; urlHidden.id = 'spImage';
-
-    imgZone.appendChild(fileInpSp); imgZone.appendChild(thumbDiv); imgZone.appendChild(imgTextDiv);
-    imgGroup.appendChild(imgZone);
-
-    // URL fallback input
-    var urlFallback = document.createElement('input'); urlFallback.type = 'text';
-    urlFallback.id = 'spImageUrl'; urlFallback.placeholder = 'หรือวาง URL รูปภาพ';
-    urlFallback.style.cssText = 'width:100%;margin-top:6px;padding:7px 10px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:0.8rem;font-family:var(--font);background:var(--surface-2);outline:none;';
-    urlFallback.oninput = function() { el('spImage').value = urlFallback.value; };
-    imgGroup.appendChild(urlFallback);
-    imgGroup.appendChild(urlHidden);
-
-    // Camera button for mobile (capture="environment")
-    var spCamFi = document.createElement('input'); spCamFi.type = 'file'; spCamFi.accept = 'image/*';
-    spCamFi.setAttribute('capture', 'environment'); spCamFi.style.display = 'none';
-    spCamFi.onchange = function() {
-      var f2 = this.files && this.files[0]; if (!f2) return;
-      var rdr3 = new FileReader();
-      rdr3.onload = function(ev3) {
-        pendingImg['spImage'] = ev3.target.result;
-        var tz = document.getElementById('spImageZone');
-        if (tz) { tz.className = 'sf-img-zone has-img'; tz.querySelector('.sf-img-thumb img').src = ev3.target.result; tz.querySelector('.sf-img-thumb img').style.display = 'block'; tz.querySelector('.sf-img-zone-title').textContent = 'เปลี่ยนรูป'; }
-        el('spImage').value = '';
-      };
-      rdr3.readAsDataURL(f2);
-    };
-    var spCamBtn = document.createElement('button'); spCamBtn.type = 'button';
-    spCamBtn.innerHTML = '📷 ถ่ายรูป (กล้อง)';
-    spCamBtn.style.cssText = 'width:100%;margin-top:6px;padding:8px;font-size:0.8rem;font-weight:700;font-family:var(--font);background:var(--primary);color:#fff;border:none;border-radius:var(--radius-sm);cursor:pointer;';
-    spCamBtn.onclick = function() { spCamFi.click(); };
-    imgGroup.appendChild(spCamFi); imgGroup.appendChild(spCamBtn);
+    imgGroup.appendChild(makeImageField('spImage', '', 'รูปภาพสินค้า'));
     grid.appendChild(imgGroup);
-
-    // Handle paste
-    var pasteHnd = function(e) {
-      if (!document.getElementById('modal').classList.contains('open')) return;
-      var items = e.clipboardData && e.clipboardData.items; if (!items) return;
-      for (var pi = 0; pi < items.length; pi++) {
-        if (items[pi].type.indexOf('image') !== -1) {
-          e.preventDefault();
-          var fr = new FileReader();
-          fr.onload = function(ev2) {
-            pendingImg['spImage'] = ev2.target.result;
-            var tz = document.getElementById('spImageZone');
-            if (tz) { tz.className = 'sf-img-zone has-img'; tz.querySelector('.sf-img-thumb img').src = ev2.target.result; tz.querySelector('.sf-img-thumb img').style.display = 'block'; tz.querySelector('.sf-img-zone-title').textContent = 'เปลี่ยนรูป'; }
-          };
-          fr.readAsDataURL(items[pi].getAsFile()); return;
-        }
-      }
-    };
-    document.addEventListener('paste', pasteHnd);
-    var origClose2 = closeModal;
-    closeModal = function() { document.removeEventListener('paste', pasteHnd); closeModal = origClose2; origClose2(); };
 
     // ── Options section ──
     if (isOptionsMode) {
@@ -3372,33 +3369,13 @@ function makeOptionRow(sectionId, opt, idx) {
   thumb.appendChild(placeholderIcon); thumb.appendChild(thumbImg); thumb.appendChild(fileInpOpt);
   imgBox.appendChild(thumb);
 
-  // Camera input — capture="environment" opens rear camera directly
-  var camFileOpt = document.createElement('input');
-  camFileOpt.type = 'file'; camFileOpt.accept = 'image/*';
-  camFileOpt.setAttribute('capture', 'environment');
-  camFileOpt.style.display = 'none';
-  camFileOpt.onchange = (function(fid, ti, pi, th) { return function() {
-    var file = this.files && this.files[0]; if (!file) return;
-    var rdr = new FileReader();
-    rdr.onload = function(ev) {
-      pendingImg[fid] = ev.target.result;
-      ti.src = ev.target.result; ti.style.display = 'block'; pi.style.display = 'none';
-      th.className = 'opt-img-thumb has-img';
-    };
-    rdr.readAsDataURL(file);
-  }; })(imgFieldId, thumbImg, placeholderIcon, thumb);
-
-  // URL stored via hidden input only (no visible URL field in option row)
-  var urlInpOpt = { value: opt.image || '' }; // placeholder — not a real DOM element
-
-  // Hidden id input for resolveAllOptionImages compatibility
+  // Tapping the thumbnail opens the native camera/gallery chooser —
+  // no separate hidden camera input needed.
   var hiddenUrl = document.createElement('input');
   hiddenUrl.type = 'hidden'; hiddenUrl.id = imgFieldId;
   hiddenUrl.className = 'opt-image-url-hidden';
   hiddenUrl.value = opt.image || '';
-
-  imgBox.appendChild(camFileOpt); imgBox.appendChild(hiddenUrl);
-  // Note: on mobile, tapping the thumbnail opens gallery+camera picker natively
+  imgBox.appendChild(hiddenUrl);
 
   // Name column (right of image)
   var nameCol = document.createElement('div'); nameCol.className = 'opt-name-col';
@@ -3703,12 +3680,12 @@ function openBulkStockModal() {
 
         row.opts.forEach(function(opt, oi) {
           var oc = document.createElement('div');
-          oc.style.cssText = 'border:1.5px solid var(--primary-light);border-left:3px solid var(--primary);border-radius:10px;padding:10px 12px;background:var(--surface-2);';
+          oc.className = 'opt-card'; oc.style.cssText = 'padding:10px 12px;';
           var ohdr = document.createElement('div'); ohdr.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;';
-          var olbl = document.createElement('span'); olbl.style.cssText = 'font-size:0.7rem;font-weight:800;color:var(--primary);';
+          var olbl = document.createElement('span'); olbl.className = 'opt-card-label opt-badge';
           olbl.textContent = 'ตัวเลือก ' + (oi+1<10?'0'+(oi+1):oi+1);
           var odel = document.createElement('button'); odel.type='button'; odel.innerHTML='×';
-          odel.style.cssText = 'background:none;border:none;color:var(--text-3);font-size:1rem;cursor:pointer;padding:0 2px;';
+          odel.className = 'opt-card-del';
           odel.onclick = (function(r2,oi2){return function(){r2.opts.splice(oi2,1);var sl=document.getElementById('bulkSList');if(sl)renderBulkSRows(sl);};})(row,oi);
           ohdr.appendChild(olbl);ohdr.appendChild(odel);oc.appendChild(ohdr);
 
@@ -3813,7 +3790,7 @@ function openBulkStockModal() {
         };
         var optItems = [];
         if (row.mode==='options' && resolvedOpts) {
-          optItems = resolvedOpts.map(function(o){ return {id:(o.id||'').trim(), name:(o.name||'').trim(), image:o.image||'', stock:''}; });
+          optItems = resolvedOpts.map(function(o){ return {id:(o.id||'').trim(), name:(o.name||'').trim(), image:o.image||'', stock:(o.stock===undefined?'':o.stock)}; });
         }
         google.script.run
           .withSuccessHandler(function(r) {
@@ -4116,41 +4093,9 @@ function openEditStockChildModal(child, parent) {
   grid.appendChild(makeStockBarcodeRow('scId', child.id, true));
   addFC('scStock', 'สต็อก',          'number', child.stock !== null ? child.stock : '', false);
 
-  // Image URL field for child option
+  // Shared image component — same look as every other product form
   var scImgGroup = document.createElement('div'); scImgGroup.className = 'sf-group sf-full';
-  var scImgLbl = document.createElement('label'); scImgLbl.textContent = 'รูปภาพตัวเลือก (URL หรืออัปโหลด)';
-  scImgGroup.appendChild(scImgLbl);
-  var scImgZone = document.createElement('div'); scImgZone.className = 'sf-img-zone' + (child.image ? ' has-img' : ''); scImgZone.id = 'scImageZone';
-  var scFileInp = document.createElement('input'); scFileInp.type = 'file'; scFileInp.accept = 'image/*'; scFileInp.className = 'sf-img-file-inp';
-  scFileInp.onchange = function() {
-    var f2 = this.files && this.files[0]; if (!f2) return;
-    var rdr2 = new FileReader();
-    rdr2.onload = function(ev2) {
-      pendingImg['scImage'] = ev2.target.result;
-      var tz = document.getElementById('scImageZone');
-      if (tz) { tz.className = 'sf-img-zone has-img'; tz.querySelector('.sf-img-thumb img').src = ev2.target.result; tz.querySelector('.sf-img-thumb img').style.display='block'; }
-      el('scImage').value = '';
-    };
-    rdr2.readAsDataURL(f2);
-  };
-  var scThumb = document.createElement('div'); scThumb.className = 'sf-img-thumb';
-  var scThumbImg = document.createElement('img'); scThumbImg.src = child.image || ''; scThumbImg.style.display = child.image ? 'block' : 'none';
-  var scThumbIcon = document.createElement('div');
-  scThumbIcon.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>';
-  scThumbIcon.style.display = child.image ? 'none' : 'flex';
-  scThumb.appendChild(scThumbIcon); scThumb.appendChild(scThumbImg);
-  var scImgText = document.createElement('div'); scImgText.className = 'sf-img-zone-text';
-  scImgText.innerHTML = '<div class="sf-img-zone-title">' + (child.image ? 'เปลี่ยนรูป' : 'คลิกหรือลากรูปมาวาง') + '</div><div class="sf-img-zone-sub">PNG, JPG, WEBP · แตะเพื่อถ่ายรูป (มือถือ)</div>';
-  scImgZone.appendChild(scFileInp); scImgZone.appendChild(scThumb); scImgZone.appendChild(scImgText);
-  scImgGroup.appendChild(scImgZone);
-  // URL input
-  var scUrlInp = document.createElement('input'); scUrlInp.type = 'text'; scUrlInp.id = 'scImageUrl';
-  scUrlInp.value = child.image || ''; scUrlInp.placeholder = 'หรือวาง URL รูปภาพ';
-  scUrlInp.style.cssText = 'width:100%;margin-top:6px;padding:7px 10px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:0.8rem;font-family:var(--font);background:var(--surface-2);outline:none;';
-  scUrlInp.oninput = function() { el('scImage').value = scUrlInp.value; };
-  scImgGroup.appendChild(scUrlInp);
-  var scImgHidden = document.createElement('input'); scImgHidden.type = 'hidden'; scImgHidden.id = 'scImage'; scImgHidden.value = child.image || '';
-  scImgGroup.appendChild(scImgHidden);
+  scImgGroup.appendChild(makeImageField('scImage', child.image || '', 'รูปภาพตัวเลือก'));
   grid.appendChild(scImgGroup);
 
   appendLinkedProductSyncOption(grid, 'scSyncLinked', parent.linkedListCount);
@@ -4162,7 +4107,7 @@ function openEditStockChildModal(child, parent) {
     var saveBtn7 = el('modalSave'); saveBtn7.disabled = true; saveBtn7.textContent = 'กำลังบันทึก...';
     var syncLinked = !!(el('scSyncLinked') && el('scSyncLinked').checked);
     resolveImage('scImage', function(imgResolved) {
-      var finalImg = imgResolved || el('scImageUrl').value.trim() || child.image || parent.image || '';
+      var finalImg = imgResolved || child.image || parent.image || '';
       google.script.run.withSuccessHandler(function(r) {
         try {
           var res = JSON.parse(r);
@@ -4483,8 +4428,8 @@ function makeImageField(fieldId, currentUrl, labelText) {
   // Gallery file input (no capture)
   var fileInp = document.createElement('input'); fileInp.type = 'file'; fileInp.accept = 'image/*'; fileInp.className = 'img-upload-input';
   fileInp.onchange = function() { handleImgSelect(this, fieldId); };
-  var lbTxt = div('img-upload-label', '&#x1F5BC;&#xFE0F; คลิกหรือลากไฟล์มาวางที่นี่');
-  var subTxt = div('img-upload-sublabel', 'PNG, JPG, WEBP');
+  var lbTxt = div('img-upload-label', '&#x1F5BC;&#xFE0F; แตะเพื่อเลือกรูป (กล้อง/แกลเลอรี)');
+  var subTxt = div('img-upload-sublabel', 'PNG, JPG, WEBP · ลากไฟล์มาวางได้');
   var statusEl = document.createElement('div'); statusEl.className = 'img-upload-status'; statusEl.id = fieldId + 'Status';
   var prevImg = document.createElement('img'); prevImg.className = 'img-upload-preview'; prevImg.id = fieldId + 'Preview'; prevImg.style.display = 'none';
   uploadWrap.appendChild(fileInp); uploadWrap.appendChild(lbTxt); uploadWrap.appendChild(subTxt);
@@ -4494,20 +4439,9 @@ function makeImageField(fieldId, currentUrl, labelText) {
   uploadWrap.appendChild(pasteHint);
   wrap.appendChild(uploadWrap);
 
-  // Camera button (capture="environment") — placed below the drop zone
-  var camRowImg = document.createElement('div');
-  camRowImg.style.cssText = 'display:flex;align-items:center;gap:8px;margin-top:6px;';
-  var camBtnImg = document.createElement('button'); camBtnImg.type = 'button';
-  camBtnImg.innerHTML = '📷 ถ่ายรูป (กล้อง)';
-  camBtnImg.style.cssText = 'flex:1;padding:8px 12px;font-size:0.8rem;font-weight:700;font-family:var(--font);background:var(--primary);color:#fff;border:none;border-radius:var(--radius-sm);cursor:pointer;';
-  var camFiImg = document.createElement('input'); camFiImg.type = 'file'; camFiImg.accept = 'image/*';
-  camFiImg.setAttribute('capture', 'environment');
-  camFiImg.style.display = 'none';
-  camFiImg.onchange = function() { handleImgSelect(this, fieldId); };
-  camBtnImg.onclick = function() { camFiImg.click(); };
-  camRowImg.appendChild(camBtnImg);
-  wrap.appendChild(camFiImg);
-  wrap.appendChild(camRowImg);
+  // No separate camera button: the drop-zone file input has no
+  // `capture` attribute, so tapping it on a phone opens the native
+  // chooser that already offers both camera and gallery.
   var urlInp = document.createElement('input'); urlInp.type = 'text'; urlInp.id = fieldId;
   urlInp.placeholder = 'หรือวาง URL รูปภาพโดยตรง'; urlInp.value = currentUrl || '';
   urlInp.style.marginTop = '8px';
