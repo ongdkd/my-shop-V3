@@ -30,6 +30,8 @@ assert.ok(schema.includes('on delete set null'), 'deleting a warehouse item must
 assert.ok(api.includes('adminSyncStockProductToLinked'), 'warehouse edits must support syncing linked shop products');
 assert.ok(api.includes(".eq('source_stock_item_id', parentId)"), 'warehouse sync must target stable source IDs');
 assert.ok(api.includes('source_stock_item_id: p.id'), 'new warehouse imports must create the stable link');
+assert.ok(schema.includes("option_details jsonb not null default '[]'::jsonb"), 'products must persist per-option images and stock');
+assert.ok(api.includes('option_details: kids.map'), 'warehouse imports must preserve each option\'s metadata');
 assert.ok(admin.includes('appendLinkedProductSyncOption'), 'warehouse edit dialogs must expose the sync checkbox');
 assert.ok(admin.includes('function defaultStockImportQty(product)'), 'finite warehouse stock must be the default import quantity');
 assert.ok(admin.includes('_stockQtyMap[p.rowIndex] = defaultStockImportQty(p)'), 'stock cards must start with the maximum finite quantity');
@@ -55,6 +57,10 @@ assert.ok(storefront.includes('aria-pressed'), 'variant chips must expose their 
 assert.ok(storefront.includes('role="button" tabindex="0"'), 'hub cards must be keyboard accessible');
 assert.ok(posPage.includes("location.replace('admin-login.html')"), 'unauthenticated POS access must redirect to login');
 assert.ok(!pos.includes('ORDER_HUB|'), 'POS must not render a fake non-payable QR payload');
+assert.ok(pos.includes('function getOptionDetail(product, optionName)'), 'POS must resolve selected option metadata');
+assert.ok(pos.includes('optionLeft = Number(detail.remaining)'), 'POS must enforce selected option stock');
+assert.ok(pos.includes('getProductImage(item.product, item.option)'), 'POS summary must use the selected option image');
+assert.ok(schema.match(/Stock not enough for[^\n]+req\.option_name/g)?.length >= 2, 'web and POS RPCs must enforce option stock');
 assert.ok(!loginPage.includes('tabindex="-1"'), 'password toggle must stay in keyboard tab order');
 assert.ok(storefrontPage.includes('ตรวจสอบคำสั่งซื้อ'), 'cart button must say review, not confirm');
 

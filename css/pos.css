@@ -158,11 +158,13 @@ button{font-family:var(--font);cursor:pointer;border:none;transition:all 0.15s;}
 .qty-options{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:14px;}
 .qty-opt-chip{padding:5px 14px;border-radius:999px;font-size:0.78rem;font-weight:600;border:1.5px solid var(--border-strong);background:var(--surface-2);color:var(--text-2);cursor:pointer;}
 .qty-opt-chip.selected{background:var(--primary-light);color:var(--primary);border-color:var(--primary);}
+.qty-opt-chip:disabled{opacity:0.45;cursor:not-allowed;text-decoration:line-through;}
 .qty-modal-actions{display:flex;gap:10px;margin-top:14px;}
 .qty-cancel-btn{flex:0 0 auto;padding:12px 18px;background:var(--surface-2);color:var(--text-2);border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:0.88rem;font-weight:600;}
 .qty-add-btn{flex:1;padding:13px;background:var(--primary);color:#fff;border-radius:var(--radius-sm);font-size:0.92rem;font-weight:700;display:flex;align-items:center;justify-content:center;gap:7px;}
 .qty-add-btn:hover{background:var(--primary-dark);}
 .qty-add-btn:active{transform:scale(0.98);}
+.qty-add-btn:disabled{opacity:0.45;cursor:not-allowed;}
 
 /* ── TOAST ── */
 #pos-toast{position:fixed;bottom:88px;left:50%;transform:translateX(-50%);z-index:9999;padding:10px 18px;border-radius:var(--radius-md);font-size:0.84rem;font-weight:600;text-align:center;box-shadow:var(--shadow-md);display:none;font-family:var(--font);white-space:nowrap;}

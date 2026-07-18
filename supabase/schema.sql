@@ -36,9 +36,15 @@ create table if not exists public.products (
   status     text not null default 'Open',
   yuan       numeric not null default 0,
   options    text not null default '',         -- "Name:barcode,Name:barcode"
+  option_details jsonb not null default '[]'::jsonb, -- [{name,code,image,remaining}]
   created_at timestamptz not null default now()
 );
 create index if not exists products_list_idx on public.products(list_id);
+
+-- Existing projects need the option metadata column as well. It preserves
+-- per-option images and sellable quantities when stock is pushed to a list.
+alter table public.products
+  add column if not exists option_details jsonb not null default '[]'::jsonb;
 
 -- ── Orders (was the Orders sheet) ────────────────────────────
 create table if not exists public.orders (
@@ -296,6 +302,7 @@ declare
   v_unit   numeric;
   v_label  text;
   v_phone  text;
+  v_detail jsonb;
   req      record;
 begin
   if p_items is null or jsonb_typeof(p_items) <> 'array' or jsonb_array_length(p_items) = 0 then
@@ -376,6 +383,41 @@ begin
     end if;
   end loop;
 
+  -- Validate each selected option independently. The parent quantity is the
+  -- total across all options, while option_details.remaining is the maximum
+  -- sellable quantity for that specific choice.
+  for req in
+    select item.value->>'id' as code,
+           btrim(coalesce(item.value->>'selectedOption', '')) as option_name,
+           sum((item.value->>'quantity')::numeric) as qty
+    from jsonb_array_elements(p_items) as item(value)
+    where btrim(coalesce(item.value->>'selectedOption', '')) <> ''
+    group by item.value->>'id', btrim(coalesce(item.value->>'selectedOption', ''))
+    order by item.value->>'id', btrim(coalesce(item.value->>'selectedOption', ''))
+  loop
+    select * into prod from public.products
+      where list_id = p_list_id and code = req.code
+      limit 1;
+    if jsonb_array_length(coalesce(prod.option_details, '[]'::jsonb)) > 0 then
+      select detail.value into v_detail
+      from jsonb_array_elements(prod.option_details) detail(value)
+      where btrim(coalesce(detail.value->>'name', '')) = req.option_name
+         or (
+           btrim(coalesce(detail.value->>'code', '')) <> ''
+           and btrim(coalesce(detail.value->>'name', '')) || ':' || btrim(detail.value->>'code') = req.option_name
+         )
+      limit 1;
+      if not found then
+        return jsonb_build_object('status', 'Error', 'message', 'Invalid product option: ' || prod.name);
+      end if;
+      if v_detail ? 'remaining'
+         and v_detail->>'remaining' is not null
+         and (v_detail->>'remaining')::numeric < req.qty then
+        return jsonb_build_object('status', 'Error', 'message', 'Stock not enough for ' || prod.name || ' (' || req.option_name || ')');
+      end if;
+    end if;
+  end loop;
+
   -- Idempotency guard — AFTER all validations so a rejected attempt can
   -- be retried, but BEFORE any write. A duplicate id means this checkout
   -- already succeeded: answer Success without writing anything twice.
@@ -400,6 +442,33 @@ begin
 
     if prod.remaining is not null then
       update public.products set remaining = remaining - v_qty where id = prod.id;
+    end if;
+
+    if v_opt <> '' and jsonb_array_length(coalesce(prod.option_details, '[]'::jsonb)) > 0 then
+      update public.products p
+      set option_details = coalesce((
+        select jsonb_agg(
+          case
+            when (
+              btrim(coalesce(detail.value->>'name', '')) = v_opt
+              or (
+                btrim(coalesce(detail.value->>'code', '')) <> ''
+                and btrim(coalesce(detail.value->>'name', '')) || ':' || btrim(detail.value->>'code') = v_opt
+              )
+            ) and detail.value ? 'remaining' and detail.value->>'remaining' is not null
+            then jsonb_set(
+              detail.value,
+              '{remaining}',
+              to_jsonb(greatest(0::numeric, (detail.value->>'remaining')::numeric - v_qty)),
+              true
+            )
+            else detail.value
+          end
+          order by detail.ordinality
+        )
+        from jsonb_array_elements(p.option_details) with ordinality detail(value, ordinality)
+      ), '[]'::jsonb)
+      where p.id = prod.id;
     end if;
 
     v_unit  := case when v_is_dep then coalesce(prod.deposit, 0) else coalesce(prod.price, 0) end;
@@ -549,6 +618,7 @@ declare
   v_qty   numeric;
   v_opt   text;
   v_label text;
+  v_detail jsonb;
   v_count integer := 0;
   req     record;
 begin
@@ -609,6 +679,39 @@ begin
     end if;
   end loop;
 
+  -- Enforce the selected option's own stock in addition to the product total.
+  for req in
+    select item.value->>'id' as code,
+           btrim(coalesce(item.value->>'selectedOption', '')) as option_name,
+           sum((item.value->>'quantity')::numeric) as qty
+    from jsonb_array_elements(p_items) as item(value)
+    where btrim(coalesce(item.value->>'selectedOption', '')) <> ''
+    group by item.value->>'id', btrim(coalesce(item.value->>'selectedOption', ''))
+    order by item.value->>'id', btrim(coalesce(item.value->>'selectedOption', ''))
+  loop
+    select * into prod from public.products
+      where list_id = p_list_id and code = req.code
+      limit 1;
+    if jsonb_array_length(coalesce(prod.option_details, '[]'::jsonb)) > 0 then
+      select detail.value into v_detail
+      from jsonb_array_elements(prod.option_details) detail(value)
+      where btrim(coalesce(detail.value->>'name', '')) = req.option_name
+         or (
+           btrim(coalesce(detail.value->>'code', '')) <> ''
+           and btrim(coalesce(detail.value->>'name', '')) || ':' || btrim(detail.value->>'code') = req.option_name
+         )
+      limit 1;
+      if not found then
+        return jsonb_build_object('status', 'Error', 'message', 'Invalid product option: ' || prod.name);
+      end if;
+      if v_detail ? 'remaining'
+         and v_detail->>'remaining' is not null
+         and (v_detail->>'remaining')::numeric < req.qty then
+        return jsonb_build_object('status', 'Error', 'message', 'Stock not enough for ' || prod.name || ' (' || req.option_name || ')');
+      end if;
+    end if;
+  end loop;
+
   -- Idempotency guard (see submit_order): duplicate retry = already saved
   if p_checkout_id is not null then
     begin
@@ -630,6 +733,33 @@ begin
 
     if prod.remaining is not null then
       update public.products set remaining = remaining - v_qty where id = prod.id;
+    end if;
+
+    if v_opt <> '' and jsonb_array_length(coalesce(prod.option_details, '[]'::jsonb)) > 0 then
+      update public.products p
+      set option_details = coalesce((
+        select jsonb_agg(
+          case
+            when (
+              btrim(coalesce(detail.value->>'name', '')) = v_opt
+              or (
+                btrim(coalesce(detail.value->>'code', '')) <> ''
+                and btrim(coalesce(detail.value->>'name', '')) || ':' || btrim(detail.value->>'code') = v_opt
+              )
+            ) and detail.value ? 'remaining' and detail.value->>'remaining' is not null
+            then jsonb_set(
+              detail.value,
+              '{remaining}',
+              to_jsonb(greatest(0::numeric, (detail.value->>'remaining')::numeric - v_qty)),
+              true
+            )
+            else detail.value
+          end
+          order by detail.ordinality
+        )
+        from jsonb_array_elements(p.option_details) with ordinality detail(value, ordinality)
+      ), '[]'::jsonb)
+      where p.id = prod.id;
     end if;
 
     v_label := case when v_opt <> '' then prod.name || ' (' || v_opt || ')' else prod.name end;
