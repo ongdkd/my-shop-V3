@@ -288,6 +288,7 @@
   // sheet row number; we fabricate stable indexes per fetch)
   var _listRowMap = {};              // rowIndex -> order_lists.id
   var _prodRowMap = {};              // listId -> { rowIndex -> products.id }
+  var _orderRowMap = {};             // listId -> { rowIndex(seq) -> orders.id }
   var _stockRowMap = {};             // rowIndex -> stock_items.id
 
   function listIdFromRow(rowIndex) { return _listRowMap[rowIndex] || null; }
@@ -694,8 +695,26 @@
       try {
         requireSb(); await requireAdmin();
         var data = await fetchOrders(sheetId);
+        var omap = {};
+        data.forEach(function (r) { omap[r.seq] = r.id; });
+        _orderRowMap[sheetId] = omap;
         var orders = data.map(mapOrder);
         return ok({ orders: orders });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
+    // Deletes selected order rows (test/mistake cleanup). Stock that the
+    // orders deducted is NOT restored automatically — adjust it in the
+    // products panel if needed.
+    adminDeleteOrders: async function (sheetId, rowIndexes) {
+      try {
+        requireSb(); await requireAdmin();
+        var omap = _orderRowMap[sheetId] || {};
+        var ids = (rowIndexes || []).map(function (ri) { return omap[ri]; }).filter(Boolean);
+        if (!ids.length) return err('ไม่พบคำสั่งซื้อ (กรุณารีเฟรชหน้า)');
+        var r = await sb.from('orders').delete().in('id', ids).select('id');
+        if (r.error) return err(r.error.message);
+        return ok({ deleted: (r.data || []).length });
       } catch (e) { return e.__json || err(e.message || e); }
     },
 
@@ -942,6 +961,121 @@
           }
         }
         return ok({ returned: qty });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
+    // Bulk version of the return above: zero the selected linked
+    // products' remaining and add the units back to their warehouse rows.
+    adminReturnProductsBulk: async function (sheetId, rowIndexes) {
+      try {
+        requireSb(); await requireAdmin();
+        var map = _prodRowMap[sheetId] || {};
+        var ids = (rowIndexes || []).map(function (ri) { return map[ri]; }).filter(Boolean);
+        if (!ids.length) return err('ไม่พบสินค้า (กรุณารีเฟรชหน้า)');
+
+        var pr = await sb.from('products')
+          .select('id,name,remaining,source_stock_item_id')
+          .in('id', ids);
+        if (pr.error) return err(pr.error.message);
+        var eligible = (pr.data || []).filter(function (p) {
+          return p.source_stock_item_id && p.remaining !== null && Number(p.remaining) > 0;
+        });
+        if (!eligible.length) return err('ในรายการที่เลือก ไม่มีสินค้าที่คืนได้ (ต้องลิงก์คลังและมีสต็อกเหลือ)');
+
+        var sids = eligible.map(function (p) { return p.source_stock_item_id; });
+        var sr = await sb.from('stock_items').select('id,stock').in('id', sids);
+        if (sr.error) return err(sr.error.message);
+        var stockById = {};
+        (sr.data || []).forEach(function (s) { stockById[s.id] = s; });
+
+        // Zero the list stock first so a partial failure can only
+        // under-count the warehouse, never double-count sellable stock
+        var z = await sb.from('products').update({ remaining: 0 })
+          .in('id', eligible.map(function (p) { return p.id; }));
+        if (z.error) return err(z.error.message);
+
+        var addById = {}, total = 0;
+        eligible.forEach(function (p) {
+          var q = Number(p.remaining);
+          addById[p.source_stock_item_id] = (addById[p.source_stock_item_id] || 0) + q;
+          total += q;
+        });
+        var ups = [];
+        Object.keys(addById).forEach(function (sid2) {
+          var s = stockById[sid2];
+          if (s && s.stock !== null && s.stock !== undefined) {
+            ups.push({ id: sid2, stock: Number(s.stock) + addById[sid2] });
+          }
+        });
+        if (ups.length) {
+          var u = await sb.from('stock_items').upsert(ups, { onConflict: 'id' });
+          if (u.error) return err('ตั้งสต็อกรายการเป็น 0 แล้ว แต่บวกคืนคลังไม่ครบ: ' + u.error.message + ' — กรุณาตรวจคลังเอง');
+        }
+        return ok({ returned: total, count: eligible.length });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
+    adminDeleteProductsBulk: async function (sheetId, rowIndexes) {
+      try {
+        requireSb(); await requireAdmin();
+        var map = _prodRowMap[sheetId] || {};
+        var ids = (rowIndexes || []).map(function (ri) { return map[ri]; }).filter(Boolean);
+        if (!ids.length) return err('ไม่พบสินค้า (กรุณารีเฟรชหน้า)');
+        var r = await sb.from('products').delete().in('id', ids).select('id');
+        if (r.error) return err(r.error.message);
+        return ok({ deleted: (r.data || []).length });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
+    // "Clear list": return every linked product's unsold units to the
+    // warehouse, then delete ALL products in the list.
+    adminClearListProducts: async function (sheetId) {
+      try {
+        requireSb(); await requireAdmin();
+        var pr = await sb.from('products')
+          .select('id,remaining,source_stock_item_id')
+          .eq('list_id', sheetId);
+        if (pr.error) return err(pr.error.message);
+        var all = pr.data || [];
+        if (!all.length) return err('รายการนี้ไม่มีสินค้าอยู่แล้วค่ะ');
+
+        var eligible = all.filter(function (p) {
+          return p.source_stock_item_id && p.remaining !== null && Number(p.remaining) > 0;
+        });
+        var total = 0;
+        if (eligible.length) {
+          var sids = eligible.map(function (p) { return p.source_stock_item_id; });
+          var sr = await sb.from('stock_items').select('id,stock').in('id', sids);
+          if (sr.error) return err(sr.error.message);
+          var stockById = {};
+          (sr.data || []).forEach(function (s) { stockById[s.id] = s; });
+
+          var z = await sb.from('products').update({ remaining: 0 })
+            .in('id', eligible.map(function (p) { return p.id; }));
+          if (z.error) return err(z.error.message);
+
+          var addById = {};
+          eligible.forEach(function (p) {
+            var q = Number(p.remaining);
+            addById[p.source_stock_item_id] = (addById[p.source_stock_item_id] || 0) + q;
+            total += q;
+          });
+          var ups = [];
+          Object.keys(addById).forEach(function (sid2) {
+            var s = stockById[sid2];
+            if (s && s.stock !== null && s.stock !== undefined) {
+              ups.push({ id: sid2, stock: Number(s.stock) + addById[sid2] });
+            }
+          });
+          if (ups.length) {
+            var u = await sb.from('stock_items').upsert(ups, { onConflict: 'id' });
+            if (u.error) return err('คืนสต็อกไม่ครบ: ' + u.error.message + ' — ยังไม่ได้ลบสินค้า กรุณาตรวจคลังก่อน');
+          }
+        }
+
+        var d = await sb.from('products').delete().eq('list_id', sheetId).select('id');
+        if (d.error) return err('คืนสต็อกแล้ว แต่ลบสินค้าไม่สำเร็จ: ' + d.error.message);
+        return ok({ returned: total, deleted: (d.data || []).length });
       } catch (e) { return e.__json || err(e.message || e); }
     },
 

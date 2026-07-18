@@ -1424,6 +1424,14 @@ function renderOrdersTable(orders, holder, isAllView) {
   searchInp.oninput = function() { filterOrderRows(this.value); };
   searchWrap.appendChild(searchInp);
 
+  // Multi-select delete — only in single-list view (rowIndex maps to that list's orders)
+  var delSelBtn = null;
+  if (!isAllView) {
+    delSelBtn = makeBtn('btn btn-danger btn-sm', '&#x1F5D1; ลบที่เลือก', function() { confirmDeleteSelectedOrders(); });
+    delSelBtn.id = 'orderDelSelBtn';
+    delSelBtn.style.display = 'none';
+    rightWrap.appendChild(delSelBtn);
+  }
   rightWrap.appendChild(openShopBtn);
   rightWrap.appendChild(searchWrap);
 
@@ -1432,9 +1440,10 @@ function renderOrdersTable(orders, holder, isAllView) {
 
   var scrollWrap = document.createElement('div'); scrollWrap.style.overflowX = 'auto';
   var tbl = document.createElement('table'); tbl.className = 'data-table'; tbl.id = 'ordersDataTable';
-  
+
+  var selTh = isAllView ? '' : '<th style="width:34px;"><input type="checkbox" id="orderSelAll" aria-label="เลือกคำสั่งซื้อทั้งหมด" style="width:18px;height:18px;accent-color:var(--primary);cursor:pointer;"></th>';
   var shopTh = isAllView ? '<th>ร้านค้า</th>' : '';
-  tbl.innerHTML = '<thead><tr><th>วันที่</th>' + shopTh + '<th>ลูกค้า</th><th>สินค้า</th><th style="text-align:center;">จำนวน</th><th style="text-align:center;">ประเภท</th><th style="text-align:center;">ราคา/ชิ้น</th><th style="text-align:center;">รวม</th><th style="text-align:center;">เบอร์</th></tr></thead>';
+  tbl.innerHTML = '<thead><tr>' + selTh + '<th>วันที่</th>' + shopTh + '<th>ลูกค้า</th><th>สินค้า</th><th style="text-align:center;">จำนวน</th><th style="text-align:center;">ประเภท</th><th style="text-align:center;">ราคา/ชิ้น</th><th style="text-align:center;">รวม</th><th style="text-align:center;">เบอร์</th></tr></thead>';
   var tbody = document.createElement('tbody');
   
   // Helper to format the raw Date string into a readable format
@@ -1451,10 +1460,16 @@ function renderOrdersTable(orders, holder, isAllView) {
     tr.setAttribute('data-search', (o.customer + ' ' + o.product + (o.shopName || '')).toLowerCase());
     var isDeposit = o.payType === 'Deposit';
     
-    var cells = [
+    var cells = [];
+
+    if (!isAllView) {
+      cells.push({html: '<input type="checkbox" class="order-sel" data-row="' + o.rowIndex + '" aria-label="เลือกคำสั่งซื้อของ ' + escapeHtml(o.customer) + '" style="width:18px;height:18px;accent-color:var(--primary);cursor:pointer;">', style: 'text-align:center;'});
+    }
+
+    cells.push(
       {text: formatDate(o.timestamp), style: 'font-size:0.75rem;color:var(--text-3);white-space:nowrap;'}
-    ];
-    
+    );
+
     if (isAllView) {
       cells.push({text: o.shopName || '', style: 'font-size:0.75rem; color:var(--primary); font-weight:600; white-space:nowrap;'});
     }
@@ -1478,6 +1493,63 @@ function renderOrdersTable(orders, holder, isAllView) {
     tbody.appendChild(tr);
   }
   tbl.appendChild(tbody); scrollWrap.appendChild(tbl); card.appendChild(scrollWrap); holder.appendChild(card);
+
+  if (!isAllView) {
+    var refreshDelBtn = function() {
+      var n = tbl.querySelectorAll('.order-sel:checked').length;
+      if (delSelBtn) {
+        delSelBtn.style.display = n ? '' : 'none';
+        delSelBtn.innerHTML = '&#x1F5D1; ลบที่เลือก (' + n + ')';
+      }
+    };
+    tbl.addEventListener('change', function(e) {
+      if (e.target.id === 'orderSelAll') {
+        // Select-all only applies to rows visible under the current search filter
+        tbl.querySelectorAll('tbody tr').forEach(function(tr) {
+          if (tr.style.display === 'none') return;
+          var cb = tr.querySelector('.order-sel');
+          if (cb) cb.checked = e.target.checked;
+        });
+        refreshDelBtn();
+      } else if (e.target.classList.contains('order-sel')) {
+        refreshDelBtn();
+      }
+    });
+  }
+}
+
+function confirmDeleteSelectedOrders() {
+  var checked = document.querySelectorAll('#ordersDataTable .order-sel:checked');
+  var rows = [];
+  checked.forEach(function(cb) { rows.push(parseInt(cb.getAttribute('data-row'), 10)); });
+  if (!rows.length) { toast('ยังไม่ได้เลือกคำสั่งซื้อ', 'error'); return; }
+  var sheetId = selectedSheetId;
+  el('modalBody').innerHTML = '';
+  var wrap = document.createElement('div'); wrap.style.cssText = 'text-align:center;padding:8px 0;';
+  wrap.innerHTML = '<div style="font-size:2.5rem;margin-bottom:12px;">&#x26A0;&#xFE0F;</div>' +
+    '<div style="font-weight:700;font-size:0.95rem;margin-bottom:8px;">ลบคำสั่งซื้อที่เลือก ' + rows.length + ' รายการ?</div>' +
+    '<div style="font-size:0.85rem;color:var(--text-2);">คำสั่งซื้อจะถูกลบออกถาวร (เหมาะสำหรับลบออเดอร์ทดสอบ)</div>' +
+    '<div style="font-size:0.78rem;color:var(--danger);margin-top:6px;">สต็อกที่ถูกตัดไปจากคำสั่งซื้อเหล่านี้จะไม่ถูกคืนอัตโนมัติ — ถ้าต้องการคืน ให้แก้สต็อกในหน้าสินค้าเอง</div>';
+  el('modalBody').appendChild(wrap);
+  openModal('&#x1F5D1; ลบคำสั่งซื้อ', '', function() {
+    var saveBtn = el('modalSave'); saveBtn.disabled = true; saveBtn.textContent = 'กำลังลบ...';
+    google.script.run.withSuccessHandler(function(r) {
+      saveBtn.disabled = false;
+      try {
+        var res = JSON.parse(r);
+        if (res.status === 'Success') {
+          closeModal();
+          toast('ลบคำสั่งซื้อแล้ว ' + res.deleted + ' รายการ', 'success');
+          loadOrders(sheetId);
+        } else { toast(res.message || 'เกิดข้อผิดพลาด', 'error'); }
+      } catch(e) { toast('เกิดข้อผิดพลาด', 'error'); }
+    }).withFailureHandler(function() {
+      saveBtn.disabled = false;
+      toast('ลบคำสั่งซื้อไม่สำเร็จ', 'error');
+    }).adminDeleteOrders(sheetId, rows);
+  }, 'ลบ');
+  el('modalSave').className = 'btn btn-danger';
+  el('modal').classList.add('open');
 }
 
 function filterOrderRows(term) {
@@ -1564,9 +1636,12 @@ function setProductView(mode) {
   }
 }
 
+var _prodSelected = {}; // rowIndex -> true (products panel multi-select)
+
 function renderProductsTable(products, sheetId, holder) {
   currentProductsSheetId = sheetId;
   _changedStockRows = {};
+  _prodSelected = {};
   holder.innerHTML = '';
 
   products = products.slice().sort(function(a, b) {
@@ -1596,6 +1671,7 @@ function renderProductsTable(products, sheetId, holder) {
   hdrRight.appendChild(makeBtn('btn btn-primary btn-sm', '&#x2B; เพิ่มสินค้า', openCreateProductModal));
   hdrRight.appendChild(makeBtn('btn btn-ghost btn-sm', '&#x1F4CB; เพิ่มหลายรายการ', openBulkAddModal));
   hdrRight.appendChild(makeBtn('btn btn-success btn-sm', '&#x2713; บันทึกสต็อก', saveAllStock));
+  hdrRight.appendChild(makeBtn('btn btn-danger btn-sm', '&#x1F9F9; ล้างรายการ+คืนคลัง', function() { confirmClearList(sheetId); }));
   hdr.appendChild(hdrRight);
   card.appendChild(hdr);
 
@@ -1606,7 +1682,7 @@ function renderProductsTable(products, sheetId, holder) {
     // 1. LIST VIEW (Original Table)
     var scrollWrap = document.createElement('div'); scrollWrap.style.overflowX = 'auto';
     var tbl = document.createElement('table'); tbl.className = 'data-table'; tbl.id = 'prodTable';
-    tbl.innerHTML = '<thead><tr><th>สินค้า</th><th>ราคาเต็ม</th><th>มัดจำ</th><th>สต็อก</th><th>สถานะ</th><th></th></tr></thead>';
+    tbl.innerHTML = '<thead><tr><th style="width:34px;"></th><th>สินค้า</th><th>ราคาเต็ม</th><th>มัดจำ</th><th>สต็อก</th><th>สถานะ</th><th></th></tr></thead>';
     var tbody = document.createElement('tbody');
 
     for (var i = 0; i < products.length; i++) {
@@ -1614,6 +1690,13 @@ function renderProductsTable(products, sheetId, holder) {
       var isOpen = p.status === 'Open';
       var remVal = (p.remaining === null || p.remaining === undefined) ? '' : p.remaining;
       var tr = document.createElement('tr');
+
+      var tdSel = document.createElement('td');
+      var selChk = document.createElement('input');
+      selChk.type = 'checkbox'; selChk.className = 'prod-sel';
+      selChk.setAttribute('data-row', p.rowIndex);
+      selChk.setAttribute('aria-label', 'เลือก ' + p.name);
+      tdSel.appendChild(selChk); tr.appendChild(tdSel);
 
       var tdName = document.createElement('td');
       var nameDiv = document.createElement('div'); nameDiv.style.cssText = 'font-weight:600;font-size:0.85rem;'; nameDiv.textContent = p.name; tdName.appendChild(nameDiv);
@@ -1678,24 +1761,38 @@ function renderProductsTable(products, sheetId, holder) {
       var pPr = div('prod-card-price'); pPr.textContent = fmt(pGrid.price);
       var pDep = div('prod-card-deposit'); pDep.textContent = 'มัดจำ: ' + fmt(pGrid.deposit); pPr.appendChild(pDep); pBdy.appendChild(pPr);
       var pAct = div('prod-card-actions');
-      var pSD = document.createElement('div'); pSD.style.cssText = 'display:flex;align-items:center;gap:6px;';
-      var pSL = document.createElement('span'); pSL.style.cssText = 'font-size:0.75rem;font-weight:600;color:var(--text-2);'; pSL.textContent = 'สต็อก:';
+      // Row 1: [select] [stock input] [open/closed toggle]
+      var pRow1 = document.createElement('div');
+      pRow1.style.cssText = 'display:flex;align-items:center;gap:8px;';
+      var pSel = document.createElement('input');
+      pSel.type = 'checkbox'; pSel.className = 'prod-sel';
+      pSel.setAttribute('data-row', pGrid.rowIndex);
+      pSel.setAttribute('aria-label', 'เลือก ' + pGrid.name);
+      pRow1.appendChild(pSel);
+      var pSL = document.createElement('span'); pSL.style.cssText = 'font-size:0.75rem;font-weight:600;color:var(--text-2);white-space:nowrap;'; pSL.textContent = 'สต็อก';
       var pSI = document.createElement('input'); pSI.type = 'number'; pSI.min = '0'; pSI.className = 'stock-input';
-      pSI.id = 'stock-' + pGrid.rowIndex; pSI.value = remGridVal; pSI.placeholder = '\u221e';
+      pSI.id = 'stock-' + pGrid.rowIndex; pSI.value = remGridVal; pSI.placeholder = '∞';
       pSI.setAttribute('data-row', pGrid.rowIndex); pSI.setAttribute('data-shid', sheetId);
-      pSD.appendChild(pSL); pSD.appendChild(pSI); pAct.appendChild(pSD);
-      var pTW = div('toggle-wrap'); pTW.style.gap = '6px';
-      var pTL = document.createElement('label'); pTL.className = 'toggle';
+      pSI.style.cssText = 'flex:1;min-width:0;width:auto;';
+      pRow1.appendChild(pSL); pRow1.appendChild(pSI);
+      var pTL = document.createElement('label'); pTL.className = 'toggle'; pTL.title = 'เปิด/ปิดขาย';
       var pCk = document.createElement('input'); pCk.type = 'checkbox'; pCk.className = 'prod-tog';
       pCk.setAttribute('data-row', pGrid.rowIndex); pCk.setAttribute('data-shid', sheetId); if (isGridOpen) pCk.checked = true;
       var pSld = document.createElement('span'); pSld.className = 'toggle-slider';
-      pTL.appendChild(pCk); pTL.appendChild(pSld); pTW.appendChild(pTL);
-      var pEB = makeBtn('btn-icon prod-edit', SVG_EDIT); pEB.title = 'แก้ไข'; pEB.setAttribute('data-row', pGrid.rowIndex); pEB.style.cssText = 'width:28px;height:28px;margin-left:2px;'; pTW.appendChild(pEB);
+      pTL.appendChild(pCk); pTL.appendChild(pSld); pRow1.appendChild(pTL);
+      pAct.appendChild(pRow1);
+
+      // Row 2: action buttons, right-aligned with room to breathe
+      var pRow2 = document.createElement('div');
+      pRow2.style.cssText = 'display:flex;align-items:center;justify-content:flex-end;gap:6px;';
+      var pEB = makeBtn('btn-icon prod-edit', SVG_EDIT); pEB.title = 'แก้ไข'; pEB.setAttribute('data-row', pGrid.rowIndex); pRow2.appendChild(pEB);
       if (pGrid.sourceStockItemId && pGrid.remaining !== null && pGrid.remaining > 0) {
-        var pRB = makeBtn('btn-icon prod-return', '&#x21A9;'); pRB.title = 'คืนสต็อกเข้าคลัง'; pRB.setAttribute('data-row', pGrid.rowIndex); pRB.setAttribute('data-name', pGrid.name); pRB.style.cssText = 'width:28px;height:28px;'; pTW.appendChild(pRB);
+        var pRB = makeBtn('btn-icon prod-return', '&#x21A9;'); pRB.title = 'คืนสต็อกเข้าคลัง'; pRB.setAttribute('data-row', pGrid.rowIndex); pRB.setAttribute('data-name', pGrid.name); pRow2.appendChild(pRB);
       }
-      var pDB = makeBtn('btn-icon prod-del', SVG_TRASH); pDB.title = 'ลบ'; pDB.setAttribute('data-row', pGrid.rowIndex); pDB.setAttribute('data-name', pGrid.name); pDB.style.cssText = 'color:var(--error);border-color:var(--error);width:28px;height:28px;'; pTW.appendChild(pDB);
-      pAct.appendChild(pTW); pBdy.appendChild(pAct); pCard.appendChild(pBdy);
+      var pDB = makeBtn('btn-icon prod-del', SVG_TRASH); pDB.title = 'ลบ'; pDB.setAttribute('data-row', pGrid.rowIndex); pDB.setAttribute('data-name', pGrid.name); pDB.style.cssText = 'color:var(--error);border-color:var(--error);'; pRow2.appendChild(pDB);
+      pAct.appendChild(pRow2);
+
+      pBdy.appendChild(pAct); pCard.appendChild(pBdy);
       grid.appendChild(pCard);
     }
     contentContainer.appendChild(grid);
@@ -1714,22 +1811,49 @@ function renderProductsTable(products, sheetId, holder) {
   saveAllBtnBar.id = 'saveAllBtnBar';
   saveBar.appendChild(saveCountEl);
   saveBar.appendChild(saveAllBtnBar);
-  card.appendChild(saveBar);
+
+  // ── Bulk-selection bar (appears when products are checked) ──
+  var bulkBar = document.createElement('div');
+  bulkBar.className = 'sticky-save-bar'; bulkBar.id = 'prodBulkBar';
+  bulkBar.style.display = 'none';
+  bulkBar.style.borderRadius = '0';
+  var bulkCount = document.createElement('span');
+  bulkCount.className = 'save-count has-changes'; bulkCount.id = 'prodBulkCount';
+  var bulkBtns = document.createElement('div');
+  bulkBtns.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;';
+  bulkBtns.appendChild(makeBtn('btn btn-ghost btn-sm', 'เลือกทั้งหมด', function() { setAllProdSelection(true); }));
+  bulkBtns.appendChild(makeBtn('btn btn-ghost btn-sm', 'ล้างที่เลือก', function() { setAllProdSelection(false); }));
+  bulkBtns.appendChild(makeBtn('btn btn-primary btn-sm', '&#x21A9; คืนคลังที่เลือก', function() { confirmBulkReturn(sheetId); }));
+  bulkBtns.appendChild(makeBtn('btn btn-danger btn-sm', '&#x1F5D1; ลบที่เลือก', function() { confirmBulkDelete(sheetId); }));
+  bulkBar.appendChild(bulkCount);
+  bulkBar.appendChild(bulkBtns);
+
+  // One sticky container so the two bars stack instead of overlapping
+  var stickyWrap = document.createElement('div');
+  stickyWrap.style.cssText = 'position:sticky;bottom:0;z-index:100;';
+  stickyWrap.appendChild(bulkBar);
+  stickyWrap.appendChild(saveBar);
+  card.appendChild(stickyWrap);
 
   holder.appendChild(card);
 
   // --- EVENT DELEGATION FOR BOTH VIEWS ---
   contentContainer.onchange = function(e) {
+    if (e.target.classList.contains('prod-sel')) {
+      _prodSelected[parseInt(e.target.getAttribute('data-row'), 10)] = e.target.checked;
+      refreshProdBulkBar();
+      return;
+    }
     var tog = e.target.closest('.prod-tog'); if (!tog) return;
     var row = parseInt(tog.getAttribute('data-row'), 10);
     var sid = tog.getAttribute('data-shid');
-    
+
     // Attempt to find the label if it's in list view
     var toggleWrap = tog.closest('.toggle-wrap');
     var lbl2 = toggleWrap ? toggleWrap.querySelector('.prod-tog-lbl') : null;
-    
+
     toggleProductStatus(tog, row, sid, lbl2);
-    
+
     // Update cache silently to persist state when switching views
     for(var c=0; c<currentProductsCache.length; c++) {
       if(currentProductsCache[c].rowIndex === row) {
@@ -1882,6 +2006,133 @@ function confirmDeleteProduct(sheetId, rowIndex, name) {
       } catch(e) { toast('เกิดข้อผิดพลาด', 'error'); }
     }).adminDeleteProduct(sheetId, rowIndex);
   }, 'ลบ');
+  el('modalSave').className = 'btn btn-danger';
+  el('modal').classList.add('open');
+}
+
+// ── Products multi-select (bulk return / delete / clear list) ──
+function getSelectedProdRows() {
+  return Object.keys(_prodSelected).filter(function(k) { return _prodSelected[k]; })
+    .map(function(k) { return parseInt(k, 10); });
+}
+
+function setAllProdSelection(on) {
+  document.querySelectorAll('.prod-sel').forEach(function(cb) {
+    cb.checked = on;
+    _prodSelected[parseInt(cb.getAttribute('data-row'), 10)] = on;
+  });
+  refreshProdBulkBar();
+}
+
+function refreshProdBulkBar() {
+  var bar = document.getElementById('prodBulkBar');
+  if (!bar) return;
+  var n = getSelectedProdRows().length;
+  bar.style.display = n ? 'flex' : 'none';
+  var lbl = document.getElementById('prodBulkCount');
+  if (lbl) lbl.textContent = 'เลือกแล้ว ' + n + ' รายการ';
+}
+
+function confirmBulkReturn(sheetId) {
+  var rows = getSelectedProdRows();
+  if (!rows.length) { toast('ยังไม่ได้เลือกสินค้า', 'error'); return; }
+  var eligible = 0, pieces = 0;
+  rows.forEach(function(row) {
+    var p = currentProductsCache.find(function(c) { return c.rowIndex === row; });
+    if (p && p.sourceStockItemId && Number(p.remaining) > 0) { eligible++; pieces += Number(p.remaining); }
+  });
+  el('modalBody').innerHTML = '';
+  var wrap = document.createElement('div'); wrap.style.cssText = 'text-align:center;padding:8px 0;';
+  wrap.innerHTML = '<div style="font-size:2.5rem;margin-bottom:12px;">&#x21A9;</div>' +
+    '<div style="font-weight:700;font-size:0.95rem;margin-bottom:8px;">คืนสต็อกเข้าคลัง ' + rows.length + ' สินค้า?</div>' +
+    (eligible
+      ? '<div style="font-size:0.85rem;color:var(--text-2);">จะคืนได้ <strong>' + eligible + ' สินค้า</strong> รวม <strong>' + pieces + ' ชิ้น</strong> (เฉพาะสินค้าที่เชื่อมกับคลังและมีสต็อกเหลือ)</div>'
+      : '<div style="font-size:0.85rem;color:var(--danger);">สินค้าที่เลือกไม่มีรายการที่คืนได้ (ต้องเชื่อมกับคลังและมีสต็อกเหลือ)</div>') +
+    '<div style="font-size:0.78rem;color:var(--text-3);margin-top:6px;">สต็อกในรายการนี้จะเป็น 0 (สั่งซื้อไม่ได้จนกว่าจะนำเข้าใหม่)</div>';
+  el('modalBody').appendChild(wrap);
+  openModal('&#x21A9; คืนสต็อกเข้าคลัง', '', function() {
+    var saveBtn = el('modalSave'); saveBtn.disabled = true; saveBtn.textContent = 'กำลังคืน...';
+    google.script.run.withSuccessHandler(function(r) {
+      saveBtn.disabled = false;
+      try {
+        var res = JSON.parse(r);
+        if (res.status === 'Success') {
+          closeModal();
+          toast('คืนสต็อกเข้าคลังแล้ว ' + res.returned + ' ชิ้น (' + res.count + ' สินค้า)', 'success');
+          loadProducts(sheetId);
+        } else { toast(res.message || 'เกิดข้อผิดพลาด', 'error'); }
+      } catch(e) { toast('เกิดข้อผิดพลาด', 'error'); }
+    }).withFailureHandler(function() {
+      saveBtn.disabled = false;
+      toast('คืนสต็อกไม่สำเร็จ', 'error');
+    }).adminReturnProductsBulk(sheetId, rows);
+  }, 'คืนสต็อก');
+  el('modal').classList.add('open');
+}
+
+function confirmBulkDelete(sheetId) {
+  var rows = getSelectedProdRows();
+  if (!rows.length) { toast('ยังไม่ได้เลือกสินค้า', 'error'); return; }
+  el('modalBody').innerHTML = '';
+  var wrap = document.createElement('div'); wrap.style.cssText = 'text-align:center;padding:8px 0;';
+  wrap.innerHTML = '<div style="font-size:2.5rem;margin-bottom:12px;">&#x26A0;&#xFE0F;</div>' +
+    '<div style="font-weight:700;font-size:0.95rem;margin-bottom:8px;">ลบสินค้าที่เลือก ' + rows.length + ' รายการ?</div>' +
+    '<div style="font-size:0.85rem;color:var(--text-2);">สินค้าจะถูกลบออกจากรายการนี้ถาวร</div>' +
+    '<div style="font-size:0.78rem;color:var(--danger);margin-top:6px;">สต็อกที่เหลือจะไม่ถูกคืนเข้าคลังอัตโนมัติ — ถ้าต้องการคืน ให้กด "คืนคลังที่เลือก" ก่อนลบ</div>';
+  el('modalBody').appendChild(wrap);
+  openModal('&#x1F5D1; ลบสินค้าที่เลือก', '', function() {
+    var saveBtn = el('modalSave'); saveBtn.disabled = true; saveBtn.textContent = 'กำลังลบ...';
+    google.script.run.withSuccessHandler(function(r) {
+      saveBtn.disabled = false;
+      try {
+        var res = JSON.parse(r);
+        if (res.status === 'Success') {
+          closeModal();
+          toast('ลบสินค้าแล้ว ' + res.deleted + ' รายการ', 'success');
+          loadProducts(sheetId);
+        } else { toast(res.message || 'เกิดข้อผิดพลาด', 'error'); }
+      } catch(e) { toast('เกิดข้อผิดพลาด', 'error'); }
+    }).withFailureHandler(function() {
+      saveBtn.disabled = false;
+      toast('ลบสินค้าไม่สำเร็จ', 'error');
+    }).adminDeleteProductsBulk(sheetId, rows);
+  }, 'ลบ');
+  el('modalSave').className = 'btn btn-danger';
+  el('modal').classList.add('open');
+}
+
+function confirmClearList(sheetId) {
+  var total = currentProductsCache.length;
+  if (!total) { toast('ไม่มีสินค้าในรายการนี้', 'error'); return; }
+  var eligible = 0, pieces = 0;
+  currentProductsCache.forEach(function(p) {
+    if (p.sourceStockItemId && Number(p.remaining) > 0) { eligible++; pieces += Number(p.remaining); }
+  });
+  el('modalBody').innerHTML = '';
+  var wrap = document.createElement('div'); wrap.style.cssText = 'text-align:center;padding:8px 0;';
+  wrap.innerHTML = '<div style="font-size:2.5rem;margin-bottom:12px;">&#x1F9F9;</div>' +
+    '<div style="font-weight:700;font-size:0.95rem;margin-bottom:8px;">ล้างสินค้าทั้งหมดในรายการนี้?</div>' +
+    '<div style="font-size:0.85rem;color:var(--text-2);">สินค้าทั้งหมด <strong>' + total + ' รายการ</strong> จะถูกลบ' +
+    (eligible ? ' และคืนสต็อกเข้าคลัง <strong>' + pieces + ' ชิ้น</strong> (' + eligible + ' สินค้าที่เชื่อมกับคลัง)' : '') + '</div>' +
+    '<div style="font-size:0.78rem;color:var(--danger);margin-top:6px;">การลบนี้ย้อนกลับไม่ได้ — สินค้าที่ไม่ได้เชื่อมกับคลังจะหายไปพร้อมสต็อกที่เหลือ</div>';
+  el('modalBody').appendChild(wrap);
+  openModal('&#x1F9F9; ล้างรายการ+คืนคลัง', '', function() {
+    var saveBtn = el('modalSave'); saveBtn.disabled = true; saveBtn.textContent = 'กำลังล้าง...';
+    google.script.run.withSuccessHandler(function(r) {
+      saveBtn.disabled = false;
+      try {
+        var res = JSON.parse(r);
+        if (res.status === 'Success') {
+          closeModal();
+          toast('ลบสินค้า ' + res.deleted + ' รายการ คืนคลัง ' + res.returned + ' ชิ้น', 'success');
+          loadProducts(sheetId);
+        } else { toast(res.message || 'เกิดข้อผิดพลาด', 'error'); }
+      } catch(e) { toast('เกิดข้อผิดพลาด', 'error'); }
+    }).withFailureHandler(function() {
+      saveBtn.disabled = false;
+      toast('ล้างรายการไม่สำเร็จ', 'error');
+    }).adminClearListProducts(sheetId);
+  }, 'ล้างทั้งหมด');
   el('modalSave').className = 'btn btn-danger';
   el('modal').classList.add('open');
 }
