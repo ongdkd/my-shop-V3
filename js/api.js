@@ -1416,6 +1416,8 @@
             var cRow = nextRow++;
             _stockRowMap[cRow] = c.id;
             return {
+              stockItemId: c.id,
+              parentStockItemId: p.id,
               rowIndex: cRow,
               id: c.code || '',
               name: c.name || '',
@@ -1424,6 +1426,7 @@
             };
           });
           return {
+            stockItemId: p.id,
             rowIndex: pRow,
             id: p.code || '',
             name: p.name || '',

@@ -256,6 +256,13 @@ button{font-family:var(--font);cursor:pointer;border:none;}
 .sticky-save-bar .save-count{font-size:0.78rem;color:var(--text-3);font-weight:600;flex:1;}
 .sticky-save-bar .save-count.has-changes{color:var(--warning);font-weight:700;}
 
+/* Warehouse command overlay: search stays with the sticky import actions. */
+.stock-command-overlay{margin-top:12px;border:1.5px solid var(--border);border-radius:var(--radius-md);flex-wrap:wrap;align-items:stretch;}
+.stock-overlay-search{flex:1 1 260px;min-width:210px;display:flex;align-items:center;}
+.stock-overlay-search-input{width:100%;min-height:42px;padding:10px 14px;border:1.5px solid var(--border-strong);border-radius:var(--radius-sm);background:var(--surface-2);color:var(--text);font:500 0.88rem var(--font);outline:none;}
+.stock-overlay-search-input:focus{border-color:var(--primary);background:var(--surface);box-shadow:0 0 0 3px var(--primary-light);}
+.stock-overlay-actions{flex:2 1 460px;min-width:0;display:flex;align-items:center;gap:8px;}
+
 /* ── POS overlay ── */
 .pos-mode-overlay{position:fixed;inset:0;z-index:9000;background:var(--bg);display:flex;flex-direction:column;}
 .pos-mode-iframe{flex:1;border:none;width:100%;height:100%;}
@@ -447,6 +454,14 @@ button{font-family:var(--font);cursor:pointer;border:none;}
 
   /* Sticky save bar */
   .sticky-save-bar{border-radius:0;}
+  .stock-command-overlay{margin-left:-12px;margin-right:-12px;margin-bottom:-12px;padding:10px 12px calc(10px + env(safe-area-inset-bottom));border-left:0;border-right:0;border-bottom:0;border-radius:16px 16px 0 0!important;gap:8px;background:rgba(255,255,255,0.97);backdrop-filter:blur(12px);}
+  .stock-overlay-search{flex:1 1 100%;min-width:0;}
+  .stock-overlay-search-input{font-size:16px;min-height:46px;}
+  .stock-overlay-actions{flex:1 1 100%;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px;}
+  .stock-overlay-actions .save-count{min-width:0;align-self:center;}
+  .stock-overlay-actions #stockSelAllBtn{justify-self:end;}
+  .stock-overlay-actions #stockPushShop{width:100%;min-width:0!important;min-height:44px;}
+  .stock-overlay-actions #stockPushBtn{min-height:44px;}
 
   /* Bigger stock input */
   .stock-input{width:80px;padding:9px 8px;font-size:1rem;}
@@ -485,6 +500,9 @@ button{font-family:var(--font);cursor:pointer;border:none;}
   .sf-grid{grid-template-columns:1fr;gap:14px;}
   .summary-form-grid{grid-template-columns:1fr;}
   .summary-form-grid--2,.summary-form-grid--3{grid-template-columns:1fr;}
+  .sf-bc-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(72px,1fr));gap:8px;}
+  .sf-bc-row input{grid-column:1/-1;width:100%;min-width:0;}
+  .sf-bc-row .sf-bc-btn{width:100%;padding-left:8px;padding-right:8px;}
 }
 
 /* Typeable import-quantity input inside the stock stepper */
