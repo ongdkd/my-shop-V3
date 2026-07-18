@@ -3073,28 +3073,6 @@ function renderStockContent() {
   statRow.appendChild(makeStat('สต็อกรวม', totalStock, 'success'));
   wrap.appendChild(statRow);
 
-  // ── Push to shop section ──
-  var pushCard = div('section-card'); pushCard.style.marginBottom = '14px';
-  var pushHdr = div('section-card-header', '<div class="section-card-title">📦 นำสินค้าเข้ารายการสั่งซื้อ</div>');
-  pushCard.appendChild(pushHdr);
-  var pushBody = document.createElement('div');
-  pushBody.style.cssText = 'padding:10px 16px 14px;display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;';
-  var shopSelWrap = document.createElement('div'); shopSelWrap.style.cssText = 'flex:1;min-width:160px;';
-  var shopSel = document.createElement('select'); shopSel.id = 'stockPushShop';
-  shopSel.style.cssText = 'width:100%;padding:9px 12px;border:1.5px solid var(--border-strong);border-radius:var(--radius-sm);font-size:0.85rem;font-family:var(--font);';
-  shopSel.innerHTML = '<option value="">-- เลือกรายการ --</option>';
-  var vl = getVisibleLists();
-  for (var i = 0; i < vl.length; i++) {
-    var o2 = document.createElement('option'); o2.value = vl[i].sheetId; o2.textContent = vl[i].name;
-    if (vl[i].sheetId === selectedSheetId && selectedSheetId !== 'ALL') o2.selected = true;
-    shopSel.appendChild(o2);
-  }
-  shopSelWrap.appendChild(shopSel);
-  var pushBtn = makeBtn('btn btn-primary', '📤 นำสินค้าเข้า', function() { pushSelectedToShop(shopSel.value); });
-  pushBtn.id = 'stockPushBtn'; pushBtn.style.cssText = 'white-space:nowrap;padding:10px 16px;font-size:0.85rem;';
-  pushBody.appendChild(shopSelWrap); pushBody.appendChild(pushBtn);
-  pushCard.appendChild(pushBody); wrap.appendChild(pushCard);
-
   // ── Search bar ──
   var searchCard = document.createElement('div');
   searchCard.style.cssText = 'margin-bottom:12px;position:relative;';
@@ -3120,8 +3098,64 @@ function renderStockContent() {
   cardGrid.style.cssText = 'display:grid;gap:12px;';
   wrap.appendChild(cardGrid);
 
+  // ── Sticky import bar — follows the scroll so importing never needs a trip back to the top ──
+  var pushBar = document.createElement('div');
+  pushBar.className = 'sticky-save-bar';
+  pushBar.style.cssText = 'margin-top:12px;border:1.5px solid var(--border);border-radius:var(--radius-md);flex-wrap:wrap;';
+  var selCount = document.createElement('span');
+  selCount.className = 'save-count'; selCount.id = 'stockSelCount';
+  selCount.style.cssText = 'flex:0 0 auto;white-space:nowrap;';
+  selCount.textContent = 'ยังไม่ได้เลือก';
+  var selAllBtn = makeBtn('btn btn-ghost btn-sm', 'เลือกทั้งหมด', function() { setAllStockSelection(true); });
+  selAllBtn.id = 'stockSelAllBtn';
+  var shopSel = document.createElement('select'); shopSel.id = 'stockPushShop';
+  shopSel.style.cssText = 'flex:1;min-width:130px;padding:9px 12px;border:1.5px solid var(--border-strong);border-radius:var(--radius-sm);font-size:0.85rem;font-family:var(--font);';
+  shopSel.innerHTML = '<option value="">-- เลือกรายการ --</option>';
+  var vl = getVisibleLists();
+  for (var i = 0; i < vl.length; i++) {
+    var o2 = document.createElement('option'); o2.value = vl[i].sheetId; o2.textContent = vl[i].name;
+    if (vl[i].sheetId === selectedSheetId && selectedSheetId !== 'ALL') o2.selected = true;
+    shopSel.appendChild(o2);
+  }
+  var pushBtn = makeBtn('btn btn-primary', '📤 นำสินค้าเข้า', function() { pushSelectedToShop(shopSel.value); });
+  pushBtn.id = 'stockPushBtn'; pushBtn.style.cssText = 'white-space:nowrap;padding:10px 16px;font-size:0.85rem;';
+  pushBar.appendChild(selCount);
+  pushBar.appendChild(selAllBtn);
+  pushBar.appendChild(shopSel);
+  pushBar.appendChild(pushBtn);
+  wrap.appendChild(pushBar);
+
   el('content').appendChild(wrap);
   renderStockCards(cardGrid, stockSearchQuery);
+}
+
+// Select every card visible under the current search filter; clearing drops
+// every selection, including cards a search filter is currently hiding
+function setAllStockSelection(on) {
+  if (!on) _stockSelected = {};
+  document.querySelectorAll('#stockCardGrid .stock-sel-card').forEach(function(card) {
+    var row = parseInt(card.getAttribute('data-row'), 10);
+    if (!isFinite(row)) return;
+    if (on) _stockSelected[row] = true;
+    card.classList.toggle('selected', on);
+  });
+  refreshStockPushBar();
+}
+
+function refreshStockPushBar() {
+  var n = Object.keys(_stockSelected).filter(function(k) { return _stockSelected[k]; }).length;
+  var lbl = document.getElementById('stockSelCount');
+  if (lbl) {
+    lbl.textContent = n ? 'เลือกแล้ว ' + n : 'ยังไม่ได้เลือก';
+    lbl.className = 'save-count' + (n ? ' has-changes' : '');
+  }
+  var btn = document.getElementById('stockSelAllBtn');
+  if (btn) {
+    var visible = document.querySelectorAll('#stockCardGrid .stock-sel-card').length;
+    var allOn = visible > 0 && document.querySelectorAll('#stockCardGrid .stock-sel-card.selected').length === visible;
+    btn.textContent = allOn ? 'ล้างที่เลือก' : 'เลือกทั้งหมด';
+    btn.onclick = function() { setAllStockSelection(!allOn); };
+  }
 }
 
 function defaultStockImportQty(product) {
@@ -3172,6 +3206,7 @@ function renderStockCards(container, query) {
 
     var card = document.createElement('div');
     card.className = 'stock-sel-card';
+    card.setAttribute('data-row', p.rowIndex);
     card.style.cssText = [
       'background:var(--surface);border:1.5px solid var(--border);border-radius:14px;',
       'overflow:hidden;display:flex;flex-direction:column;user-select:none;'
@@ -3186,6 +3221,7 @@ function renderStockCards(container, query) {
         if (e.target.closest('button')) return;
         _stockSelected[pp.rowIndex] = !_stockSelected[pp.rowIndex];
         card.classList.toggle('selected', !!_stockSelected[pp.rowIndex]);
+        refreshStockPushBar();
       };
     })(p));
 
@@ -3313,6 +3349,7 @@ function renderStockCards(container, query) {
     body9.appendChild(footRow); card.appendChild(body9);
     container.appendChild(card);
   });
+  refreshStockPushBar();
 }
 
 function pushSelectedToShop(targetSheetId) {
