@@ -59,6 +59,29 @@
     return s + '00';
   }
 
+  function normalizeBarcode(value) {
+    return String(value || '').trim().toLowerCase();
+  }
+
+  async function fetchStockBarcodeMatches(barcodes) {
+    var wanted = {};
+    (barcodes || []).forEach(function (code) {
+      var key = normalizeBarcode(code);
+      if (key) wanted[key] = true;
+    });
+    if (!Object.keys(wanted).length) return [];
+
+    // Fetching the compact warehouse barcode index avoids wildcard escaping
+    // problems and makes matching consistently trim/case-insensitive.
+    var r = await sb.from('stock_items')
+      .select('id,parent_id,code,name,image,stock')
+      .neq('code', '');
+    if (r.error) throw r.error;
+    return (r.data || []).filter(function (row) {
+      return !!wanted[normalizeBarcode(row.code)];
+    });
+  }
+
   function spreadsheetIdFromUrl(url) {
     var m = String(url || '').match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
     return m ? m[1] : '';
@@ -1418,11 +1441,61 @@
       } catch (e) { return e.__json || err(e.message || e); }
     },
 
+    adminFindStockByBarcode: async function (barcode) {
+      try {
+        requireSb(); await requireAdmin();
+        var code = String(barcode || '').trim();
+        if (!code) return err('กรุณากรอกบาร์โค้ด');
+        var matches = await fetchStockBarcodeMatches([code]);
+        if (!matches.length) return ok({ found: false, barcode: code });
+
+        var match = matches[0];
+        var parent = null;
+        if (match.parent_id) {
+          var pr = await sb.from('stock_items')
+            .select('id,code,name,image,stock')
+            .eq('id', match.parent_id)
+            .single();
+          if (pr.error) return err(pr.error.message);
+          parent = pr.data;
+        }
+        return ok({
+          found: true,
+          barcode: code,
+          item: {
+            id: match.id,
+            code: match.code || '',
+            name: match.name || '',
+            image: match.image || '',
+            stock: match.stock === null || match.stock === undefined ? null : Number(match.stock),
+            isOption: !!match.parent_id,
+            parentId: match.parent_id || '',
+            parentName: parent ? String(parent.name || '') : ''
+          }
+        });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
     adminCreateStockProduct: async function (product, opts) {
       try {
         requireSb(); await requireAdmin();
         var pr = num(product.price), dep = num(product.deposit), yu = num(product.yuan);
         var st = product.status || 'Open';
+
+        var requestedCodes = (!opts || !opts.length)
+          ? [String(product.id || '').trim()]
+          : opts.map(function (o) { return String(o.id || '').trim(); });
+        var seenCodes = {};
+        for (var ci = 0; ci < requestedCodes.length; ci++) {
+          var codeKey = normalizeBarcode(requestedCodes[ci]);
+          if (!codeKey) return err('กรุณากรอกบาร์โค้ดสินค้าให้ครบ');
+          if (seenCodes[codeKey]) return err('บาร์โค้ดซ้ำในแบบฟอร์ม: ' + requestedCodes[ci]);
+          seenCodes[codeKey] = true;
+        }
+        var existingCodes = await fetchStockBarcodeMatches(requestedCodes);
+        if (existingCodes.length) {
+          return err('บาร์โค้ด ' + existingCodes[0].code + ' มีอยู่ในคลังแล้ว (' + existingCodes[0].name + ')');
+        }
 
         if (!opts || !opts.length) {
           var r1 = await sb.from('stock_items').insert({

@@ -3381,10 +3381,127 @@ function pushSelectedToShop(targetSheetId) {
   }).adminPushStockToShop(targetSheetId, items);
 }
 
-// ── Create Stock Product Modal (with mode toggle: simple / with options) ──
+// ── Create Stock Product — barcode-first duplicate check ──
 function openCreateStockModal() {
   el('modalBody').innerHTML = '';
+
+  var intro = document.createElement('div');
+  intro.style.cssText = 'font-size:0.82rem;color:var(--text-2);line-height:1.6;margin-bottom:14px;';
+  intro.textContent = 'สแกนหรือกรอกบาร์โค้ดก่อน ระบบจะตรวจสอบว่าสินค้านี้มีอยู่ในคลังแล้วหรือยัง';
+  el('modalBody').appendChild(intro);
+
+  var group = document.createElement('div'); group.className = 'sf-group';
+  var label = document.createElement('label'); label.htmlFor = 'stockLookupBarcode'; label.textContent = 'บาร์โค้ดสินค้า *';
+  var row = document.createElement('div'); row.className = 'sf-bc-row';
+  var input = document.createElement('input');
+  input.id = 'stockLookupBarcode'; input.type = 'text'; input.placeholder = 'สแกนหรือพิมพ์บาร์โค้ด';
+  input.autocomplete = 'off'; input.inputMode = 'numeric';
+
+  var scanBtn = document.createElement('button'); scanBtn.type = 'button'; scanBtn.className = 'sf-bc-btn cam';
+  scanBtn.innerHTML = '📷'; scanBtn.title = 'สแกนบาร์โค้ด';
+  var randomBtn = document.createElement('button'); randomBtn.type = 'button'; randomBtn.className = 'sf-bc-btn';
+  randomBtn.innerHTML = '🎲 สุ่ม';
+  randomBtn.onclick = function() { input.value = generateRandomBarcode(); input.focus(); };
+
+  row.appendChild(input); row.appendChild(scanBtn); row.appendChild(randomBtn);
+  group.appendChild(label); group.appendChild(row); el('modalBody').appendChild(group);
+
+  var resultBox = document.createElement('div'); resultBox.id = 'stockBarcodeLookupResult';
+  resultBox.style.cssText = 'display:none;margin-top:14px;padding:12px;border-radius:var(--radius-sm);font-size:0.8rem;line-height:1.5;';
+  el('modalBody').appendChild(resultBox);
+
+  function showExisting(item) {
+    resultBox.innerHTML = '';
+    resultBox.style.display = 'block';
+    resultBox.style.background = 'var(--warning-light)';
+    resultBox.style.color = '#8B5E00';
+    var title = document.createElement('div'); title.style.fontWeight = '800'; title.textContent = 'พบสินค้าในคลังแล้ว';
+    var detail = document.createElement('div');
+    detail.textContent = item.isOption
+      ? (item.parentName + ' — ' + item.name + ' (' + item.code + ')')
+      : (item.name + ' (' + item.code + ')');
+    var viewBtn = document.createElement('button'); viewBtn.type = 'button'; viewBtn.className = 'btn btn-ghost btn-sm';
+    viewBtn.style.marginTop = '8px'; viewBtn.textContent = 'ดูสินค้าในคลัง';
+    viewBtn.onclick = function() {
+      stockSearchQuery = String(item.code || '').toLowerCase();
+      closeModal(); renderStockContent();
+    };
+    resultBox.appendChild(title); resultBox.appendChild(detail); resultBox.appendChild(viewBtn);
+  }
+
+  function runLookup() {
+    var barcode = input.value.trim();
+    if (!barcode) { toast('กรุณากรอกบาร์โค้ด', 'error'); input.focus(); return; }
+    var saveBtn = el('modalSave'); saveBtn.disabled = true; saveBtn.textContent = 'กำลังตรวจสอบ...';
+    google.script.run.withSuccessHandler(function(r) {
+      saveBtn.disabled = false; saveBtn.textContent = 'ตรวจสอบบาร์โค้ด';
+      try {
+        var res = JSON.parse(r);
+        if (res.status !== 'Success') { toast(res.message || 'ตรวจสอบบาร์โค้ดไม่สำเร็จ', 'error'); return; }
+        if (res.found) { showExisting(res.item || {}); return; }
+        openCreateStockForm(barcode);
+      } catch (e) { toast('ตรวจสอบบาร์โค้ดไม่สำเร็จ', 'error'); }
+    }).withFailureHandler(function() {
+      saveBtn.disabled = false; saveBtn.textContent = 'ตรวจสอบบาร์โค้ด';
+      toast('ตรวจสอบบาร์โค้ดไม่สำเร็จ', 'error');
+    }).adminFindStockByBarcode(barcode);
+  }
+
+  input.onkeydown = function(e) { if (e.key === 'Enter') { e.preventDefault(); runLookup(); } };
+  scanBtn.onclick = function() {
+    var tok = 'stock_lookup_' + Date.now();
+    var pop = window.open('', 'stock_lookup_scan', 'width=420,height=600,resizable=yes');
+    if (!pop) { toast('กรุณาอนุญาต Pop-up', 'error'); return; }
+    scanBtn.disabled = true; scanBtn.innerHTML = '⏹';
+    function resetScan() { scanBtn.disabled = false; scanBtn.innerHTML = '📷'; }
+    function applyResult(value) {
+      input.value = String(value || '').trim(); resetScan();
+      if (input.value) runLookup();
+    }
+    window.__barcodeResultBridge = function(t, barcode) {
+      if (t !== tok) return;
+      delete window.__barcodeResultBridge; applyResult(barcode);
+      try { if (pop && !pop.closed) pop.close(); } catch (e) {}
+    };
+    pop.document.open(); pop.document.write(makeScannerPopupHtml(tok)); pop.document.close();
+    var checkPopup = setInterval(function() {
+      try {
+        if (pop && !pop.closed && pop.__barcodeResult) {
+          var value = pop.__barcodeResult; clearInterval(checkPopup); delete window.__barcodeResultBridge;
+          applyResult(value); pop.close(); return;
+        }
+        if (!pop || pop.closed) { clearInterval(checkPopup); delete window.__barcodeResultBridge; resetScan(); }
+      } catch (e) { clearInterval(checkPopup); resetScan(); }
+    }, 250);
+  };
+
+  openModal('🔎 เพิ่มสินค้าด้วยบาร์โค้ด', '', runLookup, 'ตรวจสอบบาร์โค้ด');
+  setTimeout(function() { input.focus(); }, 50);
+}
+
+// ── Create Stock Product Form (shared draft across single/options modes) ──
+function openCreateStockForm(prefillBarcode) {
+  el('modalBody').innerHTML = '';
   var isOptionsMode = false; // toggle state
+  var draft = {
+    name: '', price: '', deposit: '', yuan: '', image: '',
+    singleId: String(prefillBarcode || '').trim(), singleStock: '',
+    options: []
+  };
+
+  function captureDraft() {
+    if (el('spName')) draft.name = el('spName').value;
+    if (el('spPrice')) draft.price = el('spPrice').value;
+    if (el('spDeposit')) draft.deposit = el('spDeposit').value;
+    if (el('spYuan')) draft.yuan = el('spYuan').value;
+    if (el('spImage')) draft.image = el('spImage').value;
+    if (isOptionsMode) {
+      draft.options = collectOptionRows('spOptSection');
+    } else {
+      if (el('spId')) draft.singleId = el('spId').value;
+      if (el('spStock')) draft.singleStock = el('spStock').value;
+    }
+  }
 
   function buildForm() {
     el('modalBody').innerHTML = '';
@@ -3397,7 +3514,19 @@ function openCreateStockModal() {
       var b = document.createElement('button');
       b.type = 'button'; b.className = 'mode-toggle-btn' + (isOptionsMode === (mode === 'options') ? ' active' : '');
       b.innerHTML = emoji + ' ' + label;
-      b.onclick = function() { isOptionsMode = (mode === 'options'); buildForm(); };
+      b.onclick = function() {
+        var nextOptionsMode = mode === 'options';
+        if (isOptionsMode === nextOptionsMode) return;
+        captureDraft();
+        if (nextOptionsMode && !draft.options.length) {
+          draft.options = [{ id: draft.singleId, name: '', stock: draft.singleStock, image: '' }];
+        } else if (!nextOptionsMode && !draft.singleId && draft.options.length) {
+          draft.singleId = draft.options[0].id || '';
+          draft.singleStock = draft.options[0].stock || '';
+        }
+        isOptionsMode = nextOptionsMode;
+        buildForm();
+      };
       return b;
     }
     tog.appendChild(makeModeBtn('🏷', 'สินค้าเดียว', 'single'));
@@ -3419,21 +3548,22 @@ function openCreateStockModal() {
       g.appendChild(l); g.appendChild(i); grid.appendChild(g); return i;
     }
 
-    sfField('spName', 'ชื่อสินค้า *', 'text', 'เช่น Acrylic Stand A', true);
+    sfField('spName', 'ชื่อสินค้า *', 'text', 'เช่น Acrylic Stand A', true, draft.name);
 
     // Price row
-    sfField('spPrice',   'ราคาเต็ม (฿)',  'number', '0');
-    sfField('spDeposit', 'ราคามัดจำ (฿)', 'number', '0');
-    sfField('spYuan',    'ราคาหยวน (¥)',  'number', '0');
+    sfField('spPrice',   'ราคาเต็ม (฿)',  'number', '0', false, draft.price);
+    sfField('spDeposit', 'ราคามัดจำ (฿)', 'number', '0', false, draft.deposit);
+    sfField('spYuan',    'ราคาหยวน (¥)',  'number', '0', false, draft.yuan);
 
     if (!isOptionsMode) {
       // Stock only shown for single product (options track their own stock)
-      sfField('spStock', 'สต็อก', 'number', 'ว่าง = ไม่จำกัด', false);
+      sfField('spStock', 'สต็อก', 'number', 'ว่าง = ไม่จำกัด', false, draft.singleStock);
       // Barcode for single product
       var bcGroup = document.createElement('div'); bcGroup.className = 'sf-group sf-full';
       var bcLbl = document.createElement('label'); bcLbl.textContent = 'ID / บาร์โค้ด *';
       var bcRow = document.createElement('div'); bcRow.className = 'sf-bc-row';
       var bcInp = document.createElement('input'); bcInp.id = 'spId'; bcInp.type = 'text'; bcInp.placeholder = 'สแกนหรือกรอกบาร์โค้ด';
+      bcInp.value = draft.singleId;
 
       var camBc = document.createElement('button'); camBc.type = 'button'; camBc.className = 'sf-bc-btn cam';
       camBc.innerHTML = '📷';
@@ -3464,8 +3594,9 @@ function openCreateStockModal() {
     // ── Image field — same shared component as the edit modal, so
     // add and edit look identical (tap = camera/gallery, paste, URL) ──
     var imgGroup = document.createElement('div'); imgGroup.className = 'sf-group sf-full';
-    imgGroup.appendChild(makeImageField('spImage', '', 'รูปภาพสินค้า'));
+    imgGroup.appendChild(makeImageField('spImage', draft.image, 'รูปภาพสินค้า'));
     grid.appendChild(imgGroup);
+    if (pendingImg.spImage) applyImgData(pendingImg.spImage, 'spImage');
 
     // ── Options section ──
     if (isOptionsMode) {
@@ -3487,6 +3618,8 @@ function openCreateStockModal() {
       optSection.id = 'spOptSection';
       optSection.style.cssText = 'display:flex;flex-direction:column;gap:8px;';
       grid.appendChild(optSection);
+      renderOptionRows('spOptSection', draft.options);
+      optCount.textContent = draft.options.length + ' ตัวเลือก';
 
       var addOptBtn2 = document.createElement('button');
       addOptBtn2.type = 'button'; addOptBtn2.className = 'add-opt-btn sf-full';
@@ -3505,6 +3638,7 @@ function openCreateStockModal() {
   buildForm();
 
   openModal('&#x2B; เพิ่มสินค้าในคลัง', '', function() {
+    captureDraft();
     var name = el('spName') && el('spName').value.trim();
     if (!name) { toast('กรุณากรอกชื่อสินค้า', 'error'); return; }
 
@@ -3540,7 +3674,7 @@ function openCreateStockModal() {
             if (res.status === 'Success') { closeModal(); toast('เพิ่มสินค้าในคลังแล้ว!', 'success'); loadStock(renderStockContent); }
             else { toast(res.message || 'เกิดข้อผิดพลาด', 'error'); }
           } catch(e) {
-            saveBtn6.disabled = false; saveBtn6.textContent = 'บันทึกการแก้ไข';
+            saveBtn3.disabled = false; saveBtn3.textContent = 'เพิ่มสินค้า';
             toast('เกิดข้อผิดพลาด', 'error');
           }
         }).adminCreateStockProduct(product, resolvedOpts);
