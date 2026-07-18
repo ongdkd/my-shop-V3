@@ -302,7 +302,9 @@
 
   async function fetchProducts(listId) {
     var r = await sb.from('products')
-      .select('id,seq,list_id,code,name,image,price,deposit,remaining,status,yuan,options,source_stock_item_id')
+      // `*` keeps this client compatible while the optional option_details
+      // migration is being rolled out. Older databases simply omit it.
+      .select('*')
       .eq('list_id', listId)
       .order('seq', { ascending: true });
     if (r.error) throw r.error;
@@ -416,7 +418,8 @@
             status: r.status || 'Open',
             options: r.options
               ? String(r.options).split(',').map(function (o) { return o.trim(); }).filter(Boolean)
-              : []
+              : [],
+            optionDetails: Array.isArray(r.option_details) ? r.option_details : []
           };
         });
         return ok({ products: products });
@@ -886,6 +889,15 @@
             status: r.status || 'Open',
             yuan: num(r.yuan),
             options: r.options ? String(r.options) : '',
+            optionDetails: Array.isArray(r.option_details) ? r.option_details.map(function (opt) {
+              return {
+                name: String(opt.name || ''),
+                code: String(opt.code || opt.barcode || ''),
+                image: String(opt.image || ''),
+                remaining: opt.remaining === null || opt.remaining === undefined || opt.remaining === ''
+                  ? null : Number(opt.remaining)
+              };
+            }) : [],
             sourceStockItemId: r.source_stock_item_id || ''
           };
         });
@@ -1497,8 +1509,15 @@
             var sumStock = null;
             if (allTracked) {
               sumStock = kids.reduce(function (s, k) { return s + Number(k.stock); }, 0);
-              kids.forEach(function (k) { deductions.push({ id: k.id, stock: 0 }); });
             }
+            // Each tracked child is reserved for this list independently.
+            // An unlimited child keeps the parent total unlimited, while the
+            // other options still retain and enforce their own finite stock.
+            kids.forEach(function (k) {
+              if (k.stock !== null && k.stock !== undefined && k.stock !== '') {
+                deductions.push({ id: k.id, stock: 0 });
+              }
+            });
             rows.push({
               list_id: targetSheetId,
               source_stock_item_id: p.id,
@@ -1508,13 +1527,27 @@
               remaining: sumStock,
               status: p.status || 'Open',
               yuan: num(p.yuan),
-              options: optStr
+              options: optStr,
+              option_details: kids.map(function (k) {
+                return {
+                  name: String(k.name || ''),
+                  code: String(k.code || ''),
+                  image: String(k.image || ''),
+                  remaining: k.stock === null || k.stock === undefined || k.stock === ''
+                    ? null : Number(k.stock)
+                };
+              })
             });
           }
         }
         if (!rows.length) return err('ไม่มีสินค้าที่นำเข้าได้');
         var r = await sb.from('products').insert(rows);
-        if (r.error) return err(r.error.message);
+        if (r.error) {
+          if (String(r.error.message || '').toLowerCase().indexOf('option_details') !== -1) {
+            return err('กรุณาอัปเดตฐานข้อมูลด้วยไฟล์ supabase/schema.sql ก่อนนำเข้าสินค้าที่มีตัวเลือก');
+          }
+          return err(r.error.message);
+        }
 
         // Deduct warehouse stock after the products were created
         if (deductions.length) {

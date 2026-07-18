@@ -297,6 +297,61 @@ function getCartQty(rowIndex) {
   return total;
 }
 
+function getCartQtyForOption(rowIndex, optionName) {
+  var total = 0;
+  POS_CART.forEach(function(item) {
+    if (item.product.rowIndex === rowIndex && item.option === (optionName || '')) total += item.qty;
+  });
+  return total;
+}
+
+function getProductOptions(product) {
+  var details = product && Array.isArray(product.optionDetails) ? product.optionDetails : [];
+  if (details.length) {
+    return details.map(function(opt) {
+      return {
+        name: String(opt.name || '').trim(),
+        barcode: String(opt.code || opt.barcode || '').trim(),
+        image: String(opt.image || '').trim(),
+        remaining: opt.remaining === null || opt.remaining === undefined || opt.remaining === ''
+          ? null : Number(opt.remaining)
+      };
+    }).filter(function(opt) { return opt.name; });
+  }
+  return parseOptionsWithBarcodes(product ? product.options : '').map(function(opt) {
+    return { name: opt.name, barcode: opt.barcode, image: '', remaining: null };
+  });
+}
+
+function getOptionDetail(product, optionName) {
+  var wanted = String(optionName || '').trim();
+  var opts = getProductOptions(product);
+  for (var i = 0; i < opts.length; i++) {
+    if (opts[i].name === wanted) return opts[i];
+  }
+  return null;
+}
+
+function hasTrackedStock(value) {
+  return value !== null && value !== undefined && value !== '' && isFinite(Number(value));
+}
+
+function posStockLeft(product, optionName) {
+  var parentLeft = Infinity;
+  if (hasTrackedStock(product.remaining)) {
+    parentLeft = Number(product.remaining) - getCartQty(product.rowIndex);
+  }
+
+  var optionLeft = Infinity;
+  if (optionName) {
+    var detail = getOptionDetail(product, optionName);
+    if (detail && hasTrackedStock(detail.remaining)) {
+      optionLeft = Number(detail.remaining) - getCartQtyForOption(product.rowIndex, optionName);
+    }
+  }
+  return Math.min(parentLeft, optionLeft);
+}
+
 // ══════════════════════════════════
 // QTY MODAL
 // ══════════════════════════════════
@@ -305,13 +360,50 @@ function openQtyModal(product) {
   _qtyValue = 1;
   _qtyOption = '';
 
-  // Img
+  document.getElementById('qtyModalName').textContent = product.name;
+  document.getElementById('qtyNum').textContent = '1';
+
+  // Options
+  var opts = getProductOptions(product);
+  var optSec = document.getElementById('qtyOptionsSection');
+  var optContainer = document.getElementById('qtyOptions');
+  optContainer.innerHTML = '';
+
+  if (opts.length) {
+    var available = opts.filter(function(opt) { return posStockLeft(product, opt.name) > 0; });
+    _qtyOption = (available[0] || opts[0]).name;
+    optSec.style.display = 'block';
+    opts.forEach(function(opt) {
+      var chip = document.createElement('button');
+      var left = posStockLeft(product, opt.name);
+      chip.className = 'qty-opt-chip' + (opt.name === _qtyOption ? ' selected' : '');
+      chip.textContent = opt.name + (hasTrackedStock(opt.remaining) ? ' (' + Math.max(0, Number(opt.remaining)) + ')' : '');
+      chip.disabled = left < 1;
+      chip.onclick = function() {
+        _qtyOption = opt.name;
+        _qtyValue = 1;
+        optContainer.querySelectorAll('.qty-opt-chip').forEach(function(c) { c.classList.remove('selected'); });
+        chip.classList.add('selected');
+        updateQtyModalState();
+      };
+      optContainer.appendChild(chip);
+    });
+  } else {
+    optSec.style.display = 'none';
+  }
+
+  updateQtyModalState();
+  document.getElementById('qty-modal').classList.add('open');
+}
+
+function renderQtyModalImage(product, option) {
   var imgWrap = document.getElementById('qtyModalImg');
   imgWrap.innerHTML = '';
-  if (product.image) {
+  var imageUrl = option && option.image ? option.image : product.image;
+  if (imageUrl) {
     var img = document.createElement('img');
     img.className = 'qty-modal-img';
-    img.src = product.image;
+    img.src = imageUrl;
     img.onerror = function() { this.src = PLACEHOLDER; };
     imgWrap.appendChild(img);
   } else {
@@ -320,36 +412,47 @@ function openQtyModal(product) {
     ph.innerHTML = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>';
     imgWrap.appendChild(ph);
   }
+}
 
-  document.getElementById('qtyModalName').textContent = product.name;
-  document.getElementById('qtyModalPrice').textContent = fmt(product.price) + ' / ชิ้น';
-  document.getElementById('qtyNum').textContent = '1';
+function updateQtyModalState() {
+  if (!_qtyProduct) return;
+  var option = _qtyOption ? getOptionDetail(_qtyProduct, _qtyOption) : null;
+  var left = posStockLeft(_qtyProduct, _qtyOption);
+  if (isFinite(left)) _qtyValue = Math.min(_qtyValue, Math.max(1, Math.floor(left)));
+  document.getElementById('qtyNum').textContent = _qtyValue;
+  var priceText = fmt(_qtyProduct.price) + ' / ชิ้น';
+  if (isFinite(left)) priceText += ' · เหลือ ' + Math.max(0, left) + ' ชิ้น';
+  document.getElementById('qtyModalPrice').textContent = priceText;
+  var addBtn = document.getElementById('qtyAddBtn');
+  if (addBtn) addBtn.disabled = left < 1;
+  renderQtyModalImage(_qtyProduct, option);
+}
 
-  // Options
-  var opts = parseOptions(product.options);
-  var optSec = document.getElementById('qtyOptionsSection');
-  var optContainer = document.getElementById('qtyOptions');
-  optContainer.innerHTML = '';
+function updateOptionDetailRemaining(product, optionName, quantity) {
+  if (!product || !Array.isArray(product.optionDetails)) return;
+  product.optionDetails.forEach(function(opt) {
+    if (String(opt.name || '').trim() === String(optionName || '').trim() && hasTrackedStock(opt.remaining)) {
+      opt.remaining = Math.max(0, Number(opt.remaining) - Number(quantity || 0));
+    }
+  });
+}
 
-  if (opts.length) {
-    _qtyOption = opts[0];
-    optSec.style.display = 'block';
-    opts.forEach(function(opt) {
-      var chip = document.createElement('button');
-      chip.className = 'qty-opt-chip' + (opt === _qtyOption ? ' selected' : '');
-      chip.textContent = opt;
-      chip.onclick = function() {
-        _qtyOption = opt;
-        optContainer.querySelectorAll('.qty-opt-chip').forEach(function(c) { c.classList.remove('selected'); });
-        chip.classList.add('selected');
-      };
-      optContainer.appendChild(chip);
-    });
-  } else {
-    optSec.style.display = 'none';
+function getProductImage(product, optionName) {
+  var detail = getOptionDetail(product, optionName);
+  return detail && detail.image ? detail.image : product.image;
+}
+
+function getProductOptionNames(product) {
+  return getProductOptions(product).map(function(opt) { return opt.name; });
+}
+
+function ensureQtyAvailable(product, optionName, requestedQty) {
+  var left = posStockLeft(product, optionName);
+  if (left < requestedQty) {
+    posToast('สต็อกไม่พอ (เหลือ ' + Math.max(0, left) + ' ชิ้น)', 'error');
+    return false;
   }
-
-  document.getElementById('qty-modal').classList.add('open');
+  return true;
 }
 
 /**
@@ -391,32 +494,24 @@ function qtyModalBgClick(e) {
 }
 
 function changeQty(delta) {
-  var max = 999;
-  if (_qtyProduct && _qtyProduct.remaining !== null && _qtyProduct.remaining !== undefined && _qtyProduct.remaining !== '') {
-    max = Math.max(1, Number(_qtyProduct.remaining) - getCartQty(_qtyProduct.rowIndex));
-  }
+  var max = _qtyProduct ? posStockLeft(_qtyProduct, _qtyOption) : 999;
+  if (!isFinite(max)) max = 999;
+  max = Math.max(1, Math.floor(max));
   _qtyValue = Math.max(1, Math.min(max, _qtyValue + delta));
-  document.getElementById('qtyNum').textContent = _qtyValue;
+  updateQtyModalState();
 }
 
 function addToCart() {
   if (!_qtyProduct) return;
 
-  var opts = parseOptions(_qtyProduct.options);
+  var opts = getProductOptionNames(_qtyProduct);
   if (opts.length && !_qtyOption) {
     posToast('กรุณาเลือกตัวเลือกก่อน', 'error');
     return;
   }
 
-  // Stock guard — never let the cart exceed what's left
-  var rem = _qtyProduct.remaining;
-  if (rem !== null && rem !== undefined && rem !== '') {
-    var already = getCartQty(_qtyProduct.rowIndex);
-    if (already + _qtyValue > Number(rem)) {
-      posToast('สต็อกไม่พอ (เหลือ ' + Math.max(0, Number(rem) - already) + ' ชิ้น)', 'error');
-      return;
-    }
-  }
+  // Enforce both the option stock and the overall product stock.
+  if (!ensureQtyAvailable(_qtyProduct, _qtyOption, _qtyValue)) return;
 
   // Find existing cart line
   var existingIdx = -1;
@@ -486,10 +581,11 @@ function renderSummary() {
     row.className = 'sum-item';
 
     // Image
-    if (item.product.image) {
+    var itemImage = getProductImage(item.product, item.option);
+    if (itemImage) {
       var img = document.createElement('img');
       img.className = 'sum-item-img';
-      img.src = item.product.image;
+      img.src = itemImage;
       img.onerror = function() { this.src = PLACEHOLDER; };
       row.appendChild(img);
     } else {
@@ -546,6 +642,7 @@ function renderSummary() {
 function adjustSummaryQty(idx, delta) {
   var item = POS_CART[idx];
   if (!item) return;
+  if (delta > 0 && !ensureQtyAvailable(item.product, item.option, delta)) return;
   item.qty = Math.max(0, item.qty + delta);
   if (item.qty === 0) {
     POS_CART.splice(idx, 1);
@@ -669,6 +766,7 @@ function submitPosSale(btn) {
           if (rem !== null && rem !== undefined && rem !== '') {
             item.product.remaining = Math.max(0, Number(rem) - item.qty);
           }
+          updateOptionDetailRemaining(item.product, item.option, item.qty);
         });
         _posCheckoutId = null; // next sale gets a fresh checkout id
         POS_HISTORY_DATA = null; // refresh totals/history after the next open
@@ -689,14 +787,8 @@ function submitPosSale(btn) {
 // SCANNED-CODE HANDLING
 // (shared by the camera popup and hardware barcode scanners)
 // ══════════════════════════════════
-function posStockLeft(product) {
-  var rem = product.remaining;
-  if (rem === null || rem === undefined || rem === '') return Infinity;
-  return Number(rem) - getCartQty(product.rowIndex);
-}
-
 function posAddDirect(product, optionName) {
-  if (posStockLeft(product) < 1) {
+  if (posStockLeft(product, optionName) < 1) {
     posToast('สต็อกไม่พอ: ' + product.name, 'error');
     return;
   }
@@ -737,7 +829,7 @@ function posHandleScannedCode(barcode) {
   if (!found) {
     for (var i2 = 0; i2 < POS_PRODUCTS.length; i2++) {
       var p2 = POS_PRODUCTS[i2];
-      var optsWithBc = parseOptionsWithBarcodes(p2.options);
+      var optsWithBc = getProductOptions(p2);
       for (var j2 = 0; j2 < optsWithBc.length; j2++) {
         var ob = optsWithBc[j2];
         if (ob.barcode && ob.barcode.toLowerCase() === bcLower) {
@@ -759,7 +851,7 @@ function posHandleScannedCode(barcode) {
     return false;
   }
 
-  var opts = parseOptions(found.options);
+  var opts = getProductOptions(found);
   if (foundOptionName) {
     posAddDirect(found, foundOptionName);
   } else if (opts.length === 0) {
