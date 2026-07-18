@@ -1721,7 +1721,11 @@
               remaining: qty,
               status: p.status || 'Open',
               yuan: num(p.yuan),
-              options: ''
+              options: '',
+              // Keep every row in a bulk insert on the same JSON shape.
+              // PostgREST rejects mixed object keys when single and option
+              // products are imported together.
+              option_details: []
             });
           } else {
             var optStr = kids.map(function (k) {
@@ -1769,10 +1773,15 @@
         if (!rows.length) return err('ไม่มีสินค้าที่นำเข้าได้');
         var r = await sb.from('products').insert(rows);
         if (r.error) {
-          if (String(r.error.message || '').toLowerCase().indexOf('option_details') !== -1) {
+          var insertMessage = String(r.error.message || '');
+          var insertDetails = String(r.error.details || '');
+          var insertText = (insertMessage + ' ' + insertDetails).toLowerCase();
+          var missingOptionDetails = r.error.code === 'PGRST204' &&
+            insertText.indexOf('option_details') !== -1;
+          if (missingOptionDetails) {
             return err('กรุณาอัปเดตฐานข้อมูลด้วยไฟล์ supabase/schema.sql ก่อนนำเข้าสินค้าที่มีตัวเลือก');
           }
-          return err(r.error.message);
+          return err(insertMessage || insertDetails || 'นำสินค้าเข้าไม่สำเร็จ');
         }
 
         // Deduct warehouse stock after the products were created

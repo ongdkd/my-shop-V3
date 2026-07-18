@@ -41,6 +41,9 @@ assert.ok(admin.includes("var canRename = !String(item.sourceSpreadsheetId || ''
 assert.ok(api.includes('changes.name = nextName'), 'order-list updates must persist renamed web-created lists');
 assert.ok(schema.includes("option_details jsonb not null default '[]'::jsonb"), 'products must persist per-option images and stock');
 assert.ok(api.includes('option_details: kids.map'), 'warehouse imports must preserve each option\'s metadata');
+assert.ok(api.includes('option_details: []'), 'mixed warehouse imports must give every product row the same JSON shape');
+assert.ok(api.includes("r.error.code === 'PGRST204'"), 'warehouse imports must only show the SQL migration message for a missing schema column');
+assert.ok(admin.includes("withFailureHandler(function(error)"), 'warehouse imports must recover the button and show transport failures');
 assert.ok(admin.includes('appendLinkedProductSyncOption'), 'warehouse edit dialogs must expose the sync checkbox');
 assert.ok(admin.includes('function defaultStockImportQty(product)'), 'finite warehouse stock must be the default import quantity');
 assert.ok(admin.includes('_stockQtyMap[p.rowIndex] = defaultStockImportQty(p)'), 'stock cards must start with the maximum finite quantity');

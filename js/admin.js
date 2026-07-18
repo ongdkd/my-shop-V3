@@ -3399,6 +3399,9 @@ function pushSelectedToShop(targetSheetId) {
       }
       else { toast(res.message || 'เกิดข้อผิดพลาด', 'error'); }
     } catch(e) { toast('เกิดข้อผิดพลาด', 'error'); }
+  }).withFailureHandler(function(error) {
+    if (btn) { btn.disabled = false; btn.innerHTML = '&#x1F4E4; นำสินค้าเข้า'; }
+    toast(error && error.message ? error.message : 'นำสินค้าเข้าไม่สำเร็จ', 'error');
   }).adminPushStockToShop(targetSheetId, items);
 }
 
