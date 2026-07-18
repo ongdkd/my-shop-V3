@@ -30,6 +30,10 @@ assert.ok(schema.includes('on delete set null'), 'deleting a warehouse item must
 assert.ok(api.includes('adminSyncStockProductToLinked'), 'warehouse edits must support syncing linked shop products');
 assert.ok(api.includes(".eq('source_stock_item_id', parentId)"), 'warehouse sync must target stable source IDs');
 assert.ok(api.includes('source_stock_item_id: p.id'), 'new warehouse imports must create the stable link');
+assert.ok(api.includes('adminFindStockByBarcode'), 'warehouse add flow must support barcode lookup');
+assert.ok(api.includes('fetchStockBarcodeMatches(requestedCodes)'), 'warehouse creation must reject existing barcodes server-side');
+assert.ok(admin.includes('function openCreateStockForm(prefillBarcode)'), 'new warehouse products must receive the checked barcode');
+assert.ok(admin.includes('function captureDraft()'), 'single/options form switching must preserve draft values');
 assert.ok(schema.includes("option_details jsonb not null default '[]'::jsonb"), 'products must persist per-option images and stock');
 assert.ok(api.includes('option_details: kids.map'), 'warehouse imports must preserve each option\'s metadata');
 assert.ok(admin.includes('appendLinkedProductSyncOption'), 'warehouse edit dialogs must expose the sync checkbox');
