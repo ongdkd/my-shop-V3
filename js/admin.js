@@ -3346,22 +3346,26 @@ function makeOptionRow(sectionId, opt, idx) {
 
   // Image box
   var imgBox = document.createElement('div'); imgBox.className = 'opt-img-box';
+  // Option rows are rebuilt when another option is added. A newly selected
+  // file is still pending in memory and has no saved URL yet, so restore the
+  // preview from pendingImg before falling back to the persisted URL.
+  var previewSource = pendingImg[imgFieldId] || opt.image || '';
 
   var thumb = document.createElement('div');
   thumb.id = imgFieldId + '_thumb';
-  thumb.className = 'opt-img-thumb' + (opt.image ? ' has-img' : '');
+  thumb.className = 'opt-img-thumb' + (previewSource ? ' has-img' : '');
 
   var thumbImg = document.createElement('img');
   thumbImg.id = imgFieldId + '_preview';
   thumbImg.alt = 'option image';
-  if (opt.image) { thumbImg.src = opt.image; }
+  if (previewSource) { thumbImg.src = previewSource; }
   else { thumbImg.style.display = 'none'; }
 
   // placeholder icon when no image
   var placeholderIcon = document.createElement('div');
   placeholderIcon.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:3px;pointer-events:none;';
   placeholderIcon.innerHTML = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg><span style="font-size:0.6rem;color:var(--text-3);font-weight:600;">แตะเพื่อเพิ่ม</span>';
-  if (opt.image) placeholderIcon.style.display = 'none';
+  if (previewSource) placeholderIcon.style.display = 'none';
 
   // File input for gallery
   var fileInpOpt = document.createElement('input');
