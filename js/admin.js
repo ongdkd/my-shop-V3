@@ -2250,7 +2250,7 @@ function openCreateOrderListModal() {
 // ════════════════════════════════════════════════════════════
 // ── Shared image pick box for bulk add modals ──
 // One tap opens the phone's native chooser (camera OR gallery) — the
-// file input has no `capture` attribute, so mobile browsers offer both.
+// Android's Photo Picker omits camera, so a separate capture button is added.
 function makeBulkImgBox(pendingKey, existingUrl, onChange) {
   var wrap = document.createElement('div');
   wrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:5px;flex-shrink:0;';
@@ -2286,6 +2286,10 @@ function makeBulkImgBox(pendingKey, existingUrl, onChange) {
   fi.onchange = function() { applyFile(this.files && this.files[0]); };
   box.appendChild(fi);
   wrap.appendChild(box);
+
+  var cameraCapture = makeCameraCapture(function(file) { applyFile(file); }, true);
+  wrap.appendChild(cameraCapture.input);
+  wrap.appendChild(cameraCapture.button);
 
   return { el: wrap, preview: prev };
 }
@@ -3369,8 +3373,22 @@ function makeOptionRow(sectionId, opt, idx) {
   thumb.appendChild(placeholderIcon); thumb.appendChild(thumbImg); thumb.appendChild(fileInpOpt);
   imgBox.appendChild(thumb);
 
-  // Tapping the thumbnail opens the native camera/gallery chooser —
-  // no separate hidden camera input needed.
+  var optionCamera = makeCameraCapture(function(file) {
+    var rdr = new FileReader();
+    rdr.onload = function(ev) {
+      pendingImg[imgFieldId] = ev.target.result;
+      thumbImg.src = ev.target.result; thumbImg.style.display = 'block'; placeholderIcon.style.display = 'none';
+      thumb.className = 'opt-img-thumb has-img';
+      var ui = document.getElementById(imgFieldId + '_url');
+      if (ui) ui.value = '';
+    };
+    rdr.readAsDataURL(file);
+  }, true);
+  imgBox.appendChild(optionCamera.input);
+  imgBox.appendChild(optionCamera.button);
+
+  // The thumbnail opens the gallery; the camera button above uses a separate
+  // capture input because Android's Photo Picker does not include a camera.
   var hiddenUrl = document.createElement('input');
   hiddenUrl.type = 'hidden'; hiddenUrl.id = imgFieldId;
   hiddenUrl.className = 'opt-image-url-hidden';
@@ -4420,6 +4438,33 @@ function sendRestockNotify() {
 // ════════════════════════════════
 // IMAGE UPLOAD
 // ════════════════════════════════
+function makeCameraCapture(onFile, compact) {
+  var input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  input.setAttribute('capture', 'environment');
+  input.className = 'img-camera-input';
+  input.setAttribute('aria-hidden', 'true');
+  input.setAttribute('tabindex', '-1');
+  input.onchange = function() {
+    var file = this.files && this.files[0];
+    if (file) onFile(file);
+    // Let the user retake a photo even if the camera reuses the same filename.
+    this.value = '';
+  };
+
+  var button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'img-camera-btn' + (compact ? ' compact' : '');
+  button.innerHTML = compact ? '&#x1F4F7; กล้อง' : '&#x1F4F7; ถ่ายรูปด้วยกล้อง';
+  button.onclick = function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    input.click();
+  };
+  return { input: input, button: button };
+}
+
 function makeImageField(fieldId, currentUrl, labelText) {
   var wrap = div('modal-field');
   var lbl = document.createElement('label'); lbl.textContent = labelText || 'รูปภาพ'; wrap.appendChild(lbl);
@@ -4439,9 +4484,12 @@ function makeImageField(fieldId, currentUrl, labelText) {
   uploadWrap.appendChild(pasteHint);
   wrap.appendChild(uploadWrap);
 
-  // No separate camera button: the drop-zone file input has no
-  // `capture` attribute, so tapping it on a phone opens the native
-  // chooser that already offers both camera and gallery.
+  var cameraCapture = makeCameraCapture(function() { handleImgSelect(cameraCapture.input, fieldId); }, false);
+  wrap.appendChild(cameraCapture.input);
+  wrap.appendChild(cameraCapture.button);
+
+  // Keep gallery and camera separate: Android's Photo Picker does not include
+  // a camera action, while capture="environment" opens the rear camera.
   var urlInp = document.createElement('input'); urlInp.type = 'text'; urlInp.id = fieldId;
   urlInp.placeholder = 'หรือวาง URL รูปภาพโดยตรง'; urlInp.value = currentUrl || '';
   urlInp.style.marginTop = '8px';

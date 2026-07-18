@@ -162,6 +162,10 @@ button{font-family:var(--font);cursor:pointer;border:none;}
 .img-upload-status.done{color:var(--success);}
 .img-upload-status.error{color:var(--error);}
 .img-upload-preview{width:80px;height:60px;object-fit:cover;border-radius:var(--radius-sm);margin:6px auto 0;display:block;}
+.img-camera-input{position:fixed!important;left:-10000px!important;width:1px!important;height:1px!important;opacity:0!important;pointer-events:none!important;}
+.img-camera-btn{display:block;width:100%;margin:8px 0 0;padding:10px 12px;border:1.5px solid var(--primary);border-radius:var(--radius-sm);background:var(--primary-light);color:var(--primary);font-family:var(--font);font-size:0.8rem;font-weight:700;cursor:pointer;}
+.img-camera-btn:hover{background:var(--primary);color:#fff;}
+.img-camera-btn.compact{width:64px;margin-top:0;padding:5px 3px;border-radius:7px;font-size:0.67rem;white-space:nowrap;}
 
 /* ── Search ── */
 .search-row{display:flex;align-items:center;gap:8px;background:var(--surface-2);border:1.5px solid var(--border);border-radius:var(--radius-sm);padding:8px 12px;}
