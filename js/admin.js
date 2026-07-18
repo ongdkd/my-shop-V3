@@ -1167,6 +1167,23 @@ function toggleListStatus(rowIndex, checkbox, lbl) {
 
 function editOrderListRow(item) {
   el('modalBody').innerHTML = '';
+  var canRename = !String(item.sourceSpreadsheetId || '').trim();
+  // Lists created directly in the web app own their name. Imported lists keep
+  // the spreadsheet title as their source of truth, so show it as read-only.
+  var nf = div('modal-field'); var nl = document.createElement('label'); nl.textContent = 'ชื่อรายการ';
+  var ni = document.createElement('input'); ni.id = 'mName'; ni.type = 'text'; ni.value = item.name || '';
+  ni.readOnly = !canRename;
+  if (!canRename) {
+    ni.title = 'ชื่อรายการนี้มาจาก Google Sheet';
+    ni.style.background = 'var(--surface-2)';
+    var nameHelp = document.createElement('small');
+    nameHelp.style.cssText = 'display:block;margin-top:5px;color:var(--text-3);';
+    nameHelp.textContent = 'ชื่อรายการนี้เชื่อมกับ Google Sheet จึงแก้ไขจากหน้านี้ไม่ได้';
+    nf.appendChild(nl); nf.appendChild(ni); nf.appendChild(nameHelp);
+  } else {
+    nf.appendChild(nl); nf.appendChild(ni);
+  }
+  el('modalBody').appendChild(nf);
   // Desc field
   var df = div('modal-field'); var dl = document.createElement('label'); dl.textContent = 'คำอธิบาย';
   var di = document.createElement('input'); di.id = 'mDesc'; di.type = 'text'; di.value = item.desc || '';
@@ -1175,9 +1192,12 @@ function editOrderListRow(item) {
   el('modalBody').appendChild(makeImageField('mImage', item.image || '', 'รูปภาพปก'));
 
   openModal('&#x270F;&#xFE0F; แก้ไขรายการสั่งซื้อ', '', function() {
+    var newName = canRename ? el('mName').value.trim() : null;
+    if (canRename && !newName) { toast('กรุณากรอกชื่อรายการ', 'error'); el('mName').focus(); return; }
     var d = el('mDesc').value;
     var saveBtn = el('modalSave'); saveBtn.disabled = true; saveBtn.textContent = 'กำลังบันทึก...';
     resolveImage('mImage', function(imgUrl) {
+      var finalImage = imgUrl || item.image || '';
       google.script.run.withSuccessHandler(function(r) {
         saveBtn.disabled = false; saveBtn.textContent = 'บันทึก';
         try {
@@ -1185,12 +1205,15 @@ function editOrderListRow(item) {
           if (res.status === 'Success') {
             closeModal(); toast('บันทึกแล้ว', 'success');
             for (var i = 0; i < allLists.length; i++) {
-              if (allLists[i].rowIndex === item.rowIndex) { allLists[i].desc = d; allLists[i].image = imgUrl; break; }
+              if (allLists[i].rowIndex === item.rowIndex) {
+                if (newName !== null) allLists[i].name = newName;
+                allLists[i].desc = d; allLists[i].image = finalImage; break;
+              }
             }
             renderOrderLists();
           } else { toast(res.message || 'เกิดข้อผิดพลาด', 'error'); }
         } catch(e) { toast('เกิดข้อผิดพลาด', 'error'); }
-      }).adminUpdateOrderListRow(item.rowIndex, d, imgUrl || item.image || '');
+      }).adminUpdateOrderListRow(item.rowIndex, d, finalImage, newName);
     });
   }, 'บันทึก');
   el('modal').classList.add('open');

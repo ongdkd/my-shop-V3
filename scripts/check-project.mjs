@@ -37,6 +37,8 @@ assert.ok(admin.includes('function captureDraft()'), 'single/options form switch
 assert.ok(admin.includes('function openMatchedStockEditor(item, refreshed)'), 'existing warehouse barcodes must open their edit form');
 assert.ok(admin.includes("pushBar.className = 'sticky-save-bar stock-command-overlay'"), 'warehouse search must live in the sticky command overlay');
 assert.ok(api.includes('stockItemId: c.id'), 'option barcode matches must retain a stable edit target');
+assert.ok(admin.includes("var canRename = !String(item.sourceSpreadsheetId || '').trim()"), 'web-created order lists must expose name editing');
+assert.ok(api.includes('changes.name = nextName'), 'order-list updates must persist renamed web-created lists');
 assert.ok(schema.includes("option_details jsonb not null default '[]'::jsonb"), 'products must persist per-option images and stock');
 assert.ok(api.includes('option_details: kids.map'), 'warehouse imports must preserve each option\'s metadata');
 assert.ok(admin.includes('appendLinkedProductSyncOption'), 'warehouse edit dialogs must expose the sync checkbox');

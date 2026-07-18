@@ -683,13 +683,29 @@
       } catch (e) { return e.__json || err(e.message || e); }
     },
 
-    adminUpdateOrderListRow: async function (rowIndex, desc, image) {
+    adminUpdateOrderListRow: async function (rowIndex, desc, image, name) {
       try {
         requireSb(); await requireAdmin();
         var id = listIdFromRow(rowIndex);
         if (!id) return err('ไม่พบรายการ');
+        var changes = { description: String(desc || ''), image: String(image || '') };
+        // Only web-created lists can be renamed here. Imported list names stay
+        // tied to their source spreadsheet title.
+        if (name !== null && name !== undefined) {
+          var nextName = String(name || '').trim();
+          if (!nextName) return err('กรุณากรอกชื่อรายการ');
+          var current = await sb.from('order_lists')
+            .select('source_spreadsheet_id')
+            .eq('id', id)
+            .single();
+          if (current.error) return err(current.error.message);
+          if (String(current.data.source_spreadsheet_id || '').trim()) {
+            return err('รายการนี้เชื่อมกับ Google Sheet จึงเปลี่ยนชื่อจากหน้านี้ไม่ได้');
+          }
+          changes.name = nextName;
+        }
         var r = await sb.from('order_lists')
-          .update({ description: String(desc || ''), image: String(image || '') })
+          .update(changes)
           .eq('id', id);
         if (r.error) return err(r.error.message);
         return ok({});
