@@ -76,7 +76,19 @@ document.addEventListener('keydown', function(e) {
   else if (document.getElementById('modal').classList.contains('open')) closeModal();
   else if (sidebar.classList.contains('open')) toggleSidebar();
 });
-loadAllLists(function() { switchPanel('orderlists'); });
+// ── Hash routing — the URL mirrors the open panel (#/products, #/orders …)
+// so a refresh keeps your place and the back button navigates panels ──
+var VALID_PANELS = ['orderlists', 'orders', 'products', 'summary', 'restock', 'stock'];
+function panelFromHash() {
+  var h = (location.hash || '').replace(/^#\/?/, '');
+  return VALID_PANELS.indexOf(h) !== -1 ? h : 'orderlists';
+}
+window.addEventListener('hashchange', function() {
+  var p = panelFromHash();
+  if (p !== currentPanel) switchPanel(p);
+});
+
+loadAllLists(function() { switchPanel(panelFromHash()); });
 
 // ── HELPERS ──
 var _toastTimer = null;
@@ -844,6 +856,11 @@ function closeModal() {
 
 function switchPanel(panel) {
   currentPanel = panel;
+  // Keep the URL in sync; replace on first load so back exits cleanly
+  if (location.hash !== '#/' + panel) {
+    if (!location.hash) history.replaceState(null, '', '#/' + panel);
+    else location.hash = '#/' + panel;
+  }
   var items = document.querySelectorAll('.nav-item[data-panel]');
   for (var i = 0; i < items.length; i++) {
     items[i].className = items[i].getAttribute('data-panel') === panel ? 'nav-item active' : 'nav-item';
