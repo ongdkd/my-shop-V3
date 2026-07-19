@@ -1694,7 +1694,7 @@ function renderProductsTable(products, sheetId, holder) {
   hdrRight.appendChild(makeBtn('btn btn-primary btn-sm', '&#x2B; เพิ่มสินค้า', openCreateProductModal));
   hdrRight.appendChild(makeBtn('btn btn-ghost btn-sm', '&#x1F4CB; เพิ่มหลายรายการ', openBulkAddModal));
   hdrRight.appendChild(makeBtn('btn btn-success btn-sm', '&#x2713; บันทึกสต็อก', saveAllStock));
-  hdrRight.appendChild(makeBtn('btn btn-danger btn-sm', '&#x1F9F9; ล้างรายการ+คืนคลัง', function() { confirmClearList(sheetId); }));
+  hdrRight.appendChild(makeBtn('btn btn-danger btn-sm', '&#x21A9; คืนคลัง/ล้างรายการ', function() { confirmClearList(sheetId); }));
   hdr.appendChild(hdrRight);
   card.appendChild(hdr);
 
@@ -2132,31 +2132,65 @@ function confirmClearList(sheetId) {
     if (p.sourceStockItemId && Number(p.remaining) > 0) { eligible++; pieces += Number(p.remaining); }
   });
   el('modalBody').innerHTML = '';
-  var wrap = document.createElement('div'); wrap.style.cssText = 'text-align:center;padding:8px 0;';
-  wrap.innerHTML = '<div style="font-size:2.5rem;margin-bottom:12px;">&#x1F9F9;</div>' +
-    '<div style="font-weight:700;font-size:0.95rem;margin-bottom:8px;">ล้างสินค้าทั้งหมดในรายการนี้?</div>' +
-    '<div style="font-size:0.85rem;color:var(--text-2);">สินค้าทั้งหมด <strong>' + total + ' รายการ</strong> จะถูกลบ' +
-    (eligible ? ' และคืนสต็อกเข้าคลัง <strong>' + pieces + ' ชิ้น</strong> (' + eligible + ' สินค้าที่เชื่อมกับคลัง)' : '') + '</div>' +
-    '<div style="font-size:0.78rem;color:var(--danger);margin-top:6px;">การลบนี้ย้อนกลับไม่ได้ — สินค้าที่ไม่ได้เชื่อมกับคลังจะหายไปพร้อมสต็อกที่เหลือ</div>';
+  var wrap = document.createElement('div'); wrap.style.cssText = 'padding:4px 0;';
+  var summary = document.createElement('div');
+  summary.style.cssText = 'text-align:center;font-size:0.85rem;color:var(--text-2);margin-bottom:14px;';
+  summary.innerHTML = 'สินค้าทั้งหมด <strong>' + total + ' รายการ</strong>' +
+    (eligible ? ' &bull; คืนคลังได้ <strong>' + pieces + ' ชิ้น</strong> (' + eligible + ' สินค้า)' : ' &bull; ไม่มีสินค้าที่คืนคลังได้');
+  wrap.appendChild(summary);
+
+  function choiceRow(value, checked, title, desc, danger) {
+    var lb = document.createElement('label');
+    lb.style.cssText = 'display:flex;gap:10px;align-items:flex-start;padding:12px;border:1.5px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;margin-bottom:8px;';
+    var rd = document.createElement('input');
+    rd.type = 'radio'; rd.name = 'clearListMode'; rd.value = value; rd.checked = checked;
+    rd.style.cssText = 'width:18px;height:18px;accent-color:var(--primary);margin-top:1px;flex-shrink:0;';
+    var tx = document.createElement('div');
+    tx.innerHTML = '<div style="font-weight:700;font-size:0.88rem;">' + title + '</div>' +
+      '<div style="font-size:0.76rem;color:' + (danger ? 'var(--danger)' : 'var(--text-3)') + ';margin-top:3px;">' + desc + '</div>';
+    lb.appendChild(rd); lb.appendChild(tx);
+    return lb;
+  }
+  wrap.appendChild(choiceRow('return', true, '&#x21A9; คืนคลังอย่างเดียว',
+    'คืนสต็อกที่เหลือกลับเข้าคลัง สินค้ายังอยู่ในรายการ (สต็อกเป็น 0 จนกว่าจะนำเข้าใหม่)', false));
+  wrap.appendChild(choiceRow('clear', false, '&#x1F9F9; คืนคลัง + ลบสินค้าทั้งหมด',
+    'คืนสต็อกเข้าคลังแล้วลบสินค้าทุกตัวออกจากรายการ — ย้อนกลับไม่ได้ สินค้าที่ไม่ได้เชื่อมกับคลังจะหายไปพร้อมสต็อกที่เหลือ', true));
   el('modalBody').appendChild(wrap);
-  openModal('&#x1F9F9; ล้างรายการ+คืนคลัง', '', function() {
-    var saveBtn = el('modalSave'); saveBtn.disabled = true; saveBtn.textContent = 'กำลังล้าง...';
-    google.script.run.withSuccessHandler(function(r) {
-      saveBtn.disabled = false;
+
+  function currentMode() {
+    var r = el('modalBody').querySelector('input[name="clearListMode"]:checked');
+    return r ? r.value : 'return';
+  }
+  function syncSaveBtn() {
+    var isClear = currentMode() === 'clear';
+    el('modalSave').className = isClear ? 'btn btn-danger' : 'btn btn-primary';
+    el('modalSave').textContent = isClear ? 'ล้างทั้งหมด' : 'คืนคลัง';
+  }
+  wrap.addEventListener('change', syncSaveBtn);
+
+  openModal('&#x21A9; คืนคลัง / ล้างรายการ', '', function() {
+    var mode = currentMode();
+    var saveBtn = el('modalSave'); saveBtn.disabled = true;
+    saveBtn.textContent = mode === 'clear' ? 'กำลังล้าง...' : 'กำลังคืน...';
+    var runner = google.script.run.withSuccessHandler(function(r) {
+      saveBtn.disabled = false; syncSaveBtn();
       try {
         var res = JSON.parse(r);
         if (res.status === 'Success') {
           closeModal();
-          toast('ลบสินค้า ' + res.deleted + ' รายการ คืนคลัง ' + res.returned + ' ชิ้น', 'success');
+          if (mode === 'clear') toast('ลบสินค้า ' + res.deleted + ' รายการ คืนคลัง ' + res.returned + ' ชิ้น', 'success');
+          else toast('คืนสต็อกเข้าคลังแล้ว ' + res.returned + ' ชิ้น (' + res.count + ' สินค้า)', 'success');
           loadProducts(sheetId);
         } else { toast(res.message || 'เกิดข้อผิดพลาด', 'error'); }
       } catch(e) { toast('เกิดข้อผิดพลาด', 'error'); }
     }).withFailureHandler(function() {
-      saveBtn.disabled = false;
-      toast('ล้างรายการไม่สำเร็จ', 'error');
-    }).adminClearListProducts(sheetId);
-  }, 'ล้างทั้งหมด');
-  el('modalSave').className = 'btn btn-danger';
+      saveBtn.disabled = false; syncSaveBtn();
+      toast('ดำเนินการไม่สำเร็จ', 'error');
+    });
+    if (mode === 'clear') runner.adminClearListProducts(sheetId);
+    else runner.adminReturnProductsBulk(sheetId, currentProductsCache.map(function(p) { return p.rowIndex; }));
+  }, 'คืนคลัง');
+  syncSaveBtn();
   el('modal').classList.add('open');
 }
 
