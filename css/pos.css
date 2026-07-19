@@ -208,3 +208,23 @@ button,.pos-prod-card,.qty-step-btn,.sum-qty-btn{touch-action:manipulation;}
   .pos-history-btn span{display:none;}
   .history-hero-value{font-size:1.7rem;}
 }
+
+/* ── Barcode scanner overlay (in-page, replaces the old popup) ── */
+#pos-scanner-overlay{display:none;position:fixed;inset:0;z-index:10000;background:#000;flex-direction:column;}
+#pos-scanner-overlay.open{display:flex;}
+#posScanReader{flex:1;overflow:hidden;position:relative;}
+#posScanReader video{width:100%!important;height:100%!important;object-fit:cover;}
+#posScanReader canvas{display:none!important;}
+#posScanReader #posScanReader__scan_region{border:none!important;box-shadow:none!important;}
+#posScanReader #posScanReader__scan_region img{display:none!important;}
+#pos-scanner-overlay.open #posScanReader::after{
+  content:"";position:absolute;top:50%;left:50%;
+  transform:translate(-50%,-55%);
+  width:260px;height:160px;
+  border:3px solid #00C896;border-radius:8px;
+  box-shadow:0 0 0 9999px rgba(0,0,0,0.45);
+  pointer-events:none;
+}
+.pos-scan-bottom{width:100%;padding:20px 24px calc(24px + env(safe-area-inset-bottom));display:flex;flex-direction:column;align-items:center;gap:12px;background:rgba(0,0,0,0.75);backdrop-filter:blur(8px);}
+#posScanStatus{font-size:0.85rem;color:#aaa;text-align:center;line-height:1.5;}
+.pos-scan-cancel{padding:12px 40px;background:#FF4757;color:#fff;border:none;border-radius:10px;font-size:0.95rem;font-weight:600;cursor:pointer;width:100%;max-width:320px;min-height:44px;font-family:var(--font);}

@@ -14,7 +14,7 @@ var __posQuery = new URLSearchParams(location.search);
 var POS_INIT_SHEET_ID  = __posQuery.get('sheetId')  || '';
 var POS_INIT_LIST_NAME = __posQuery.get('listName') || 'POS';
 </script>
-<link rel="stylesheet" href="css/pos.css?v=20260718h">
+<link rel="stylesheet" href="css/pos.css?v=20260718i">
 </head>
 <body>
 
@@ -168,9 +168,20 @@ var POS_INIT_LIST_NAME = __posQuery.get('listName') || 'POS';
   </div>
 </div>
 
+<!-- ════════════════════════════════ -->
+<!-- BARCODE SCANNER OVERLAY          -->
+<!-- ════════════════════════════════ -->
+<div id="pos-scanner-overlay">
+  <div id="posScanReader"></div>
+  <div class="pos-scan-bottom">
+    <div id="posScanStatus">กำลังเปิดกล้อง...</div>
+    <button type="button" class="pos-scan-cancel" onclick="closeBarcodeScanner()">ยกเลิก</button>
+  </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.7/dist/umd/supabase.min.js" integrity="sha384-BmlQlKlDvXvKoxkn5OQuUo/aJQCTXeB+Kls6EccBmG4Kf8AXvp89RtO9MtPxP/r5" crossorigin="anonymous"></script>
-<script src="js/config.js?v=20260718h"></script>
-<script src="js/api.js?v=20260718h"></script>
+<script src="js/config.js?v=20260718i"></script>
+<script src="js/api.js?v=20260718i"></script>
 <script>
 // Guard: POS is admin-only — send signed-out visitors to the login page
 // instead of showing a half-working interface with an error overlay
@@ -180,7 +191,7 @@ if (window.__sb) {
   });
 }
 </script>
-<script src="js/pos.js?v=20260718h"></script>
+<script src="js/pos.js?v=20260718i"></script>
 
 </body>
 </html>

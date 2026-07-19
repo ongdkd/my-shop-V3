@@ -32,6 +32,10 @@ function openPOS(products, listName, listId) {
   updateCartFab();
   goScreen('pos', null);
   hideLoading();
+
+  // Warm up the barcode library in the background so the first
+  // scanner tap only has to start the camera
+  setTimeout(function() { ensureScannerLib().catch(function() {}); }, 1500);
 }
 
 // ══════════════════════════════════
@@ -220,12 +224,15 @@ function renderProducts(prods) {
     var card = document.createElement('div');
     card.className = 'pos-prod-card' + (p.remaining === 0 ? ' out-of-stock' : '');
     card.setAttribute('data-row', p.rowIndex);
+    card.setAttribute('data-search', ((p.name || '') + ' ' + (p.barcode || p.id || '')).toLowerCase());
 
     // Image
     if (p.image) {
       var img = document.createElement('img');
       img.className = 'pos-prod-img';
       img.src = p.image;
+      img.loading = 'lazy';
+      img.decoding = 'async';
       img.onerror = function() { this.src = PLACEHOLDER; };
       card.appendChild(img);
     } else {
@@ -276,17 +283,27 @@ function renderProducts(prods) {
     card.onclick = function() { openQtyModal(p); };
     grid.appendChild(card);
   });
+
+  // Re-apply an active search so badge refreshes don't reset the filter
+  var searchBox = document.getElementById('posSearch');
+  if (searchBox && searchBox.value.trim()) filterProducts(searchBox.value);
 }
 
+// Show/hide the already-rendered cards instead of rebuilding the grid —
+// rebuilding forced every product image to re-decode on each keystroke
 function filterProducts(term) {
-  term = term.trim().toLowerCase();
-  var filtered = term
-    ? POS_PRODUCTS.filter(function(p) {
-        return (p.name || '').toLowerCase().indexOf(term) !== -1 ||
-               (p.barcode || p.id || '').toLowerCase().indexOf(term) !== -1;
-      })
-    : POS_PRODUCTS;
-  renderProducts(filtered);
+  term = (term || '').trim().toLowerCase();
+  var grid = document.getElementById('posProductGrid');
+  var empty = document.getElementById('posEmpty');
+  var cards = grid.children;
+  var visible = 0;
+  for (var i = 0; i < cards.length; i++) {
+    var show = !term || (cards[i].getAttribute('data-search') || '').indexOf(term) !== -1;
+    cards[i].style.display = show ? '' : 'none';
+    if (show) visible++;
+  }
+  grid.style.display = visible ? 'grid' : 'none';
+  empty.style.display = visible ? 'none' : 'flex';
 }
 
 function getCartQty(rowIndex) {
@@ -864,135 +881,67 @@ function posHandleScannedCode(barcode) {
 }
 
 // ══════════════════════════════════
-// BARCODE SCANNER (camera popup)
+// BARCODE SCANNER (in-page overlay — no popup, so no popup blockers,
+// no new tab on mobile, and the camera permission sticks to this page)
 // ══════════════════════════════════
+var _posScanner = null;        // reused Html5Qrcode instance
+var _posScannerActive = false;
+var _scannerLibPromise = null;
+
+function ensureScannerLib() {
+  if (window.Html5Qrcode) return Promise.resolve();
+  if (_scannerLibPromise) return _scannerLibPromise;
+  _scannerLibPromise = new Promise(function(resolve, reject) {
+    var s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js';
+    s.onload = resolve;
+    s.onerror = function() { _scannerLibPromise = null; reject(new Error('scanner lib load failed')); };
+    document.head.appendChild(s);
+  });
+  return _scannerLibPromise;
+}
+
 function openBarcodeScanner() {
-  var scanToken = 'pos_scan_' + Date.now();
-  var popup = window.open('', 'pos_barcode', 'width=420,height=600,resizable=yes');
-  if (!popup) { posToast('กรุณาอนุญาต Pop-up', 'error'); return; }
+  var ov = document.getElementById('pos-scanner-overlay');
+  var status = document.getElementById('posScanStatus');
+  if (!ov) return;
+  ov.classList.add('open');
+  status.textContent = 'กำลังเปิดกล้อง...';
 
-  function handleBarcodeResult(barcode) {
-    barcode = String(barcode || '').trim();
-    if (!barcode) return;
+  ensureScannerLib().then(function() {
+    if (_posScannerActive) return;
+    if (!_posScanner) _posScanner = new Html5Qrcode('posScanReader');
+    _posScannerActive = true;
+    var scanned = false;
+    _posScanner.start(
+      { facingMode: 'environment' },
+      { fps: 15, disableFlip: true },
+      function(text) {
+        if (scanned) return;
+        scanned = true;
+        try { playBeep(); } catch(e) {}
+        closeBarcodeScanner();
+        posHandleScannedCode(String(text || '').trim());
+      },
+      function() {}
+    ).then(function() {
+      status.textContent = 'พร้อมสแกนบาร์โค้ด';
+    }).catch(function() {
+      _posScannerActive = false;
+      status.textContent = 'ไม่สามารถเปิดกล้องได้ กรุณาอนุญาตการใช้กล้อง';
+    });
+  }).catch(function() {
+    status.textContent = 'โหลดตัวสแกนไม่สำเร็จ กรุณาตรวจสอบอินเทอร์เน็ต';
+  });
+}
 
-    // Close popup AFTER we have the value — not before
-    setTimeout(function() {
-      try { if (popup && !popup.closed) popup.close(); } catch(e) {}
-    }, 100);
-
-    posHandleScannedCode(barcode);
+function closeBarcodeScanner() {
+  var ov = document.getElementById('pos-scanner-overlay');
+  if (ov) ov.classList.remove('open');
+  if (_posScanner && _posScannerActive) {
+    _posScannerActive = false;
+    try { _posScanner.stop().catch(function() {}); } catch(e) {}
   }
-
-  // Primary bridge — direct function call from popup (same origin)
-  window.__posBarcodeResultBridge = function(token, barcode) {
-    if (token !== scanToken) return;
-    delete window.__posBarcodeResultBridge;
-    handleBarcodeResult(barcode);
-  };
-
-  // Fallback — postMessage (cross-origin or blocked popup access)
-  function onMsg(e) {
-    if (e.data && e.data.type === 'POS_BARCODE' && e.data.token === scanToken) {
-      window.removeEventListener('message', onMsg);
-      delete window.__posBarcodeResultBridge;
-      handleBarcodeResult(e.data.barcode);
-    }
-  }
-  window.addEventListener('message', onMsg);
-
-  var popupHtml = [
-    '<!DOCTYPE html><html><head><meta charset="UTF-8">',
-    '<meta name="viewport" content="width=device-width,initial-scale=1">',
-    '<title>สแกนบาร์โค้ด</title>',
-    '<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"><\/script>',
-    '<style>',
-    '*{box-sizing:border-box;margin:0;padding:0;}',
-    'body{background:#000;display:flex;flex-direction:column;align-items:center;',
-    'justify-content:space-between;height:100vh;font-family:sans-serif;color:#fff;',
-    'padding:0;overflow:hidden;}',
-    '#reader{width:100vw;flex:1;overflow:hidden;position:relative;}',
-    '#reader video{width:100%!important;height:100%!important;object-fit:cover;}',
-    /* hide the library's own shading box and border — we style it ourselves */
-    '#reader canvas{display:none!important;}',
-    '#reader__scan_region{border:none!important;box-shadow:none!important;}',
-    '#reader__scan_region img{display:none!important;}',
-    /* single clean viewfinder drawn with CSS on the video container */
-    '#reader::after{',
-    '  content:"";position:absolute;',
-    '  top:50%;left:50%;',
-    '  transform:translate(-50%,-55%);',
-    '  width:260px;height:160px;',
-    '  border:3px solid #00C896;border-radius:8px;',
-    '  box-shadow:0 0 0 9999px rgba(0,0,0,0.45);',
-    '  pointer-events:none;',
-    '}',
-    '.bottom{width:100%;padding:20px 24px 32px;display:flex;flex-direction:column;',
-    'align-items:center;gap:12px;background:rgba(0,0,0,0.75);backdrop-filter:blur(8px);}',
-    '#status{font-size:0.85rem;color:#aaa;text-align:center;line-height:1.5;}',
-    '#result{font-size:1rem;font-weight:700;color:#00C896;text-align:center;',
-    'word-break:break-all;min-height:20px;}',
-    '#cancelBtn{padding:12px 40px;background:#FF4757;color:#fff;border:none;',
-    'border-radius:10px;font-size:0.95rem;font-weight:600;cursor:pointer;width:100%;max-width:320px;}',
-    '</style></head><body>',
-    '<div id="reader"></div>',
-    '<div class="bottom">',
-    '  <div id="status">กำลังเปิดกล้อง...</div>',
-    '  <div id="result"></div>',
-    '  <button id="cancelBtn">ยกเลิก</button>',
-    '</div>',
-    '<script>',
-    'var scanner=null,hasScanned=false;',
-    'var SCAN_TOKEN="' + scanToken + '";',
-    'function sendResult(text){',
-    '  text=String(text||"").trim();',
-    '  if(!text||hasScanned)return;',
-    '  hasScanned=true;',
-    '  try{if(window.opener&&window.opener.playBeep)window.opener.playBeep();}catch(e){}',
-    '  document.getElementById("result").textContent="✓ "+text;',
-    '  document.getElementById("status").textContent="สแกนสำเร็จ!";',
-    '  var sent=false;',
-    '  try{',
-    '    if(window.opener&&window.opener.__posBarcodeResultBridge){',
-    '      window.opener.__posBarcodeResultBridge(SCAN_TOKEN,text);',
-    '      sent=true;',
-    '    }',
-    '  }catch(e){}',
-    '  if(!sent){',
-    '    try{',
-    '      window.opener&&window.opener.postMessage(',
-    '        {type:"POS_BARCODE",token:SCAN_TOKEN,barcode:text},"*"',
-    '      );',
-    '    }catch(e){}',
-    '  }',
-    '}',
-    'function startScanner(){',
-    '  scanner=new Html5Qrcode("reader");',
-    '  scanner.start(',
-    '    {facingMode:"environment"},',
-    '    {fps:15,disableFlip:true},',
-    '    function(text){',
-    '      if(hasScanned)return;',
-    '      if(scanner){try{scanner.stop();}catch(e){}}',
-    '      sendResult(text);',
-    '    },',
-    '    function(){}',
-    '  ).then(function(){',
-    '    document.getElementById("status").textContent="พร้อมสแกนบาร์โค้ด";',
-    '  }).catch(function(e){',
-    '    document.getElementById("status").textContent="ไม่สามารถเปิดกล้องได้ กรุณาอนุญาตการใช้กล้อง";',
-    '  });',
-    '}',
-    'document.getElementById("cancelBtn").onclick=function(){',
-    '  if(scanner){try{scanner.stop();}catch(e){}}',
-    '  window.close();',
-    '};',
-    'window.addEventListener("load",function(){ startScanner(); });',
-    '<\/script></body></html>'
-  ].join('');
-
-  popup.document.open();
-  popup.document.write(popupHtml);
-  popup.document.close();
 }
 
 // ══════════════════════════════════
