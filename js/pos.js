@@ -913,15 +913,56 @@ function openBarcodeScanner() {
     if (!_posScanner) _posScanner = new Html5Qrcode('posScanReader');
     _posScannerActive = true;
     var scanned = false;
+
+    var config = {
+      fps: 15,
+      disableFlip: true,
+      // Decode only inside the viewfinder box so stray patterns at the
+      // edges of the frame can't produce bogus reads
+      qrbox: function(vw, vh) {
+        var w = Math.min(300, Math.floor(vw * 0.8));
+        return { width: w, height: Math.floor(w * 0.6) };
+      },
+      // Native detector (Android Chrome) is faster and far more accurate
+      // on 1D barcodes than the JS fallback
+      experimentalFeatures: { useBarCodeDetectorIfSupported: true },
+      // Higher-resolution frames make thin 1D bars readable
+      videoConstraints: {
+        facingMode: 'environment',
+        width: { ideal: 1280 },
+        height: { ideal: 720 }
+      }
+    };
+    // Only the formats this shop actually uses — every extra format is
+    // another way for a blurry frame to "decode" into a wrong value
+    if (window.Html5QrcodeSupportedFormats) {
+      config.formatsToSupport = [
+        Html5QrcodeSupportedFormats.CODE_128,
+        Html5QrcodeSupportedFormats.EAN_13,
+        Html5QrcodeSupportedFormats.EAN_8,
+        Html5QrcodeSupportedFormats.CODE_39,
+        Html5QrcodeSupportedFormats.UPC_A,
+        Html5QrcodeSupportedFormats.UPC_E,
+        Html5QrcodeSupportedFormats.QR_CODE
+      ];
+    }
+
+    // Accept a value only after two identical consecutive reads — a
+    // misread almost never produces the same wrong value twice
+    var lastText = '', streak = 0;
     _posScanner.start(
       { facingMode: 'environment' },
-      { fps: 15, disableFlip: true },
+      config,
       function(text) {
-        if (scanned) return;
+        text = String(text || '').trim();
+        if (!text || scanned) return;
+        if (text === lastText) streak++;
+        else { lastText = text; streak = 1; }
+        if (streak < 2) return;
         scanned = true;
         try { playBeep(); } catch(e) {}
         closeBarcodeScanner();
-        posHandleScannedCode(String(text || '').trim());
+        posHandleScannedCode(text);
       },
       function() {}
     ).then(function() {

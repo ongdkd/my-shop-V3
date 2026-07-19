@@ -217,6 +217,8 @@ button,.pos-prod-card,.qty-step-btn,.sum-qty-btn{touch-action:manipulation;}
 #posScanReader canvas{display:none!important;}
 #posScanReader #posScanReader__scan_region{border:none!important;box-shadow:none!important;}
 #posScanReader #posScanReader__scan_region img{display:none!important;}
+/* the library draws its own qrbox shading — our ::after viewfinder replaces it */
+#posScanReader #qr-shaded-region{display:none!important;}
 #pos-scanner-overlay.open #posScanReader::after{
   content:"";position:absolute;top:50%;left:50%;
   transform:translate(-50%,-55%);
