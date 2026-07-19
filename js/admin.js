@@ -1766,7 +1766,7 @@ function renderProductsTable(products, sheetId, holder) {
       var actWrap = document.createElement('div'); actWrap.style.cssText = 'display:flex;gap:5px;';
       var editBtn = makeBtn('btn-icon prod-edit', SVG_EDIT);
       editBtn.title = 'แก้ไข'; editBtn.setAttribute('data-row', p.rowIndex);
-      if (p.sourceStockItemId && p.remaining !== null && p.remaining > 0) {
+      if (prodReturnablePieces(p) > 0) {
         var retBtn = makeBtn('btn-icon prod-return', '&#x21A9;');
         retBtn.title = 'คืนสต็อกเข้าคลัง'; retBtn.setAttribute('data-row', p.rowIndex); retBtn.setAttribute('data-name', p.name);
         actWrap.appendChild(retBtn);
@@ -1826,7 +1826,7 @@ function renderProductsTable(products, sheetId, holder) {
       var pRow2 = document.createElement('div');
       pRow2.style.cssText = 'display:flex;align-items:center;justify-content:flex-end;gap:6px;';
       var pEB = makeBtn('btn-icon prod-edit', SVG_EDIT); pEB.title = 'แก้ไข'; pEB.setAttribute('data-row', pGrid.rowIndex); pRow2.appendChild(pEB);
-      if (pGrid.sourceStockItemId && pGrid.remaining !== null && pGrid.remaining > 0) {
+      if (prodReturnablePieces(pGrid) > 0) {
         var pRB = makeBtn('btn-icon prod-return', '&#x21A9;'); pRB.title = 'คืนสต็อกเข้าคลัง'; pRB.setAttribute('data-row', pGrid.rowIndex); pRB.setAttribute('data-name', pGrid.name); pRow2.appendChild(pRB);
       }
       var pDB = makeBtn('btn-icon prod-del', SVG_TRASH); pDB.title = 'ลบ'; pDB.setAttribute('data-row', pGrid.rowIndex); pDB.setAttribute('data-name', pGrid.name); pDB.style.cssText = 'color:var(--error);border-color:var(--error);'; pRow2.appendChild(pDB);
@@ -1944,9 +1944,23 @@ function renderProductsTable(products, sheetId, holder) {
 
 // Reverse of "push": send a linked product's unsold stock back to the
 // warehouse (list stock -> 0, warehouse += N)
+// How many pieces a product can give back to the warehouse right now.
+// Option products count their per-option stock, so a product whose total
+// shows 0 can still be returned if its options hold stock.
+function prodReturnablePieces(p) {
+  if (!p || !p.sourceStockItemId) return 0;
+  var det = p.optionDetails || [];
+  if (det.length) {
+    var s = 0;
+    det.forEach(function(o) { var q = Number(o.remaining); if (q > 0) s += q; });
+    return s;
+  }
+  return (p.remaining !== null && p.remaining !== undefined && Number(p.remaining) > 0) ? Number(p.remaining) : 0;
+}
+
 function confirmReturnStock(sheetId, rowIndex, name) {
   var prod = currentProductsCache.find(function(p) { return p.rowIndex === rowIndex; });
-  var qty = prod && prod.remaining !== null ? Number(prod.remaining) : 0;
+  var qty = prodReturnablePieces(prod);
   el('modalBody').innerHTML = '';
   var wrap = document.createElement('div'); wrap.style.cssText = 'text-align:center;padding:8px 0;';
   wrap.innerHTML = '<div style="font-size:2.5rem;margin-bottom:12px;">&#x21A9;</div>' +
@@ -2079,7 +2093,8 @@ function confirmBulkReturn(sheetId) {
   var eligible = 0, pieces = 0;
   rows.forEach(function(row) {
     var p = currentProductsCache.find(function(c) { return c.rowIndex === row; });
-    if (p && p.sourceStockItemId && Number(p.remaining) > 0) { eligible++; pieces += Number(p.remaining); }
+    var q = prodReturnablePieces(p);
+    if (q > 0) { eligible++; pieces += q; }
   });
   el('modalBody').innerHTML = '';
   var wrap = document.createElement('div'); wrap.style.cssText = 'text-align:center;padding:8px 0;';
@@ -2146,7 +2161,8 @@ function confirmClearList(sheetId) {
   if (!total) { toast('ไม่มีสินค้าในรายการนี้', 'error'); return; }
   var eligible = 0, pieces = 0;
   currentProductsCache.forEach(function(p) {
-    if (p.sourceStockItemId && Number(p.remaining) > 0) { eligible++; pieces += Number(p.remaining); }
+    var q = prodReturnablePieces(p);
+    if (q > 0) { eligible++; pieces += q; }
   });
   el('modalBody').innerHTML = '';
   var wrap = document.createElement('div'); wrap.style.cssText = 'padding:4px 0;';

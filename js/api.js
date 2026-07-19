@@ -362,6 +362,116 @@
     };
   }
 
+  // ── Option-aware stock return, shared by the single / bulk / clear-list
+  // paths. Single products credit their linked warehouse row; option
+  // products give each option's unsold units back to the matching
+  // warehouse CHILD row (matched by barcode, then name). Options with no
+  // matching child are left untouched so their counts are never lost.
+  async function performStockReturn(prods) {
+    var singles = [], optionProds = [];
+    (prods || []).forEach(function (p) {
+      if (!p.source_stock_item_id) return;
+      var det = Array.isArray(p.option_details) ? p.option_details : [];
+      if (det.length) {
+        if (det.some(function (o) { return Number(o.remaining) > 0; })) optionProds.push(p);
+      } else if (p.remaining !== null && p.remaining !== undefined && Number(p.remaining) > 0) {
+        singles.push(p);
+      }
+    });
+    if (!singles.length && !optionProds.length) return { returned: 0, count: 0 };
+
+    // Load the warehouse rows involved: parents for singles, children for options
+    var stockById = {}, kidsByParent = {};
+    var parentIds = singles.map(function (p) { return p.source_stock_item_id; });
+    if (parentIds.length) {
+      var sr = await sb.from('stock_items').select('id,stock').in('id', parentIds);
+      if (sr.error) throw { __json: err(sr.error.message) };
+      (sr.data || []).forEach(function (s) { stockById[s.id] = s; });
+    }
+    var srcIds = optionProds.map(function (p) { return p.source_stock_item_id; });
+    if (srcIds.length) {
+      var kr = await sb.from('stock_items').select('id,parent_id,code,name,stock').in('parent_id', srcIds);
+      if (kr.error) throw { __json: err(kr.error.message) };
+      (kr.data || []).forEach(function (k) {
+        stockById[k.id] = k;
+        (kidsByParent[k.parent_id] = kidsByParent[k.parent_id] || []).push(k);
+      });
+    }
+    function matchChild(kids, opt) {
+      var code = String(opt.code || '').trim().toLowerCase();
+      var name = String(opt.name || '').trim().toLowerCase();
+      var hit = null;
+      if (code) hit = kids.find(function (k) { return String(k.code || '').trim().toLowerCase() === code; });
+      if (!hit && name) hit = kids.find(function (k) { return String(k.name || '').trim().toLowerCase() === name; });
+      return hit || null;
+    }
+
+    // Work out every credit BEFORE touching the list, so an option that
+    // cannot be matched keeps its count instead of being zeroed into thin air
+    var addById = {}, total = 0, count = 0;
+    var singleIds = [], optionPatches = []; // {id, remaining, option_details}
+    singles.forEach(function (p) {
+      var q = Number(p.remaining);
+      addById[p.source_stock_item_id] = (addById[p.source_stock_item_id] || 0) + q;
+      total += q; count++;
+      singleIds.push(p.id);
+    });
+    optionProds.forEach(function (p) {
+      var kids = kidsByParent[p.source_stock_item_id] || [];
+      var matchedAny = false, hasUnlimited = false, leftover = 0;
+      var newDet = p.option_details.map(function (o) {
+        var c = {};
+        Object.keys(o).forEach(function (k2) { c[k2] = o[k2]; });
+        var q = Number(o.remaining);
+        if (o.remaining === null || o.remaining === undefined) { hasUnlimited = true; return c; }
+        if (q > 0) {
+          var child = matchChild(kids, o);
+          if (child) {
+            addById[child.id] = (addById[child.id] || 0) + q;
+            total += q; matchedAny = true;
+            c.remaining = 0;
+            return c;
+          }
+          leftover += q; // unmatched — keep its count in the list
+        }
+        return c;
+      });
+      if (matchedAny) {
+        count++;
+        optionPatches.push({ id: p.id, remaining: hasUnlimited ? null : leftover, option_details: newDet });
+      }
+    });
+    if (!count) return { returned: 0, count: 0 };
+
+    // Zero the list stock first so a mid-way failure can only
+    // under-count the warehouse, never double-count sellable stock
+    if (singleIds.length) {
+      var z = await sb.from('products').update({ remaining: 0 }).in('id', singleIds);
+      if (z.error) throw { __json: err(z.error.message) };
+    }
+    for (var i = 0; i < optionPatches.length; i++) {
+      var op = optionPatches[i];
+      var zo = await sb.from('products')
+        .update({ remaining: op.remaining, option_details: op.option_details })
+        .eq('id', op.id);
+      if (zo.error) throw { __json: err(zo.error.message) };
+    }
+
+    var ups = [];
+    Object.keys(addById).forEach(function (sid2) {
+      var s = stockById[sid2];
+      // Unlimited warehouse rows stay unlimited — no number to add to
+      if (s && s.stock !== null && s.stock !== undefined) {
+        ups.push({ id: sid2, stock: Number(s.stock) + addById[sid2] });
+      }
+    });
+    if (ups.length) {
+      var u = await sb.from('stock_items').upsert(ups, { onConflict: 'id' });
+      if (u.error) throw { __json: err('ตั้งสต็อกรายการเป็น 0 แล้ว แต่บวกคืนคลังไม่ครบ: ' + u.error.message + ' — กรุณาตรวจคลังเอง') };
+    }
+    return { returned: total, count: count };
+  }
+
   // ════════════════════════════════════════════════════════════
   // API — one function per old code.gs server function
   // ════════════════════════════════════════════════════════════
@@ -973,33 +1083,24 @@
         if (!pid) return err('ไม่พบสินค้า (กรุณารีเฟรชหน้า)');
 
         var pr = await sb.from('products')
-          .select('id,name,remaining,source_stock_item_id')
+          .select('id,name,remaining,option_details,source_stock_item_id')
           .eq('id', pid).single();
         if (pr.error) return err(pr.error.message);
         var p = pr.data;
         if (!p.source_stock_item_id) return err('สินค้านี้ไม่ได้ลิงก์กับคลัง จึงคืนสต็อกไม่ได้');
-        if (p.remaining === null || p.remaining === undefined) return err('สินค้านี้ไม่จำกัดจำนวน ไม่มีสต็อกให้คืน');
-        var qty = Number(p.remaining);
-        if (!(qty > 0)) return err('ไม่มีสต็อกเหลือให้คืนค่ะ');
-
-        var sr = await sb.from('stock_items').select('id,stock').eq('id', p.source_stock_item_id).single();
-        if (sr.error) return err('ไม่พบสินค้าในคลัง: ' + sr.error.message);
-
-        // Zero the list stock first so a mid-way failure can only
-        // under-count the warehouse, never double-count sellable stock
-        var u1 = await sb.from('products').update({ remaining: 0 }).eq('id', pid);
-        if (u1.error) return err(u1.error.message);
-
-        var newStock = sr.data.stock === null || sr.data.stock === undefined
-          ? null                        // unlimited warehouse stays unlimited
-          : Number(sr.data.stock) + qty;
-        if (newStock !== null) {
-          var u2 = await sb.from('stock_items').update({ stock: newStock }).eq('id', p.source_stock_item_id);
-          if (u2.error) {
-            return err('ตั้งสต็อกรายการเป็น 0 แล้ว แต่บวกคืนคลังไม่สำเร็จ: ' + u2.error.message + ' — กรุณาปรับคลังเอง (+' + qty + ')');
-          }
+        var det = Array.isArray(p.option_details) ? p.option_details : [];
+        if (!det.length) {
+          if (p.remaining === null || p.remaining === undefined) return err('สินค้านี้ไม่จำกัดจำนวน ไม่มีสต็อกให้คืน');
+          if (!(Number(p.remaining) > 0)) return err('ไม่มีสต็อกเหลือให้คืนค่ะ');
         }
-        return ok({ returned: qty });
+
+        var res = await performStockReturn([p]);
+        if (!res.count) {
+          return err(det.length
+            ? 'ไม่มีสต็อกตัวเลือกที่คืนได้ (ตัวเลือกอาจไม่ตรงกับคลัง)'
+            : 'ไม่มีสต็อกเหลือให้คืนค่ะ');
+        }
+        return ok({ returned: res.returned });
       } catch (e) { return e.__json || err(e.message || e); }
     },
 
@@ -1013,44 +1114,13 @@
         if (!ids.length) return err('ไม่พบสินค้า (กรุณารีเฟรชหน้า)');
 
         var pr = await sb.from('products')
-          .select('id,name,remaining,source_stock_item_id')
+          .select('id,name,remaining,option_details,source_stock_item_id')
           .in('id', ids);
         if (pr.error) return err(pr.error.message);
-        var eligible = (pr.data || []).filter(function (p) {
-          return p.source_stock_item_id && p.remaining !== null && Number(p.remaining) > 0;
-        });
-        if (!eligible.length) return err('ในรายการที่เลือก ไม่มีสินค้าที่คืนได้ (ต้องลิงก์คลังและมีสต็อกเหลือ)');
 
-        var sids = eligible.map(function (p) { return p.source_stock_item_id; });
-        var sr = await sb.from('stock_items').select('id,stock').in('id', sids);
-        if (sr.error) return err(sr.error.message);
-        var stockById = {};
-        (sr.data || []).forEach(function (s) { stockById[s.id] = s; });
-
-        // Zero the list stock first so a partial failure can only
-        // under-count the warehouse, never double-count sellable stock
-        var z = await sb.from('products').update({ remaining: 0 })
-          .in('id', eligible.map(function (p) { return p.id; }));
-        if (z.error) return err(z.error.message);
-
-        var addById = {}, total = 0;
-        eligible.forEach(function (p) {
-          var q = Number(p.remaining);
-          addById[p.source_stock_item_id] = (addById[p.source_stock_item_id] || 0) + q;
-          total += q;
-        });
-        var ups = [];
-        Object.keys(addById).forEach(function (sid2) {
-          var s = stockById[sid2];
-          if (s && s.stock !== null && s.stock !== undefined) {
-            ups.push({ id: sid2, stock: Number(s.stock) + addById[sid2] });
-          }
-        });
-        if (ups.length) {
-          var u = await sb.from('stock_items').upsert(ups, { onConflict: 'id' });
-          if (u.error) return err('ตั้งสต็อกรายการเป็น 0 แล้ว แต่บวกคืนคลังไม่ครบ: ' + u.error.message + ' — กรุณาตรวจคลังเอง');
-        }
-        return ok({ returned: total, count: eligible.length });
+        var res = await performStockReturn(pr.data || []);
+        if (!res.count) return err('ในรายการที่เลือก ไม่มีสินค้าที่คืนได้ (ต้องลิงก์คลังและมีสต็อกเหลือ)');
+        return ok({ returned: res.returned, count: res.count });
       } catch (e) { return e.__json || err(e.message || e); }
     },
 
@@ -1072,49 +1142,17 @@
       try {
         requireSb(); await requireAdmin();
         var pr = await sb.from('products')
-          .select('id,remaining,source_stock_item_id')
+          .select('id,name,remaining,option_details,source_stock_item_id')
           .eq('list_id', sheetId);
         if (pr.error) return err(pr.error.message);
         var all = pr.data || [];
         if (!all.length) return err('รายการนี้ไม่มีสินค้าอยู่แล้วค่ะ');
 
-        var eligible = all.filter(function (p) {
-          return p.source_stock_item_id && p.remaining !== null && Number(p.remaining) > 0;
-        });
-        var total = 0;
-        if (eligible.length) {
-          var sids = eligible.map(function (p) { return p.source_stock_item_id; });
-          var sr = await sb.from('stock_items').select('id,stock').in('id', sids);
-          if (sr.error) return err(sr.error.message);
-          var stockById = {};
-          (sr.data || []).forEach(function (s) { stockById[s.id] = s; });
-
-          var z = await sb.from('products').update({ remaining: 0 })
-            .in('id', eligible.map(function (p) { return p.id; }));
-          if (z.error) return err(z.error.message);
-
-          var addById = {};
-          eligible.forEach(function (p) {
-            var q = Number(p.remaining);
-            addById[p.source_stock_item_id] = (addById[p.source_stock_item_id] || 0) + q;
-            total += q;
-          });
-          var ups = [];
-          Object.keys(addById).forEach(function (sid2) {
-            var s = stockById[sid2];
-            if (s && s.stock !== null && s.stock !== undefined) {
-              ups.push({ id: sid2, stock: Number(s.stock) + addById[sid2] });
-            }
-          });
-          if (ups.length) {
-            var u = await sb.from('stock_items').upsert(ups, { onConflict: 'id' });
-            if (u.error) return err('คืนสต็อกไม่ครบ: ' + u.error.message + ' — ยังไม่ได้ลบสินค้า กรุณาตรวจคลังก่อน');
-          }
-        }
+        var res = await performStockReturn(all);
 
         var d = await sb.from('products').delete().eq('list_id', sheetId).select('id');
         if (d.error) return err('คืนสต็อกแล้ว แต่ลบสินค้าไม่สำเร็จ: ' + d.error.message);
-        return ok({ returned: total, deleted: (d.data || []).length });
+        return ok({ returned: res.returned, deleted: (d.data || []).length });
       } catch (e) { return e.__json || err(e.message || e); }
     },
 
