@@ -1,0 +1,25 @@
+# Supabase free projects pause after ~7 days without API traffic.
+# This reads one row every 3 days so quiet weeks don't pause the database.
+# The URL and publishable key are the same public values as js/config.js.
+name: Supabase keep-alive
+
+on:
+  schedule:
+    - cron: '17 3 */3 * *'   # 03:17 UTC every 3rd day (10:17 Thai time)
+  workflow_dispatch:          # "Run workflow" button for a manual test
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Read one order list
+        env:
+          SUPABASE_URL: https://hbboruauvxywsklffmhn.supabase.co
+          SUPABASE_KEY: sb_publishable_UF-JWpzyM3EWLRzR-2R12g_fxfBV10m
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' \
+            "$SUPABASE_URL/rest/v1/order_lists?select=id&limit=1" \
+            -H "apikey: $SUPABASE_KEY")
+          echo "Supabase answered HTTP $code"
+          # Fail loudly (GitHub emails you) if the project is already paused or broken
+          test "$code" = "200"

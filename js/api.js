@@ -316,9 +316,24 @@
 
   function listIdFromRow(rowIndex) { return _listRowMap[rowIndex] || null; }
 
+  // Free-gift rules of a list, cleaned for the UI (submit_order re-checks them)
+  function giftRulesOf(row) {
+    return (Array.isArray(row && row.gift_rules) ? row.gift_rules : []).filter(function (g) {
+      return g && String(g.name || '').trim() && isFinite(Number(g.min));
+    }).map(function (g) {
+      return {
+        id: String(g.id || ''), name: String(g.name).trim(), min: Number(g.min),
+        currency: g.currency === 'CNY' ? 'CNY' : 'THB',
+        stock: g.stock === null || g.stock === undefined || g.stock === '' ? null : Math.max(0, Math.floor(Number(g.stock)) || 0)
+      };
+    });
+  }
+
   async function fetchLists() {
+    // '*' (not a column list) so the optional gift_rules / gift_mode columns are
+    // picked up once schema.sql has been run, and nothing breaks before that
     var r = await sb.from('order_lists')
-      .select('id,seq,name,description,image,status,display,source_spreadsheet_id,created_at')
+      .select('*')
       .order('seq', { ascending: true });
     if (r.error) throw r.error;
     return r.data || [];
@@ -337,7 +352,7 @@
 
   async function fetchOrders(listId) {
     var r = await sb.from('orders')
-      .select('id,seq,list_id,customer,product,qty,pay_type,price,total,yuan,total_yuan,full_price,total_full,remark,created_at')
+      .select('id,seq,list_id,customer,product,qty,pay_type,price,total,yuan,total_yuan,full_price,total_full,remark,created_at,checkout_id')
       .eq('list_id', listId)
       .order('seq', { ascending: true });
     if (r.error) throw r.error;
@@ -358,7 +373,8 @@
       totalYuan: num(r.total_yuan),
       fullPrice: num(r.full_price),
       totalFull: num(r.total_full),
-      remark: r.remark || ''
+      remark: r.remark || '',
+      checkoutId: r.checkout_id || ''   // groups the items of one checkout
     };
   }
 
@@ -530,7 +546,9 @@
           name: String(row.name || '').trim() || 'รายการสั่งซื้อ',
           description: String(row.description || '').trim(),
           image: String(row.image || '').trim() || PLACEHOLDER_IMG,
-          sheetId: row.id
+          sheetId: row.id,
+          giftRules: giftRulesOf(row),
+          giftMode: row.gift_mode === 'best' ? 'best' : 'all'
         });
       }
       return out;
@@ -548,6 +566,7 @@
             image: r.image ? String(r.image) : PLACEHOLDER_IMG,
             price: num(r.price),
             deposit: num(r.deposit),
+            yuan: num(r.yuan), // for the cart's free-gift progress (¥ thresholds)
             remaining: r.remaining === null || r.remaining === undefined ? null : Number(r.remaining),
             status: r.status || 'Open',
             options: r.options
@@ -629,7 +648,10 @@
             desc: String(row.description || '').trim(),
             image: String(row.image || '').trim(),
             status: String(row.status || 'Open').trim(),
-            display: String(row.display || '').trim()
+            display: String(row.display || '').trim(),
+            giftRules: giftRulesOf(row),
+            giftMode: row.gift_mode === 'best' ? 'best' : 'all',
+            giftsReady: Object.prototype.hasOwnProperty.call(row, 'gift_rules') // schema.sql has been run
           };
         });
         return ok({ rows: rows });
@@ -822,6 +844,34 @@
       } catch (e) { return e.__json || err(e.message || e); }
     },
 
+    // Save a list's free-gift rules: rules = [{id,name,min,currency,stock}], mode = 'all' | 'best'
+    adminSaveListGifts: async function (rowIndex, rules, mode) {
+      try {
+        requireSb(); await requireAdmin();
+        var id = listIdFromRow(rowIndex);
+        if (!id) return err('ไม่พบรายการ');
+        var clean = [];
+        for (var i = 0; i < (rules || []).length; i++) {
+          var g = rules[i] || {};
+          var name = String(g.name || '').trim();
+          var min = Number(g.min);
+          if (!name) return err('ของแถมข้อ ' + (i + 1) + ': กรุณาใส่ชื่อของแถม');
+          if (!(min > 0)) return err('ของแถมข้อ ' + (i + 1) + ': ยอดขั้นต่ำต้องมากกว่า 0');
+          var stock = g.stock === null || g.stock === undefined || g.stock === '' ? null : Math.floor(Number(g.stock));
+          if (stock !== null && !(stock >= 0)) return err('ของแถมข้อ ' + (i + 1) + ': จำนวนต้องเป็น 0 ขึ้นไป');
+          clean.push({ id: String(g.id || randomCode()), name: name, min: min, currency: g.currency === 'CNY' ? 'CNY' : 'THB', stock: stock });
+        }
+        var r = await sb.from('order_lists')
+          .update({ gift_rules: clean, gift_mode: mode === 'best' ? 'best' : 'all' })
+          .eq('id', id);
+        if (r.error) {
+          if (/gift_(rules|mode)/.test(String(r.error.message || ''))) return err('กรุณาอัปเดตฐานข้อมูลด้วยไฟล์ supabase/schema.sql ก่อนใช้ของแถม');
+          return err(r.error.message);
+        }
+        return ok({});
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
     adminDeleteOrderList: async function (rowIndex) {
       try {
         requireSb(); await requireAdmin();
@@ -961,6 +1011,34 @@
 
     // Full data export for backups — the Supabase free tier has no
     // point-in-time recovery, so this download is the shop's safety net.
+    // Snapshots kept inside Supabase (public.backups, filled nightly by pg_cron)
+    adminListBackups: async function () {
+      try {
+        requireSb(); await requireAdmin();
+        var r = await sb.from('backups').select('id, created_at, summary').order('id', { ascending: false });
+        if (r.error) return err(/backups/.test(r.error.message)
+          ? 'ยังไม่ได้เปิดระบบสำรองอัตโนมัติ — รัน supabase/migrations/2026-10-28-auto-backup.sql ใน SQL Editor ก่อนค่ะ'
+          : r.error.message);
+        return ok({ backups: r.data || [] });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+    adminTakeBackup: async function () {
+      try {
+        requireSb(); await requireAdmin();
+        var r = await sb.rpc('take_backup');
+        if (r.error) return err(r.error.message);
+        return ok({ id: r.data });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+    adminGetBackup: async function (id) {
+      try {
+        requireSb(); await requireAdmin();
+        var r = await sb.from('backups').select('created_at, data').eq('id', id).single();
+        if (r.error) return err(r.error.message);
+        return ok({ exportedAt: r.data.created_at, data: r.data.data });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
     adminExportAllData: async function () {
       try {
         requireSb(); await requireAdmin();
@@ -1020,7 +1098,7 @@
         var data = [], from = 0, pageSize = 1000, truncated = false;
         while (true) {
           var r = await sb.from('orders')
-            .select('id,seq,list_id,customer,product,qty,pay_type,price,total,yuan,total_yuan,full_price,total_full,remark,created_at,order_lists(name)')
+            .select('id,seq,list_id,customer,product,qty,pay_type,price,total,yuan,total_yuan,full_price,total_full,remark,created_at,checkout_id,order_lists(name)')
             .order('created_at', { ascending: false })
             .range(from, from + pageSize - 1);
           if (r.error) return err(r.error.message);
@@ -1323,6 +1401,23 @@
       } catch (e) { return e.__json || err(e.message || e); }
     },
 
+    // AI product lookup — Supabase Edge Function "identify-product" (holds
+    // the Google keys server-side). Returns { name, imageUrl, pageUrl }.
+    // opts.variant + opts.product: name one variant of that product instead
+    adminIdentifyProduct: async function (image, opts) {
+      try {
+        requireSb(); await requireAdmin();
+        opts = opts || {};
+        var r = await sb.functions.invoke('identify-product', {
+          body: { image: image, variant: !!opts.variant, product: String(opts.product || '') }
+        });
+        if (r.error) return err('AI ใช้งานไม่ได้ — ตรวจสอบว่า deploy ฟังก์ชัน identify-product แล้ว');
+        var d = r.data || {};
+        if (d.error) return err(d.error);
+        return ok({ name: String(d.name || ''), imageUrl: String(d.imageUrl || ''), pageUrl: String(d.pageUrl || '') });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
     // ════════════════════════════════════════════════════════
     // RESTOCK NOTIFY
     // ════════════════════════════════════════════════════════
@@ -1491,6 +1586,7 @@
             stock: p.stock === null || p.stock === undefined ? null : Number(p.stock),
             status: p.status || 'Open',
             linkedListCount: Object.keys(linkedListsByStock[p.id] || {}).length,
+            linkedListIds: Object.keys(linkedListsByStock[p.id] || {}),
             children: kids
           };
         });
@@ -1700,18 +1796,22 @@
       } catch (e) { return e.__json || err(e.message || e); }
     },
 
+    // Import warehouse stock into an order list.
+    // items: [{ parentRowIndex, qty, childQty: { childRowIndex: qty } }]
+    //   • single product      → moves `qty` (unlimited stays unlimited)
+    //   • product w/ variants → moves only the chosen per-variant amounts;
+    //                           an unlimited variant is included as unlimited
+    // Anything already in the target list is ADDED to that listing (stock is
+    // summed, new variants appended) instead of failing or making a copy.
     adminPushStockToShop: async function (targetSheetId, items) {
       try {
         requireSb(); await requireAdmin();
-        var rows = [];
+        items = items || [];
         var wantedIds = [];
+        function want(id) { if (id && wantedIds.indexOf(id) === -1) wantedIds.push(id); }
         items.forEach(function (item) {
-          var parentId = _stockRowMap[item.parentRowIndex];
-          if (parentId && wantedIds.indexOf(parentId) === -1) wantedIds.push(parentId);
-          (item.childRowIndexes || []).forEach(function (ri) {
-            var childId = _stockRowMap[ri];
-            if (childId && wantedIds.indexOf(childId) === -1) wantedIds.push(childId);
-          });
+          want(_stockRowMap[item.parentRowIndex]);
+          Object.keys(item.childQty || {}).forEach(function (ri) { want(_stockRowMap[ri]); });
         });
         if (!wantedIds.length) return err('ไม่มีสินค้าที่นำเข้าได้');
         var all = await sb.from('stock_items')
@@ -1721,115 +1821,158 @@
         var byId = {};
         (all.data || []).forEach(function (row) { byId[row.id] = row; });
 
-        // Reserved-inventory model: pushing N units allocates them to the
-        // list, so the warehouse loses N. Validate everything up front so
-        // a failed push never half-deducts.
-        var deductions = []; // {id, stock: newValue}
+        // Listings already in the target list: linked by warehouse id, or —
+        // for single products imported before linking existed — same barcode
+        var parentIds = items.map(function (it) { return _stockRowMap[it.parentRowIndex]; }).filter(Boolean);
+        var exBySource = {}, exByCode = {};
+        var exr = await sb.from('products')
+          .select('id,code,remaining,options,option_details,source_stock_item_id')
+          .eq('list_id', targetSheetId).in('source_stock_item_id', parentIds);
+        if (exr.error) return err(exr.error.message);
+        (exr.data || []).forEach(function (x) { if (!exBySource[x.source_stock_item_id]) exBySource[x.source_stock_item_id] = x; });
+        var singleCodes = items.filter(function (it) { return !Object.keys(it.childQty || {}).length; })
+          .map(function (it) { var p = byId[_stockRowMap[it.parentRowIndex]]; return p && p.code ? String(p.code) : ''; })
+          .filter(Boolean);
+        if (singleCodes.length) {
+          var exc = await sb.from('products')
+            .select('id,code,remaining,options,option_details,source_stock_item_id')
+            .eq('list_id', targetSheetId).in('code', singleCodes);
+          if (exc.error) return err(exc.error.message);
+          (exc.data || []).forEach(function (x) { exByCode[String(x.code)] = x; });
+        }
 
+        function isTracked(v) { return v !== null && v !== undefined && v !== ''; }
+        function sameKey(a, b) { return String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase(); }
+        // Older listings may only have the "Name:code,…" string — rebuild details from it
+        function detailsOf(x) {
+          if (Array.isArray(x.option_details) && x.option_details.length) {
+            return x.option_details.map(function (o) { var c = {}; Object.keys(o).forEach(function (k) { c[k] = o[k]; }); return c; });
+          }
+          return String(x.options || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean).map(function (s) {
+            var i = s.indexOf(':');
+            return { name: i === -1 ? s : s.slice(0, i).trim(), code: i === -1 ? '' : s.slice(i + 1).trim(), image: '', remaining: null };
+          });
+        }
+        function totalOf(det) {
+          return det.every(function (d) { return isTracked(d.remaining); })
+            ? det.reduce(function (s, d) { return s + Number(d.remaining); }, 0) : null;
+        }
+        function optionsOf(det) { return det.map(function (d) { return d.code ? d.name + ':' + d.code : d.name; }).join(','); }
+
+        // Validate everything and plan every write BEFORE touching the database,
+        // so a bad item never leaves a half-done import
+        var inserts = [], updates = [], deductions = [];
         for (var i = 0; i < items.length; i++) {
           var item = items[i];
           var pid = _stockRowMap[item.parentRowIndex];
-          if (!pid) continue;
-          var p = byId[pid];
+          var p = pid && byId[pid];
           if (!p || !p.name) continue;
+          var childRows = Object.keys(item.childQty || {});
 
-          var kidIds = (item.childRowIndexes || [])
-            .map(function (ri) { return _stockRowMap[ri]; })
-            .filter(Boolean);
-          var kids = [];
-          if (kidIds.length) {
-            kids = kidIds.map(function (id) { return byId[id]; })
-              .filter(function (k) { return k && k.name; })
-              .sort(function (a, b) { return Number(a.seq) - Number(b.seq); });
-          }
-
-          if (!kids.length) {
-            var qty = Number(item.qty) || 1;
-            var tracked = p.stock !== null && p.stock !== undefined && p.stock !== '';
+          if (!childRows.length) {
+            var qty = Math.floor(Number(item.qty));
+            if (!(qty >= 1)) return err('จำนวนต้องมากกว่า 0 ("' + p.name + '")');
+            var tracked = isTracked(p.stock);
             if (tracked && Number(p.stock) < qty) {
               return err('สต็อกในคลังไม่พอสำหรับ "' + p.name + '" (เหลือ ' + Number(p.stock) + ' ชิ้น)');
             }
             if (tracked) deductions.push({ id: p.id, stock: Number(p.stock) - qty });
-            rows.push({
-              list_id: targetSheetId,
-              source_stock_item_id: p.id,
-              code: p.code || randomCode(),
-              name: p.name, image: p.image || '',
-              price: num(p.price), deposit: num(p.deposit),
-              remaining: qty,
-              status: p.status || 'Open',
-              yuan: num(p.yuan),
-              options: '',
-              // Keep every row in a bulk insert on the same JSON shape.
-              // PostgREST rejects mixed object keys when single and option
-              // products are imported together.
-              option_details: []
-            });
-          } else {
-            var optStr = kids.map(function (k) {
-              return (k.name || '') + ':' + (k.code || '');
-            }).join(',');
-            // Option groups allocate ALL tracked option stock to the list
-            // (sum of children); untracked children keep the group unlimited.
-            var allTracked = kids.every(function (k) {
-              return k.stock !== null && k.stock !== undefined && k.stock !== '';
-            });
-            var sumStock = null;
-            if (allTracked) {
-              sumStock = kids.reduce(function (s, k) { return s + Number(k.stock); }, 0);
+            var ex1 = exBySource[pid] || (p.code ? exByCode[String(p.code)] : null);
+            if (ex1) {
+              // Add to what is left in the list. Unlimited warehouse stock keeps
+              // the listing unlimited; a tracked import onto an unlimited listing
+              // makes it exactly `qty` (the units now reserved for it).
+              updates.push({ id: ex1.id, patch: {
+                remaining: tracked ? (isTracked(ex1.remaining) ? Number(ex1.remaining) : 0) + qty : null,
+                source_stock_item_id: p.id
+              } });
+            } else {
+              inserts.push({
+                list_id: targetSheetId, source_stock_item_id: p.id,
+                code: p.code || randomCode(), name: p.name, image: p.image || '',
+                price: num(p.price), deposit: num(p.deposit), remaining: tracked ? qty : null,
+                status: p.status || 'Open', yuan: num(p.yuan), options: '',
+                // Keep every row of the bulk insert on the same JSON shape
+                option_details: []
+              });
             }
-            // Each tracked child is reserved for this list independently.
-            // An unlimited child keeps the parent total unlimited, while the
-            // other options still retain and enforce their own finite stock.
-            kids.forEach(function (k) {
-              if (k.stock !== null && k.stock !== undefined && k.stock !== '') {
-                deductions.push({ id: k.id, stock: 0 });
+            continue;
+          }
+
+          var chosen = [];
+          for (var c = 0; c < childRows.length; c++) {
+            var k = byId[_stockRowMap[childRows[c]]];
+            if (!k || !k.name || k.parent_id !== p.id) continue;
+            var kTracked = isTracked(k.stock);
+            var q = Math.floor(Number(item.childQty[childRows[c]]));
+            if (kTracked) {
+              if (!(q >= 1)) continue;
+              if (Number(k.stock) < q) {
+                return err('สต็อกในคลังไม่พอสำหรับ "' + p.name + ' — ' + k.name + '" (เหลือ ' + Number(k.stock) + ' ชิ้น)');
+              }
+              deductions.push({ id: k.id, stock: Number(k.stock) - q });
+            }
+            chosen.push({ k: k, q: kTracked ? q : null });
+          }
+          if (!chosen.length) continue;
+          chosen.sort(function (a, b) { return Number(a.k.seq) - Number(b.k.seq); });
+
+          var ex2 = exBySource[pid];
+          if (ex2) {
+            var det = detailsOf(ex2);
+            chosen.forEach(function (ch) {
+              var hit = null;
+              if (ch.k.code) hit = det.find(function (d) { return sameKey(d.code, ch.k.code); });
+              if (!hit) hit = det.find(function (d) { return sameKey(d.name, ch.k.name); });
+              if (hit) {
+                hit.remaining = ch.q === null ? null : (isTracked(hit.remaining) ? Number(hit.remaining) : 0) + ch.q;
+                if (!hit.image && ch.k.image) hit.image = ch.k.image;
+                if (!hit.code && ch.k.code) hit.code = ch.k.code;
+              } else {
+                det.push({ name: String(ch.k.name), code: String(ch.k.code || ''), image: String(ch.k.image || ''), remaining: ch.q });
               }
             });
-            rows.push({
-              list_id: targetSheetId,
-              source_stock_item_id: p.id,
-              code: randomCode(),
-              name: p.name, image: p.image || '',
-              price: num(p.price), deposit: num(p.deposit),
-              remaining: sumStock,
-              status: p.status || 'Open',
-              yuan: num(p.yuan),
-              options: optStr,
-              option_details: kids.map(function (k) {
-                return {
-                  name: String(k.name || ''),
-                  code: String(k.code || ''),
-                  image: String(k.image || ''),
-                  remaining: k.stock === null || k.stock === undefined || k.stock === ''
-                    ? null : Number(k.stock)
-                };
-              })
+            updates.push({ id: ex2.id, patch: { remaining: totalOf(det), options: optionsOf(det), option_details: det } });
+          } else {
+            var newDet = chosen.map(function (ch) {
+              return { name: String(ch.k.name), code: String(ch.k.code || ''), image: String(ch.k.image || ''), remaining: ch.q };
+            });
+            inserts.push({
+              list_id: targetSheetId, source_stock_item_id: p.id,
+              code: randomCode(), name: p.name, image: p.image || '',
+              price: num(p.price), deposit: num(p.deposit), remaining: totalOf(newDet),
+              status: p.status || 'Open', yuan: num(p.yuan),
+              options: optionsOf(newDet), option_details: newDet
             });
           }
         }
-        if (!rows.length) return err('ไม่มีสินค้าที่นำเข้าได้');
-        var r = await sb.from('products').insert(rows);
-        if (r.error) {
-          var insertMessage = String(r.error.message || '');
-          var insertDetails = String(r.error.details || '');
-          var insertText = (insertMessage + ' ' + insertDetails).toLowerCase();
-          var missingOptionDetails = r.error.code === 'PGRST204' &&
-            insertText.indexOf('option_details') !== -1;
-          if (missingOptionDetails) {
-            return err('กรุณาอัปเดตฐานข้อมูลด้วยไฟล์ supabase/schema.sql ก่อนนำเข้าสินค้าที่มีตัวเลือก');
+        if (!inserts.length && !updates.length) return err('ไม่มีสินค้าที่นำเข้าได้');
+
+        if (inserts.length) {
+          var r = await sb.from('products').insert(inserts);
+          if (r.error) {
+            var insertMessage = String(r.error.message || '');
+            var insertDetails = String(r.error.details || '');
+            var insertText = (insertMessage + ' ' + insertDetails).toLowerCase();
+            if (r.error.code === 'PGRST204' && insertText.indexOf('option_details') !== -1) {
+              return err('กรุณาอัปเดตฐานข้อมูลด้วยไฟล์ supabase/schema.sql ก่อนนำเข้าสินค้าที่มีตัวเลือก');
+            }
+            return err(insertMessage || insertDetails || 'นำสินค้าเข้าไม่สำเร็จ');
           }
-          return err(insertMessage || insertDetails || 'นำสินค้าเข้าไม่สำเร็จ');
+        }
+        for (var u = 0; u < updates.length; u++) {
+          var up = await sb.from('products').update(updates[u].patch).eq('id', updates[u].id);
+          if (up.error) return err('เพิ่มสต็อกให้สินค้าที่มีอยู่ไม่สำเร็จ: ' + up.error.message + ' — กรุณาตรวจสต็อกคลังและรายการ');
         }
 
-        // Deduct warehouse stock after the products were created
+        // Deduct warehouse stock after the list was updated
         if (deductions.length) {
           var d = await sb.from('stock_items').upsert(deductions, { onConflict: 'id' });
           if (d.error) {
             return err('นำสินค้าเข้าแล้ว แต่ตัดสต็อกคลังไม่สำเร็จ: ' + d.error.message + ' — กรุณาปรับสต็อกคลังเอง');
           }
         }
-        return ok({ pushed: rows.length, deducted: deductions.length });
+        return ok({ pushed: inserts.length + updates.length, added: inserts.length, merged: updates.length, deducted: deductions.length });
       } catch (e) { return e.__json || err(e.message || e); }
     }
   };

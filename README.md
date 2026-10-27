@@ -157,6 +157,17 @@ Supabase แผนฟรีไม่มีระบบกู้ข้อมู�
 
 แนะนำให้กดสำรองเป็นประจำ โดยเฉพาะก่อนลบรายการหรือซิงก์ข้อมูลใหญ่ ๆ
 
+### สำรองอัตโนมัติใน Supabase
+
+รัน `supabase/migrations/2026-10-28-auto-backup.sql` ใน SQL Editor ครั้งเดียว (หรือ `schema.sql` ล่าสุด) ระบบจะเก็บสำเนาข้อมูลทุกตารางไว้ในตาราง `backups` ทุกคืน 03:00 (pg_cron) เก็บ 30 ครั้งล่าสุด ครั้งเก่ากว่านั้นถูกลบอัตโนมัติ
+
+ปุ่ม **💾 สำรองข้อมูล** เปิดหน้าต่างที่:
+- **สำรองตอนนี้** — เก็บสำเนาเพิ่มทันที (เช่น ก่อนลบรายการ)
+- **⬇ JSON** — ดาวน์โหลดสำเนาแต่ละครั้ง (รูปแบบเดียวกับไฟล์ `orderhub-backup-*.json`)
+- **ดาวน์โหลดข้อมูลล่าสุด** — ไฟล์ JSON + CSV แบบเดิม
+
+⚠️ สำเนาใน Supabase ช่วยกรณีข้อมูลถูกลบ/แก้ผิด แต่ไม่ช่วยถ้าโปรเจกต์ Supabase หายทั้งโปรเจกต์ — ควรดาวน์โหลดเก็บไว้นอกระบบเป็นครั้งคราวด้วย
+
 ## โมเดลสต็อก: คลัง = ของที่ยังไม่ได้จัดสรร
 
 การกด **📤 นำสินค้าเข้า** จะ**ตัดสต็อกคลังทันที** (จองให้รายการนั้น):
@@ -200,3 +211,55 @@ For local static checks (Node.js required):
 ```bash
 npm run check
 ```
+
+## Free gifts by spend (ของแถมตามยอดซื้อ)
+
+Each order list can give free gifts when one checkout reaches a total, e.g.
+"¥188 → sticker, ¥288 → poster" or "฿500 → keyring". Set them in Admin →
+ภาพรวม → ✎ on the list → "ของแถมตามยอดซื้อ":
+
+- **Amount** in ¥ (compares the order's yuan value) or ฿ (its full-price value;
+  deposit items count at full price).
+- **Stock** per gift — leave blank for unlimited; it counts down per gift given.
+- **Mode**: "ได้ทุกชิ้นที่ถึง" gives every gift reached; "ได้ 1 ชิ้นที่ดีที่สุด"
+  gives only the lowest rule in the list that was reached (list small → big).
+
+Customers see progress in the cart ("ซื้ออีก ¥38 …") and the gifts on the
+summary and receipt. The database decides the gifts at checkout and records
+each one as a ฿0 line "ของแถม: …" on the order, so they appear in the orders
+screen for packing. Online orders only (not POS).
+
+**Setup:** re-run `supabase/schema.sql` in the Supabase SQL Editor once (it is
+safe to run again; it adds two columns and updates `submit_order`). Until then
+the shop works as before and the admin editor shows a reminder.
+
+Test the gift logic on a local Postgres: `npm install` then `npm run test:db`.
+
+## AI product lookup (optional)
+
+The admin "✨ AI ตั้งชื่อ" buttons call the Supabase Edge Function
+`supabase/functions/identify-product`. Google Cloud Vision (Web Detection)
+finds store pages showing the same product, then Gemini Flash-Lite writes a
+clean name and picks the best store photo. Both keys stay in Supabase; the
+browser never sees them. Without this function the rest of the admin works as
+before and the AI buttons show an error toast.
+
+Keys:
+- `GEMINI_API_KEY` (required): https://aistudio.google.com/apikey. Create it in
+  a project **without** billing to stay on the free tier.
+- `GOOGLE_VISION_API_KEY` (optional, better photos): Google Cloud console →
+  enable *Cloud Vision API* → Credentials → API key (Application restrictions:
+  None; API restriction: Cloud Vision API). Billing must be on; the first 1,000
+  images/month are free. Without it, Gemini searches Google itself and the
+  photo comes from a page it found.
+
+```bash
+npx supabase login
+npx supabase link --project-ref <your-project-ref>
+npx supabase secrets set GOOGLE_VISION_API_KEY=<vision key> GEMINI_API_KEY=<gemini key>
+npx supabase functions deploy identify-product
+```
+
+Only signed-in admins (`is_admin()`) can call it. If Gemini fails (e.g. wrong
+model name or free-tier limit), the admin sees Google's error message instead
+of a name. Set the optional `GEMINI_MODEL` secret to pin a specific model.

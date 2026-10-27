@@ -14,7 +14,7 @@ var __posQuery = new URLSearchParams(location.search);
 var POS_INIT_SHEET_ID  = __posQuery.get('sheetId')  || '';
 var POS_INIT_LIST_NAME = __posQuery.get('listName') || 'POS';
 </script>
-<link rel="stylesheet" href="css/pos.css?v=20260720c">
+<link rel="stylesheet" href="css/pos.css?v=20261027k">
 </head>
 <body>
 
@@ -40,7 +40,7 @@ var POS_INIT_LIST_NAME = __posQuery.get('listName') || 'POS';
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
     </button>
     <div class="pos-topbar-center">
-      <div class="pos-topbar-title" id="posTitle">🖥️ POS — เลือกสินค้า</div>
+      <div class="pos-topbar-title" id="posTitle">POS — เลือกสินค้า</div>
       <div class="pos-topbar-sub" id="posSub">เพิ่มสินค้าเข้าตะกร้า</div>
     </div>
     <button class="pos-history-btn" onclick="openPosHistory()" aria-label="ประวัติการขาย">
@@ -86,7 +86,7 @@ var POS_INIT_LIST_NAME = __posQuery.get('listName') || 'POS';
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
     </button>
     <div class="pos-topbar-center">
-      <div class="pos-topbar-title">📋 สรุปออเดอร์</div>
+      <div class="pos-topbar-title">สรุปออเดอร์</div>
       <div class="pos-topbar-sub" id="summarySubTitle"></div>
     </div>
   </div>
@@ -108,7 +108,7 @@ var POS_INIT_LIST_NAME = __posQuery.get('listName') || 'POS';
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
     </button>
     <div class="pos-topbar-center">
-      <div class="pos-topbar-title">💳 ชำระเงิน</div>
+      <div class="pos-topbar-title">ชำระเงิน</div>
       <div class="pos-topbar-sub">สแกน QR เพื่อชำระ</div>
     </div>
   </div>
@@ -124,7 +124,7 @@ var POS_INIT_LIST_NAME = __posQuery.get('listName') || 'POS';
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
     </button>
     <div class="pos-topbar-center">
-      <div class="pos-topbar-title">📊 ประวัติการขาย</div>
+      <div class="pos-topbar-title">ประวัติการขาย</div>
       <div class="pos-topbar-sub" id="historySubtitle">ยอดขายหน้าร้าน</div>
     </div>
     <button class="pos-refresh-btn" id="historyRefreshBtn" onclick="loadPosHistory(true)" aria-label="รีเฟรชประวัติการขาย">
@@ -180,8 +180,8 @@ var POS_INIT_LIST_NAME = __posQuery.get('listName') || 'POS';
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.7/dist/umd/supabase.min.js" integrity="sha384-BmlQlKlDvXvKoxkn5OQuUo/aJQCTXeB+Kls6EccBmG4Kf8AXvp89RtO9MtPxP/r5" crossorigin="anonymous"></script>
-<script src="js/config.js?v=20260720c"></script>
-<script src="js/api.js?v=20260720c"></script>
+<script src="js/config.js?v=20261027k"></script>
+<script src="js/api.js?v=20261027k"></script>
 <script>
 // Guard: POS is admin-only — send signed-out visitors to the login page
 // instead of showing a half-working interface with an error overlay
@@ -191,7 +191,7 @@ if (window.__sb) {
   });
 }
 </script>
-<script src="js/pos.js?v=20260720c"></script>
+<script src="js/pos.js?v=20261027k"></script>
 
 </body>
 </html>

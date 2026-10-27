@@ -22,6 +22,18 @@ create table if not exists public.order_lists (
 alter table public.order_lists
   add column if not exists source_spreadsheet_id text not null default '';
 
+-- Free gifts per list, decided per checkout by submit_order:
+--   gift_rules: [{ "id", "name", "min": 188, "currency": "CNY" | "THB", "stock": 5 | null }]
+--     CNY compares the order's yuan total, THB its full-price baht total;
+--     stock null = unlimited, otherwise counts down per gift given.
+--   gift_mode: 'all'  → every gift whose threshold is reached
+--              'best' → only the last reached rule in list order (put the
+--                       biggest gift last)
+alter table public.order_lists
+  add column if not exists gift_rules jsonb not null default '[]'::jsonb;
+alter table public.order_lists
+  add column if not exists gift_mode text not null default 'all';
+
 -- ── Products (was the Products sheet in each shop spreadsheet) ─
 create table if not exists public.products (
   id         uuid primary key default gen_random_uuid(),
@@ -304,6 +316,14 @@ declare
   v_phone  text;
   v_detail jsonb;
   req      record;
+  v_yuan   numeric := 0;   -- order totals the gift thresholds compare against
+  v_full   numeric := 0;
+  v_rules  jsonb;
+  v_mode   text;
+  v_given  jsonb := '[]'::jsonb;
+  v_pick   int[] := '{}';
+  g        record;
+  v_idx    int;
 begin
   if p_items is null or jsonb_typeof(p_items) <> 'array' or jsonb_array_length(p_items) = 0 then
     return jsonb_build_object('status', 'Error', 'message', 'No order items received');
@@ -486,9 +506,52 @@ begin
        coalesce(prod.yuan, 0), coalesce(prod.yuan, 0) * v_qty,
        coalesce(prod.price, 0), coalesce(prod.price, 0) * v_qty,
        v_phone, p_checkout_id);
+
+    -- Thresholds use the full value of the goods (a deposit still counts in full)
+    v_yuan := v_yuan + coalesce(prod.yuan, 0) * v_qty;
+    v_full := v_full + coalesce(prod.price, 0) * v_qty;
   end loop;
 
-  return jsonb_build_object('status', 'Success');
+  -- 3) Free gifts for this checkout — decided here so a client can't fake them.
+  --    The list row is locked so two checkouts can't both take the last gift.
+  select coalesce(gift_rules, '[]'::jsonb), coalesce(gift_mode, 'all')
+    into v_rules, v_mode
+    from public.order_lists where id = p_list_id for update;
+  if jsonb_typeof(v_rules) = 'array' and jsonb_array_length(v_rules) > 0 then
+    for g in
+      select r.value as rule, (r.ordinality - 1)::int as idx
+      from jsonb_array_elements(v_rules) with ordinality r(value, ordinality)
+    loop
+      continue when coalesce(g.rule->>'name', '') = ''
+                 or coalesce(g.rule->>'min', '') !~ '^[0-9]+(\.[0-9]+)?$';
+      continue when g.rule->>'stock' is not null
+                 and (coalesce(g.rule->>'stock', '') !~ '^[0-9]+$' or (g.rule->>'stock')::int <= 0);
+      if (case when g.rule->>'currency' = 'CNY' then v_yuan else v_full end) >= (g.rule->>'min')::numeric then
+        v_pick := v_pick || g.idx;
+      end if;
+    end loop;
+    -- 'best': only the last reached rule in list order
+    if v_mode = 'best' and array_length(v_pick, 1) > 1 then
+      v_pick := array[v_pick[array_length(v_pick, 1)]];
+    end if;
+    foreach v_idx in array v_pick loop
+      insert into public.orders
+        (list_id, customer, product, qty, pay_type, price, total,
+         yuan, total_yuan, full_price, total_full, remark, checkout_id)
+      values
+        (p_list_id, btrim(p_customer), 'ของแถม: ' || (v_rules->v_idx->>'name'), 1, 'Gift',
+         0, 0, 0, 0, 0, 0, v_phone, p_checkout_id);
+      v_given := v_given || jsonb_build_array(v_rules->v_idx->>'name');
+      if v_rules->v_idx->>'stock' is not null then
+        v_rules := jsonb_set(v_rules, array[v_idx::text, 'stock'], to_jsonb((v_rules->v_idx->>'stock')::int - 1));
+      end if;
+    end loop;
+    if array_length(v_pick, 1) > 0 then
+      update public.order_lists set gift_rules = v_rules where id = p_list_id;
+    end if;
+  end if;
+
+  return jsonb_build_object('status', 'Success', 'gifts', v_given);
 end;
 $$;
 
@@ -782,6 +845,72 @@ $$;
 
 revoke all on function public.submit_pos_sale(uuid, jsonb, uuid) from public;
 grant execute on function public.submit_pos_sale(uuid, jsonb, uuid) to authenticated;
+
+-- ── Automatic daily backup inside Supabase ──
+-- A snapshot of every table is kept in public.backups (newest 30).
+-- pg_cron runs it every night; admins can also take one or download one
+-- from Admin → ภาพรวม → สำรองข้อมูล.
+create table if not exists public.backups (
+  id         bigserial primary key,
+  created_at timestamptz not null default now(),
+  summary    jsonb not null default '{}'::jsonb,
+  data       jsonb not null
+);
+alter table public.backups enable row level security;
+drop policy if exists backups_admin_read on public.backups;
+create policy backups_admin_read on public.backups
+  for select to authenticated using (public.is_admin());
+
+create or replace function public.take_backup()
+returns bigint
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_data jsonb;
+  v_id   bigint;
+begin
+  -- pg_cron has no signed-in user; signed-in callers must be admins
+  if auth.uid() is not null and not public.is_admin() then
+    raise exception 'forbidden';
+  end if;
+
+  v_data := jsonb_build_object(
+    'order_lists',   coalesce((select jsonb_agg(t order by t.seq) from public.order_lists t), '[]'::jsonb),
+    'products',      coalesce((select jsonb_agg(t order by t.seq) from public.products t), '[]'::jsonb),
+    'orders',        coalesce((select jsonb_agg(t order by t.seq) from public.orders t), '[]'::jsonb),
+    'stock_items',   coalesce((select jsonb_agg(t order by t.seq) from public.stock_items t), '[]'::jsonb),
+    'notify_emails', coalesce((select jsonb_agg(t) from public.notify_emails t), '[]'::jsonb)
+  );
+  insert into public.backups(summary, data)
+  values (jsonb_build_object(
+            'order_lists', jsonb_array_length(v_data->'order_lists'),
+            'products',    jsonb_array_length(v_data->'products'),
+            'orders',      jsonb_array_length(v_data->'orders'),
+            'stock_items', jsonb_array_length(v_data->'stock_items')),
+          v_data)
+  returning id into v_id;
+
+  -- ponytail: fixed 30 snapshots; lower it if the 500 MB free DB fills up
+  delete from public.backups
+  where id not in (select id from public.backups order by id desc limit 30);
+  return v_id;
+end;
+$$;
+
+revoke all on function public.take_backup() from public;
+grant execute on function public.take_backup() to authenticated;
+
+-- Every day 03:00 Thailand time (20:00 UTC). Skipped where pg_cron is not
+-- available (local test databases).
+do $$
+begin
+  if exists (select 1 from pg_available_extensions where name = 'pg_cron') then
+    create extension if not exists pg_cron with schema pg_catalog;
+    perform cron.schedule('daily-backup', '0 20 * * *', 'select public.take_backup()');
+  end if;
+end $$;
 
 -- Ask PostgREST to expose newly created/updated RPC functions immediately.
 notify pgrst, 'reload schema';

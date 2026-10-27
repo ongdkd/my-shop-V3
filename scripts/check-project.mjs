@@ -32,21 +32,21 @@ assert.ok(api.includes(".eq('source_stock_item_id', parentId)"), 'warehouse sync
 assert.ok(api.includes('source_stock_item_id: p.id'), 'new warehouse imports must create the stable link');
 assert.ok(api.includes('adminFindStockByBarcode'), 'warehouse add flow must support barcode lookup');
 assert.ok(api.includes('fetchStockBarcodeMatches(requestedCodes)'), 'warehouse creation must reject existing barcodes server-side');
-assert.ok(admin.includes('function openCreateStockForm(prefillBarcode)'), 'new warehouse products must receive the checked barcode');
+assert.ok(admin.includes('function openCreateStockForm(prefillBarcode, defaults)'), 'new warehouse products must receive the checked barcode');
 assert.ok(admin.includes('function captureDraft()'), 'single/options form switching must preserve draft values');
 assert.ok(admin.includes('function openMatchedStockEditor(item, refreshed)'), 'existing warehouse barcodes must open their edit form');
-assert.ok(admin.includes("pushBar.className = 'sticky-save-bar stock-command-overlay'"), 'warehouse search must live in the sticky command overlay');
+assert.ok(admin.includes("var bar = div('wh-bar')") && admin.includes("sInp.id = 'whSearch'"), 'warehouse search must live in the sticky bottom bar');
 assert.ok(api.includes('stockItemId: c.id'), 'option barcode matches must retain a stable edit target');
 assert.ok(admin.includes("var canRename = !String(item.sourceSpreadsheetId || '').trim()"), 'web-created order lists must expose name editing');
 assert.ok(api.includes('changes.name = nextName'), 'order-list updates must persist renamed web-created lists');
 assert.ok(schema.includes("option_details jsonb not null default '[]'::jsonb"), 'products must persist per-option images and stock');
-assert.ok(api.includes('option_details: kids.map'), 'warehouse imports must preserve each option\'s metadata');
+assert.ok(api.includes('option_details: newDet') && api.includes("image: String(ch.k.image || '')"), 'warehouse imports must preserve each option\'s metadata');
 assert.ok(api.includes('option_details: []'), 'mixed warehouse imports must give every product row the same JSON shape');
 assert.ok(api.includes("r.error.code === 'PGRST204'"), 'warehouse imports must only show the SQL migration message for a missing schema column');
 assert.ok(admin.includes("withFailureHandler(function(error)"), 'warehouse imports must recover the button and show transport failures');
 assert.ok(admin.includes('appendLinkedProductSyncOption'), 'warehouse edit dialogs must expose the sync checkbox');
-assert.ok(admin.includes('function defaultStockImportQty(product)'), 'finite warehouse stock must be the default import quantity');
-assert.ok(admin.includes('_stockQtyMap[p.rowIndex] = defaultStockImportQty(p)'), 'stock cards must start with the maximum finite quantity');
+assert.ok(admin.includes('_stockQtyMap[p.rowIndex] = s === null ? 1 : Math.max(1, s)'), 'finite warehouse stock must be the default import quantity');
+assert.ok(admin.includes('draft[c.rowIndex] = Number(c.stock);'), 'variant picker must start each variant at its full finite stock');
 const warehouseSync = api.slice(
   api.indexOf('adminSyncStockProductToLinked'),
   api.indexOf('adminAppendStockChild', api.indexOf('adminSyncStockProductToLinked'))

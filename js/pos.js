@@ -24,7 +24,7 @@ function openPOS(products, listName, listId) {
   POS_CART = [];
   POS_HISTORY_DATA = null;
 
-  document.getElementById('posTitle').textContent = '🖥️ POS — ' + POS_LIST_NAME;
+  document.getElementById('posTitle').textContent = 'POS — ' + POS_LIST_NAME;
   document.getElementById('posSub').textContent = POS_PRODUCTS.length + ' รายการสินค้า';
   document.getElementById('posSearch').value = '';
 
@@ -252,7 +252,7 @@ function renderProducts(prods) {
 
     var price = document.createElement('div');
     price.className = 'pos-prod-price';
-    price.textContent = fmt(p.price);
+    price.textContent = '฿' + (Number(p.price) || 0).toLocaleString('th-TH', { maximumFractionDigits: 2 }); // compact: ฿160 not ฿160.00
     body.appendChild(price);
 
     if (p.remaining !== null && p.remaining !== undefined && p.remaining !== '') {
@@ -699,7 +699,7 @@ function renderPayment() {
 
   var qrLabel = document.createElement('div');
   qrLabel.style.cssText = 'font-size:0.85rem;font-weight:600;color:var(--text-2);';
-  qrLabel.textContent = '💳 ช่องทางการชำระเงิน';
+  qrLabel.textContent = 'ช่องทางการชำระเงิน';
   qrCard.appendChild(qrLabel);
 
   var qrWrap = document.createElement('div');
@@ -1076,7 +1076,7 @@ window.addEventListener('DOMContentLoaded', function() {
     return;
   }
 
-  document.getElementById('posTitle').textContent = '🖥️ POS — ' + listName;
+  document.getElementById('posTitle').textContent = 'POS — ' + listName;
   showLoading('กำลังเชื่อมต่อ...', listName);
 
   function loadProducts() {

@@ -78,7 +78,52 @@ function optLabel(o){
 function cartTotal() { var s=0; for(var i=0;i<cart.length;i++) s+=cart[i].unitPrice*cart[i].qty; return s; }
 function cartCount() { var s=0; for(var i=0;i<cart.length;i++) s+=cart[i].qty; return s; }
 
+// ── Free gifts: progress toward the current list's thresholds ──
+// Mirrors submit_order (which decides for real): ¥ rules compare the yuan
+// value of the goods, ฿ rules the full-price value — deposits count in full.
+function giftStatus(items) {
+  var meta = getOrderListMetaBySheetId(selectedSheetId) || {};
+  var rules = meta.giftRules || [];
+  if (!rules.length) return null;
+  var yuan = 0, full = 0;
+  (items || cart).forEach(function(ci) {
+    var p = findProduct(ci.productId || ci.id) || {};
+    var q = Number(ci.qty || ci.quantity) || 0;
+    yuan += (Number(p.yuan) || 0) * q;
+    full += (Number(ci.fullPrice !== undefined ? ci.fullPrice : p.price) || 0) * q;
+  });
+  var rows = rules.map(function(g) {
+    var have = g.currency === 'CNY' ? yuan : full;
+    return { rule: g, have: have, reached: have >= g.min, out: g.stock !== null && g.stock <= 0 };
+  });
+  var winners = rows.filter(function(r) { return r.reached && !r.out; });
+  if (meta.giftMode === 'best' && winners.length > 1) winners = [winners[winners.length - 1]];
+  rows.forEach(function(r) { r.win = winners.indexOf(r) !== -1; });
+  return { rows: rows, mode: meta.giftMode, winners: winners };
+}
+function giftMoney(n, cur) { return cur === 'CNY' ? '¥' + (Number(n) || 0).toLocaleString('th-TH', { maximumFractionDigits: 2 }) : shortPrice(n); }
+// Cart box: ✓ earned / "ซื้ออีก ¥38 รับ …" with a progress bar / sold out
+function renderGiftBox() {
+  var box = document.getElementById('cartGifts'); if (!box) return;
+  var st = giftStatus();
+  if (!st) { box.style.display = 'none'; box.innerHTML = ''; return; }
+  var html = '<div class="gift-title">ของแถม' + (st.mode === 'best' ? ' <span class="gift-mode">รับ 1 ชิ้น (ชิ้นที่ดีที่สุดที่ถึง)</span>' : '') + '</div>';
+  st.rows.forEach(function(r) {
+    var g = r.rule, cls, right;
+    if (r.out) { cls = 'out'; right = 'หมดแล้ว'; }
+    else if (r.win) { cls = 'win'; right = 'ได้รับ ✓'; }
+    else if (r.reached) { cls = 'pass'; right = 'ได้ชิ้นที่ใหญ่กว่า'; }
+    else { cls = 'next'; right = 'ซื้ออีก ' + giftMoney(g.min - r.have, g.currency); }
+    var pct = Math.max(0, Math.min(100, Math.round(r.have / g.min * 100)));
+    html += '<div class="gift-row ' + cls + '"><div class="gift-line"><span class="gift-name">' + escapeHtml(g.name) +
+      ' <small>(ครบ ' + escapeHtml(giftMoney(g.min, g.currency)) + ')</small></span><span class="gift-state">' + escapeHtml(right) + '</span></div>' +
+      (cls === 'next' ? '<div class="gift-bar"><i style="width:' + pct + '%"></i></div>' : '') + '</div>';
+  });
+  box.innerHTML = html; box.style.display = '';
+}
+
 function updateCartBadge() {
+  renderGiftBox();
   var n = cartCount();
   var badge = document.getElementById('cartBadge');
   badge.textContent = n;
@@ -286,7 +331,6 @@ function onProductsFetched(fetched) {
 
 function populateProductTable() {
   var tbody=document.querySelector('#productTable tbody'); tbody.innerHTML='';
-  var cartSvg='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>';
   for(var pi=0;pi<products.length;pi++){
     var p=products[pi];
     var s2=sid(p.id);
@@ -303,35 +347,32 @@ function populateProductTable() {
         optHtml='<div class="options-wrapper"><select class="option-select" id="popt-'+s2+'" data-psid="'+s2+'" aria-label="เลือกตัวเลือกของ '+escapeHtml(p.name||'')+'">'+sel+'</select></div>';
       }
     }
-    // Stock badge: none for unlimited stock, warning when low, "หมด" when gone
+    // Stock counts stay hidden from customers; only "sold out" shows (the
+    // add-to-cart guard still enforces the real remaining amount)
     var soldOut = (p.remaining !== Infinity && p.remaining <= 0);
-    var stockBadge = '';
-    if (p.remaining !== Infinity) {
-      if (soldOut) stockBadge = '<div class="stock-badge out">สินค้าหมดแล้ว</div>';
-      else if (p.remaining <= 5) stockBadge = '<div class="stock-badge low">&#x1F525; เหลือ '+p.remaining+' ชิ้น</div>';
-      else stockBadge = '<div class="stock-badge">เหลือ '+p.remaining+' ชิ้น</div>';
-    }
+    var hasDep = Number(p.deposit) > 0;
     var row=tbody.insertRow();
-    if (soldOut) row.className = 'sold-out';
+    row.className = (soldOut ? 'sold-out' : '') + (hasDep ? '' : ' no-dep');
     row.innerHTML=
-      '<td><img src="'+escapeHtml(safeImg(p.image))+'" alt="'+escapeHtml(p.name||'')+'" class="product-image" loading="lazy" width="50" height="50" data-fb="1"></td>'+
-      '<td style="font-weight:600;"><span class="prod-name">'+escapeHtml(p.name||'')+'</span>'+stockBadge+'</td>'+
-      '<td class="center-align" style="color:var(--primary);font-weight:700;">'+formatCurrency(Number(p.price)||0)+'</td>'+
-      '<td class="center-align">'+(Number(p.deposit)>0
-        ? '<div class="deposit-toggle"><span class="dep-price">'+formatCurrency(Number(p.deposit))+'</span><label><input type="checkbox" class="depchk" data-psid="'+s2+'"'+(soldOut?' disabled':'')+'> มัดจำ</label></div>'
-        : '<span style="color:var(--text-3);font-size:0.8rem;">&#x2014;</span>')+'</td>'+
-      '<td class="prod-action-cell">'+optHtml+'<div class="prod-qty-row"><button class="add-to-cart-btn atcbtn" data-psid="'+s2+'"'+(soldOut?' disabled':'')+' aria-label="เพิ่ม '+escapeHtml(p.name||'')+' ลงตะกร้า">'+(soldOut?'หมดแล้ว':cartSvg+' + ตะกร้า')+'</button></div></td>';
+      '<td class="prod-img-cell"><img src="'+escapeHtml(safeImg(p.image))+'" alt="'+escapeHtml(p.name||'')+'" class="product-image" loading="lazy" width="50" height="50" data-fb="1">'+(soldOut?'<span class="sold-out-tag">หมดแล้ว</span>':'')+'</td>'+
+      '<td class="prod-name-cell"><span class="prod-name">'+escapeHtml(p.name||'')+'</span>'+optHtml+'</td>'+
+      '<td class="center-align prod-price-cell">'+formatCurrency(Number(p.price)||0)+'</td>'+
+      '<td class="center-align prod-dep-cell">'+(hasDep
+        ? '<button type="button" class="dep-toggle" aria-pressed="false" data-psid="'+s2+'"'+(soldOut?' disabled':'')+' aria-label="จ่ายมัดจำ '+shortPrice(p.deposit)+'">มัดจำ</button>'
+        : '<span class="no-dep-dash">&#x2014;</span>')+'</td>'+
+      '<td class="prod-action-cell"><button class="add-to-cart-btn atcbtn" data-psid="'+s2+'"'+(soldOut?' disabled':'')+' aria-label="ซื้อเลย '+escapeHtml(p.name||'')+' ราคา '+shortPrice(p.price)+'">'+(soldOut?'หมดแล้ว':buyLabel(p.price))+'</button></td>';
   }
   var tbl=document.getElementById('productTable');
   tbl.onclick=function(e){
     var chip=e.target.closest('.option-chip');
     if(chip){selectChip(chip.getAttribute('data-psid'),chip.getAttribute('data-opt'),chip);return;}
+    var dt=e.target.closest('.dep-toggle');
+    if(dt){var dp=findProductBySid(dt.getAttribute('data-psid'));if(dp)setPendingDep(dt.getAttribute('data-psid'),!dp.pendingDeposit);return;}
     var ab=e.target.closest('.atcbtn');
     if(ab){addToCartBySid(ab.getAttribute('data-psid'));return;}
   };
   tbl.onchange=function(e){
     if(e.target.classList.contains('option-select')){setPendingOpt(e.target.getAttribute('data-psid'),e.target.value);return;}
-    if(e.target.classList.contains('depchk')){setPendingDep(e.target.getAttribute('data-psid'),e.target.checked);return;}
   };
   var imgs=tbody.querySelectorAll('img[data-fb]');
   for(var i=0;i<imgs.length;i++) imgs[i].onerror=(function(img){return function(){img.src=PLACEHOLDER;};})(imgs[i]);
@@ -348,7 +389,19 @@ function selectChip(s2,opt,el){
   }
 }
 function setPendingOpt(s2,v){var p=findProductBySid(s2);if(p)p.pendingOption=v||null;}
-function setPendingDep(s2,v){var p=findProductBySid(s2);if(p)p.pendingDeposit=!!v;}
+// Deposit toggle: pressed → the add button charges the deposit instead of the full price
+function setPendingDep(s2,v){
+  var p=findProductBySid(s2); if(!p) return;
+  p.pendingDeposit=!!v;
+  var row=document.querySelector('#productTable .atcbtn[data-psid="'+s2+'"]'); row=row&&row.closest('tr'); if(!row) return;
+  var t=row.querySelector('.dep-toggle'); if(t){t.setAttribute('aria-pressed',p.pendingDeposit?'true':'false');t.classList.toggle('on',p.pendingDeposit);}
+  var b=row.querySelector('.atcbtn');
+  if(b&&!b.disabled){var price=p.pendingDeposit?p.deposit:p.price;b.innerHTML=buyLabel(price);b.setAttribute('aria-label','ซื้อเลย '+(p.name||'')+' ราคา '+shortPrice(price)+(p.pendingDeposit?' (มัดจำ)':''));}
+}
+// "฿120" / "฿1,250.50" — compact price for card buttons
+function shortPrice(n){return '฿'+(Number(n)||0).toLocaleString('th-TH',{maximumFractionDigits:2});}
+// Two-line buy button: small "ซื้อเลย" over the price being charged
+function buyLabel(n){return '<span class="buy-label">ซื้อเลย</span><span class="buy-price">'+shortPrice(n)+'</span>';}
 
 function setFabVisible(v){document.getElementById('bottomBar').style.display=v?'flex':'none';}
 
@@ -362,6 +415,13 @@ function renderSummaryUI(cache) {
   var html='<ul style="list-style:none;padding:0;margin:0;">';
   for(var j=0;j<cache.items.length;j++){var it=cache.items[j];html+=buildItemHtml(it.image,it.name,it.selectedOption,it.quantity,it.unitPrice,it.total,it.isDeposit,it.fullPrice*it.quantity);}
   html+='</ul>';
+  // Gifts this order should earn (the server confirms on submit)
+  var gs=giftStatus(cache.items);
+  if(gs&&gs.winners.length){
+    html+='<div class="gift-earned"><div class="gift-title">ของแถมที่จะได้รับ</div>';
+    gs.winners.forEach(function(w){html+='<div class="gift-earned-item">'+escapeHtml(w.rule.name)+'</div>';});
+    html+='</div>';
+  }
   document.getElementById('summaryContent').innerHTML=html;
   document.getElementById('totalPrice').textContent=cache.hasDeposit?formatCurrency(cache.total)+' (มัดจำ)':formatCurrency(cache.total);
   var form=document.getElementById('orderForm'); form.style.display='none'; form.classList.remove('is-ready');
@@ -389,7 +449,7 @@ function confirmOrder(){
     .submitOrderToSheet(selectedSheetId,summaryCache.customerName,summaryCache.customerPhone||'',oi,summaryCache.checkoutId);
 }
 
-function onOrderSuccess(){
+function onOrderSuccess(gifted){
   resetSubmitState();
   document.getElementById('mainContent').style.display='none';
   document.getElementById('summary').style.display='none';
@@ -406,6 +466,13 @@ function onOrderSuccess(){
     total+=Number(it)||0;
   }
   html+='</ul>';
+  // Gifts the server actually gave (a retried duplicate reports none — fall back to the preview)
+  var gifts=Array.isArray(gifted)?gifted:((giftStatus(currentOrder.items)||{winners:[]}).winners.map(function(w){return w.rule.name;}));
+  if(gifts.length){
+    html+='<div class="gift-earned"><div class="gift-title">ของแถมที่ได้รับ</div>';
+    gifts.forEach(function(n){html+='<div class="gift-earned-item">'+escapeHtml(n)+'</div>';});
+    html+='</div>';
+  }
   document.getElementById('orderSummary').innerHTML=html;
   document.getElementById('orderTotal').textContent=(hasDeposit?'ยอดรวมทั้งสิ้น: '+formatCurrency(total)+' (มัดจำ)':'ยอดรวมทั้งสิ้น: '+formatCurrency(total));
   showMessage('ยืนยันคำสั่งซื้อเรียบร้อยแล้ว','success');
@@ -441,7 +508,9 @@ function resetForm(){
   summaryCache=null;currentOrder=null;resetSubmitState();loadHubPage();
 }
 
-function handleSubmitOk(r){var res=JSON.parse(r);if(res.status==='Success')onOrderSuccess();else{resetSubmitState();showMessage(res.message,'error');}}
+function handleSubmitOk(r){var res=JSON.parse(r);if(res.status==='Success'){onOrderSuccess(res.duplicate?null:(res.gifts||null));refreshListGifts();}else{resetSubmitState();showMessage(res.message,'error');}}
+// Gift stock changes with every order — reload the list rules quietly
+function refreshListGifts(){google.script.run.withSuccessHandler(function(lists){if(Array.isArray(lists))hubOrderLists=lists;}).getOrderLists();}
 function handleSubmitFail(e){resetSubmitState();showMessage('เกิดข้อผิดพลาดในการส่งคำสั่งซื้อ','error');console.error(e);}
 function resetSubmitState(){
   isSubmitted=false;
@@ -644,7 +713,7 @@ function selectOrderList(sheetId){
   // Remember validated details so returning customers skip retyping
   try{localStorage.setItem('_custName',name);localStorage.setItem('_custPhone',phone);}catch(e){}
   selectedSheetId=sheetId;
-  document.getElementById('headerUsername').textContent=name;
+  var unames=document.querySelectorAll('.js-username'); for(var u=0;u<unames.length;u++) unames[u].textContent=name;
   document.getElementById('hubContainer').style.display='none';
   document.getElementById('orderContainer').style.display='';
   document.getElementById('bottomBar').style.display='flex';
