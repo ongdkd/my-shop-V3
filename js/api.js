@@ -1411,10 +1411,15 @@
         var r = await sb.functions.invoke('identify-product', {
           body: { image: image, variant: !!opts.variant, product: String(opts.product || '') }
         });
-        if (r.error) return err('AI ใช้งานไม่ได้ — ตรวจสอบว่า deploy ฟังก์ชัน identify-product แล้ว');
+        if (r.error) {
+          var st = r.error.context && r.error.context.status;
+          if (st === 404) return err('AI ใช้งานไม่ได้ — ยังไม่ได้ deploy ฟังก์ชัน identify-product');
+          // 504 / 546 = Supabase stopped a request that ran too long
+          return err('AI ไม่ตอบ' + (st ? ' (' + st + ')' : '') + ' — อาจใช้เวลานานเกินไปหรือเน็ตหลุด ลองใหม่อีกครั้ง');
+        }
         var d = r.data || {};
         if (d.error) return err(d.error);
-        return ok({ name: String(d.name || ''), imageUrl: String(d.imageUrl || ''), pageUrl: String(d.pageUrl || '') });
+        return ok({ name: String(d.name || ''), imageUrl: String(d.imageUrl || ''), imageData: String(d.imageData || ''), pageUrl: String(d.pageUrl || '') });
       } catch (e) { return e.__json || err(e.message || e); }
     },
 

@@ -4236,7 +4236,8 @@ function openBulkStockModal() {
           if (res.name) r.name = res.name;
           if (res.imageUrl) {
             r.origImg = img;
-            pendingImg[r.key] = res.imageUrl; // Cloudinary copies it on save
+            // the function's own copy: shows even when the source site is blocked here
+            pendingImg[r.key] = res.imageData || res.imageUrl; // uploaded to Cloudinary on save
             r.image = '';
           }
           r.ai = 'done';
@@ -5322,7 +5323,7 @@ function aiFillFromImageField(fieldId, nameInputId, btn) {
       if (res.status !== 'Success') { toast(res.message || 'AI ระบุสินค้าไม่สำเร็จ', 'error'); return; }
       if (res.name && el(nameInputId)) el(nameInputId).value = res.name;
       if (res.imageUrl) {
-        applyImgData(res.imageUrl, fieldId);
+        applyImgData(res.imageData || res.imageUrl, fieldId);
         var st = el(fieldId + 'Status'); if (st) st.textContent = 'ใช้รูปสินค้าจาก AI — แตะเพื่อเปลี่ยนรูป';
       }
       toast(res.imageUrl ? 'AI ตั้งชื่อและหารูปสินค้าแล้ว' : 'AI ตั้งชื่อแล้ว (ไม่พบรูปสินค้า)', 'success');
