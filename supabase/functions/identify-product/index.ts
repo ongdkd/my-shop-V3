@@ -7,7 +7,14 @@
 // searches Google itself and the photo comes from a source page (free tier).
 // The Google keys stay in Supabase secrets; the browser never sees them.
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { encodeBase64 } from "jsr:@std/encoding@1/base64";
+// Built-in base64 (no jsr.io download at deploy time; that fetch can time out)
+function encodeBase64(buf: ArrayBuffer | Uint8Array): string {
+  const b = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+  let s = "";
+  // chunks keep String.fromCharCode's argument list small
+  for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode(...b.subarray(i, i + 0x8000));
+  return btoa(s);
+}
 
 const VISION_KEY = Deno.env.get("GOOGLE_VISION_API_KEY") ?? "";
 const GEMINI_KEY = Deno.env.get("GEMINI_API_KEY") ?? "";
