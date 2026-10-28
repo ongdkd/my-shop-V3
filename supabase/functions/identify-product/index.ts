@@ -136,7 +136,7 @@ async function fetchImage(url: string, why?: string[]): Promise<Photo | null> {
   const fail = (reason: string) => { why?.push(new URL(url).hostname + " " + reason); return null; };
   if (!productUrl(url)) return fail("video/social");
   try {
-    const r = await fetch(url, { headers: BROWSER, signal: AbortSignal.timeout(6000) });
+    const r = await fetch(url, { headers: BROWSER, signal: AbortSignal.timeout(4000) });
     if (!r.ok) return fail("HTTP " + r.status);
     const buf = new Uint8Array(await r.arrayBuffer());
     if (buf.byteLength < 3_000) return fail("too small");
@@ -233,7 +233,7 @@ async function pageImage(pageUrl: string): Promise<{ imageUrl: string; pageUrl: 
   try {
     const r = await fetch(pageUrl, {
       headers: BROWSER,
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(5000),
     });
     if (!r.ok) return { imageUrl: "", pageUrl: "" };
     const html = (await r.text()).slice(0, 600_000);
@@ -402,40 +402,37 @@ Deno.serve(async (req) => {
     if (!VISION_KEY) {
       const g = await geminiSearch(photo);
       if (!g.name) return reply({ error: "ระบุสินค้าไม่ได้ ลองถ่ายให้เห็นแพ็กเกจชัดขึ้น" });
-      return reply({ name: g.name, ...(await within(started + 45_000 - Date.now(), photoFromPages(photo, g.sources), NO_PHOTO)) });
+      return reply({ name: g.name, ...(await within(started + 30_000 - Date.now(), photoFromPages(photo, g.sources), NO_PHOTO)) });
     }
     const clues = await webDetect(photo);
     // No silent fallback to a raw page title — the first match can be an
     // unrelated blog/Pinterest page. Gemini errors reach the admin as a toast.
-    // Pages showing this product → name from their titles. No pages (common for
-    // Korean / Japanese goods; Cloud Vision's index is much smaller than Google
-    // Lens) → a name from Gemini alone is a guess, so search Google first and
-    // use the name it finds there.
-    let g: { name: string; sources: string[] } | null = null;
-    // One search, started once: if it is too slow for the name it keeps running
-    // and the photo step still uses its pages when it finishes in time
-    let searching: Promise<{ name: string; sources: string[] } | null> | null = null;
-    let name = "";
-    if (!clues.titles.length) {
-      searching = geminiSearch(photo).catch(() => null);
-      g = await within(25_000, searching, null); // slow search → name the usual way
-      if (g?.sources.length) name = g.name; // only a name that came with search results
+    const ms: Record<string, number> = { vision: Date.now() - started };
+    // No pages (common for Korean / Japanese goods; Cloud Vision's index is much
+    // smaller than Google Lens) → the Google search is slow, so start it now,
+    // next to the naming and photo check instead of after them
+    const searching = clues.titles.length ? null : geminiSearch(photo).catch(() => null);
+    // Naming and the photo check do not depend on each other: run them together
+    const [guess, index] = await Promise.all([
+      pickName(photo, clues),
+      clues.candidates.length ? matchImage(photo, clues.candidates) : Promise.resolve(-1),
+    ]);
+    ms.nameAndCheck = Date.now() - started;
+    const pick = clues.candidates[index];
+    // Fast path: a checked store photo from reverse search → answer now
+    if (guess && pick) {
+      console.log("timing", ms);
+      return reply({ name: guess, imageUrl: pick.imageUrl, pageUrl: pick.pageUrl, imageData: dataUrl(pick.photo) });
     }
-    if (!name) name = await pickName(photo, clues);
+    // ponytail: 30 s for the slow route; past that the admin gets the name and keeps their own photo
+    const g = await within(started + 30_000 - Date.now(), searching ?? geminiSearch(photo, guess).catch(() => null), null);
+    ms.search = Date.now() - started;
+    // A name that came with real search results beats a guess when reverse search found no pages
+    const name = searching && g?.sources.length && g.name ? g.name : guess;
     if (!name) return reply({ error: "ระบุสินค้าไม่ได้ ลองถ่ายให้เห็นแพ็กเกจชัดขึ้น" });
-    const findPhoto = async () => {
-      const pick = clues.candidates.length ? clues.candidates[await matchImage(photo, clues.candidates)] : undefined;
-      if (pick) return { imageUrl: pick.imageUrl, pageUrl: pick.pageUrl, imageData: dataUrl(pick.photo) };
-      // No checked photo from reverse search: try the photos of the searched pages
-      g = g ?? await (searching ?? geminiSearch(photo, name).catch(() => null));
-      return photoFromPages(photo, g?.sources ?? []);
-    };
-    // ponytail: 45 s total; past that the admin gets the name and keeps their own photo
-    const found = await within(started + 45_000 - Date.now(), findPhoto(), NO_PHOTO);
-    if (!found.imageUrl) console.log("photo", { ms: Date.now() - started, found: false });
-    // The first search was too slow for the name but finished in time here →
-    // its name (from real search results) beats the guess
-    if (searching && !clues.titles.length && g?.sources.length && g.name) name = g.name;
+    const found = g ? await within(started + 30_000 - Date.now(), photoFromPages(photo, g.sources), NO_PHOTO) : NO_PHOTO;
+    ms.total = Date.now() - started;
+    console.log("timing", ms);
     return reply({ name, ...found });
   } catch (e) {
     const msg = String((e as Error).message || e);
