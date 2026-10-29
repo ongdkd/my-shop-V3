@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>เช็คสถานะ / แจ้งโอน — Kagayaku Shop</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/index.css?v=20261029a">
+<link rel="stylesheet" href="css/status.css?v=20261029a">
+</head>
+<body>
+<main class="st-page">
+  <a class="st-back" href="index.html">&#x2190; กลับไปหน้าสั่งซื้อ</a>
+  <h1 class="st-title">เช็คสถานะ / แจ้งโอน</h1>
+  <p class="st-sub">กรอกชื่อ @ ที่ใช้สั่งซื้อ เพื่อดูสถานะสินค้า เลขพัสดุ และส่งสลิปพร้อมที่อยู่จัดส่ง</p>
+
+  <form id="stForm" class="st-search" autocomplete="off">
+    <div class="hub-input-group">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      <input type="text" id="stName" placeholder="@ชื่อของคุณ" autocapitalize="off" spellcheck="false" aria-label="ชื่อ @ ที่ใช้สั่งซื้อ" required>
+    </div>
+    <button type="submit" class="st-btn" id="stGo">ค้นหา</button>
+  </form>
+
+  <div id="stResult" aria-live="polite"></div>
+</main>
+
+<dialog id="payDialog" class="st-dialog" aria-labelledby="payTitle">
+  <form id="payForm" method="dialog">
+    <h2 id="payTitle">ส่งสลิป / ที่อยู่</h2>
+    <p class="st-dlg-list" id="payList"></p>
+
+    <label class="st-field">
+      <span>สลิปโอนเงิน *</span>
+      <input type="file" id="paySlip" accept="image/*" required>
+    </label>
+    <div class="st-slip-preview" id="paySlipPreview" hidden><img alt="ตัวอย่างสลิป"><small id="payRef"></small></div>
+
+    <div class="st-row">
+      <label class="st-field">
+        <span>ยอดโอน (บาท) *</span>
+        <input type="number" id="payAmount" inputmode="decimal" min="1" step="0.01" required>
+      </label>
+      <label class="st-field">
+        <span>เวลาโอน *</span>
+        <input type="datetime-local" id="payTime" required>
+      </label>
+    </div>
+
+    <label class="st-field">
+      <span>ที่อยู่จัดส่ง (ชื่อ เบอร์โทร ที่อยู่)</span>
+      <textarea id="payAddress" rows="4" maxlength="1000" placeholder="ชื่อผู้รับ&#10;เบอร์โทร&#10;ที่อยู่ + รหัสไปรษณีย์"></textarea>
+    </label>
+    <p class="st-note">ไม่ต้องกรอกที่อยู่ถ้าเป็นการโอนมัดจำ / ส่งที่อยู่ไปแล้ว</p>
+
+    <div class="st-dlg-actions">
+      <button type="button" class="st-btn ghost" id="payCancel">ยกเลิก</button>
+      <button type="submit" class="st-btn" id="paySend">ส่ง</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="stToast" role="status" hidden></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.7/dist/umd/supabase.min.js" integrity="sha384-BmlQlKlDvXvKoxkn5OQuUo/aJQCTXeB+Kls6EccBmG4Kf8AXvp89RtO9MtPxP/r5" crossorigin="anonymous"></script>
+<script src="js/config.js?v=20261029a"></script>
+<script src="js/api.js?v=20261029a"></script>
+<script src="js/status.js?v=20261029a"></script>
+</body>
+</html>

@@ -587,6 +587,52 @@ a.ocard-phone{text-decoration:underline;text-decoration-color:var(--border-stron
 .ocard-owed{color:#8B5E00;background:var(--warning-light);border-radius:999px;padding:2px 9px;font-weight:600;}
 .ocard-total{color:var(--text-2);}
 .ocard-total strong{font-size:1rem;color:var(--primary);}
+.ocard-ship{display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:8px 12px;border-top:1px solid var(--border);}
+.ocard-ship.done{background:var(--success-light);}
+.ocard-ship.part{background:var(--warning-light);}
+.ocard-ship.part .ocard-ship-info{color:#8B5E00;}
+.oitem-ship{margin-top:4px;font-size:0.74rem;font-weight:600;color:#007A5A;overflow-wrap:anywhere;}
+.oitem-ship.cancel,.ocard-ship.cancel .ocard-ship-info{color:var(--danger);}
+.oitem-ship.custom{color:#8B5E00;}
+.ocard-ship.cancel{background:var(--surface-2);}
+.ocard-ship{flex-wrap:wrap;}
+.pay-card{border:1.5px solid var(--border);border-radius:var(--radius-sm);padding:12px;margin-bottom:10px;display:flex;flex-direction:column;gap:6px;align-items:flex-start;}
+.pay-top{display:flex;align-items:baseline;justify-content:space-between;gap:10px;width:100%;}
+.pay-top strong{font-size:1.05rem;color:var(--primary);}
+.pay-top span{font-size:0.8rem;color:var(--text-2);}
+.pay-line{font-size:0.8rem;color:var(--text-2);overflow-wrap:anywhere;}
+.pay-addr{font-size:0.85rem;white-space:pre-wrap;overflow-wrap:anywhere;background:var(--surface-2);border-radius:8px;padding:8px 10px;width:100%;box-sizing:border-box;}
+.pay-card .muted{color:var(--text-3);}
+.pay-slip{width:100%;font-size:0.8rem;color:var(--text-3);}
+.pay-slip img{display:block;max-width:100%;max-height:260px;margin:0 auto;border-radius:8px;cursor:zoom-in;}
+.pay-slip.zoom img{max-height:none;cursor:zoom-out;}
+.slip-ctl{display:flex;flex-wrap:wrap;align-items:center;gap:10px;}
+.slip-ctl .search-row{flex:1;min-width:200px;}
+.slip-list{padding:8px 10px;border:1.5px solid var(--border-strong);border-radius:var(--radius-sm);font-family:var(--font);font-size:0.85rem;background:var(--surface);color:var(--text);max-width:100%;}
+.slip-row{display:flex;align-items:flex-start;gap:12px;width:100%;text-align:left;background:none;border:none;border-bottom:1px solid var(--border);padding:12px 4px;font-family:var(--font);color:var(--text);cursor:pointer;}
+.slip-row:last-child{border-bottom:none;}
+.slip-row:hover{background:var(--surface-2);}
+.slip-row:focus-visible{outline:2px solid var(--primary);outline-offset:-2px;}
+.slip-main{flex:1;min-width:0;}
+.slip-top{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;}
+.slip-top strong{font-size:0.92rem;}
+.slip-listname{font-size:0.75rem;color:var(--primary);font-weight:600;}
+.slip-addr{font-size:0.82rem;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.slip-addr.muted,.slip-meta{color:var(--text-3);}
+.slip-meta{font-size:0.74rem;margin-top:2px;overflow-wrap:anywhere;}
+.stm-row{display:flex;align-items:flex-start;gap:10px;padding:10px 4px;border-bottom:1px solid var(--border);cursor:pointer;}
+.stm-row:last-of-type{border-bottom:none;}
+.stm-row:hover{background:var(--surface-2);}
+.stm-row input{width:18px;height:18px;margin-top:3px;flex-shrink:0;}
+.stm-main{flex:1;min-width:0;}
+.stm-product{font-size:0.84rem;overflow-wrap:anywhere;}
+.oitem-ship.waiting{color:var(--text-3);}
+.slip-amt{font-weight:700;color:var(--primary);white-space:nowrap;}
+.modal-field label.ship-pick{display:flex;align-items:center;gap:10px;padding:10px 12px;margin-bottom:6px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:0.85rem;font-weight:500;color:var(--text);cursor:pointer;}
+.modal-field label.ship-pick input{width:18px;height:18px;flex-shrink:0;padding:0;}
+.ship-pick span{flex:1;min-width:0;}
+.ship-pick small{flex-shrink:0;font-size:0.72rem;color:#007A5A;font-weight:600;}
+.ocard-ship-info{flex:1;min-width:0;font-size:0.78rem;font-weight:600;color:#007A5A;overflow-wrap:anywhere;}
 .obar{position:sticky;bottom:0;z-index:50;display:flex;align-items:center;gap:12px;margin-top:12px;}
 .obar-all{display:flex;align-items:center;gap:8px;font-size:0.84rem;font-weight:600;color:var(--text-2);cursor:pointer;min-height:44px;}
 .obar .save-count{flex:1;}

@@ -234,6 +234,8 @@ td { padding: 12px; border-bottom: 1px solid var(--border); vertical-align: midd
 #hubPage { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
 .hub-topbar { display: flex; flex-direction: column; gap: 2px; padding: 12px 0 14px; flex-shrink: 0; }
 .hub-title { font-size: 1.5rem; font-weight: 700; color: var(--text); line-height: 1.25; }
+.hub-status-link { align-self: flex-start; margin-top: 8px; font-size: 0.84rem; font-weight: 600; color: var(--primary); background: var(--primary-light); border-radius: 999px; padding: 6px 14px; text-decoration: none; }
+.hub-status-link:hover { background: #E2E5FF; }
 .hub-subtitle { font-size: 0.82rem; color: var(--text-3); font-weight: 500; }
 .hub-inputs { display: grid; grid-template-columns: 1.4fr 1fr; gap: 12px; padding-bottom: 16px; border-bottom: 1.5px solid var(--border); margin-bottom: 18px; flex-shrink: 0; }
 .hub-input-group { display: flex; align-items: center; gap: 8px; background: var(--surface); border: 1.5px solid var(--border); border-radius: var(--radius-md); padding: 0 14px; min-height: 48px; transition: all 0.2s; }

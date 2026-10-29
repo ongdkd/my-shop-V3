@@ -78,7 +78,7 @@ document.addEventListener('keydown', function(e) {
 });
 // ── Hash routing — the URL mirrors the open panel (#/products, #/orders …)
 // so a refresh keeps your place and the back button navigates panels ──
-var VALID_PANELS = ['orderlists', 'orders', 'products', 'summary', 'restock', 'stock'];
+var VALID_PANELS = ['orderlists', 'orders', 'products', 'summary', 'status', 'slips', 'restock', 'stock'];
 function panelFromHash() {
   var h = (location.hash || '').replace(/^#\/?/, '');
   return VALID_PANELS.indexOf(h) !== -1 ? h : 'orderlists';
@@ -755,6 +755,8 @@ function switchPanel(panel) {
   }
   if (panel === 'orderlists') renderOrderLists();
   else if (panel === 'orders')     renderOrdersPanel();
+  else if (panel === 'slips')      renderSlipsPanel();
+  else if (panel === 'status')     renderStatusPanel();
   else if (panel === 'products')   renderProductsPanel();
   else if (panel === 'summary')    renderSummaryPanel();
   else if (panel === 'restock')    renderRestockPanel();
@@ -1397,6 +1399,7 @@ function loadAllOrders() {
         return;
       }
       if (res.truncated) toast('แสดงคำสั่งซื้อล่าสุด 10,000 รายการ', 'error');
+      _ordPayments = res.payments || [];
       renderOrdersTable(res.orders || [], holder, true);
     } catch(e) {
       holder.innerHTML = '';
@@ -1415,7 +1418,7 @@ function loadOrders(sheetId) {
     try {
       var res = JSON.parse(r);
       if (res.status !== 'Success') { holder.innerHTML = ''; holder.appendChild(div('state-empty', '&#x26A0;&#xFE0F; ' + escapeHtml(res.message))); return; }
-      renderOrdersTable(res.orders, holder, false);
+      _ordPayments = res.payments || []; renderOrdersTable(res.orders, holder, false);
     } catch(e) { holder.innerHTML = ''; holder.appendChild(div('state-empty', 'เกิดข้อผิดพลาด')); }
   }).adminGetOrders(sheetId);
 }
@@ -1670,6 +1673,12 @@ function renderOrdersTable(orders, holder, isAllView) {
     if (isNaN(d.getTime())) return dStr;
     return d.toLocaleDateString('th-TH', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
   }
+  function statusKey(o) { return o.shippedAt ? 'S|' + o.shippedAt + '|' + o.tracking : 'T|' + (o.status || ''); }
+  function statusText(o) {
+    if (o.shippedAt) return '📦 ส่งแล้ว ' + formatDate(o.shippedAt) + (o.tracking ? ' · ' + o.tracking : '');
+    return o.status === 'ยกเลิก' ? '✕ ยกเลิก' : o.status ? '• ' + o.status : '';
+  }
+  function statusClass(o) { return o.shippedAt ? '' : o.status === 'ยกเลิก' ? ' cancel' : o.status ? ' custom' : ''; }
   // Items of one checkout share checkout_id; older rows fall back to same list + customer + minute
   var groups = [], byKey = {};
   orders.forEach(function(o) {
@@ -1704,6 +1713,12 @@ function renderOrdersTable(orders, holder, isAllView) {
     var time = div('ocard-time'); time.textContent = formatDate(o0.timestamp); head.appendChild(time);
     gc.appendChild(head);
 
+    // Each item has one status (shipped + tracking, cancelled, a custom
+    // label, or waiting). When all items share one, the card shows it once.
+    var stKeys = {};
+    g.items.forEach(function(o) { stKeys[statusKey(o)] = true; if (o.tracking) search.push(o.tracking); if (o.status) search.push(o.status); });
+    var oneStatus = Object.keys(stKeys).length === 1;
+
     var items = div('ocard-items');
     g.items.forEach(function(o) {
       var isDep = o.payType === 'Deposit';
@@ -1724,6 +1739,10 @@ function renderOrdersTable(orders, holder, isAllView) {
         : o.payType === 'Gift'
           ? div('oitem-sub', '<span class="badge badge-gift">ของแถม</span>')
           : div('oitem-sub', '<span class="badge badge-full">จ่ายเต็ม</span>'));
+      if (!oneStatus && statusText(o)) {
+        var os = div('oitem-ship' + statusClass(o)); os.textContent = statusText(o);
+        info.appendChild(os);
+      }
       it.appendChild(info);
       var qty = div('oitem-qty'); qty.textContent = '×' + o.qty; it.appendChild(qty);
       var pr = div('oitem-price'); pr.textContent = baht(o.total); it.appendChild(pr);
@@ -1736,6 +1755,22 @@ function renderOrdersTable(orders, holder, isAllView) {
     if (owed > 0) { var ow = div('ocard-owed'); ow.textContent = 'ค้างชำระ ' + baht(owed); foot.appendChild(ow); }
     var tot = div('ocard-total'); tot.innerHTML = 'รวม <strong>' + escapeHtml(baht(sum)) + '</strong>'; foot.appendChild(tot);
     gc.appendChild(foot);
+
+    var shippedN = g.items.filter(function(o) { return o.shippedAt; }).length;
+    var waiting = g.items.filter(isWaiting).length;
+    var allCancelled = oneStatus && !g.items[0].shippedAt && g.items[0].status === 'ยกเลิก';
+    var ship = div('ocard-ship' + (allCancelled ? ' cancel' : !waiting ? ' done' : waiting < g.items.length ? ' part' : ''));
+    var stText = oneStatus ? statusText(g.items[0]) : shippedN ? '📦 ส่งแล้ว ' + shippedN + '/' + g.items.length + ' รายการ' : 'หลายสถานะ';
+    if (stText) { var st = div('ocard-ship-info'); st.textContent = stText; ship.appendChild(st); }
+    // Slips this customer sent for this list
+    var pays = _ordPayments.filter(function(p) { return p.listId === o0.listId && normCust(p.customer) === normCust(o0.customer); });
+    if (pays.length) {
+      ship.appendChild(makeBtn('btn btn-ghost btn-sm', '&#x1F9FE; สลิป (' + pays.length + ')',
+        (function(ps, who) { return function() { openPaymentsModal(ps, who); }; })(pays, o0.customer)));
+    }
+    ship.appendChild(makeBtn('btn btn-sm ' + (waiting ? 'btn-primary' : 'btn-ghost'), waiting ? '&#x1F4E6; อัปเดตสถานะ' : 'แก้ไข',
+      (function(items) { return function() { openStatusModal(items); }; })(g.items)));
+    gc.appendChild(ship);
 
     gc.setAttribute('data-search', search.join(' ').toLowerCase());
     list.appendChild(gc);
@@ -1784,6 +1819,430 @@ function renderOrdersTable(orders, holder, isAllView) {
       refreshDelBtn();
     });
   }
+}
+
+var _ordPayments = []; // slips for the loaded orders (no photos), set by loadOrders / loadAllOrders
+function normCust(n) { return String(n || '').trim().toLowerCase().replace(/^@+/, ''); }
+// Still to do: not shipped and not cancelled (custom labels count as waiting)
+function isWaiting(o) { return !o.shippedAt && o.status !== 'ยกเลิก'; }
+var SLIP_RE = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+\/]+=*$/;
+
+// Set the status of some or all items of one checkout. Choices are
+// shipped / waiting / cancelled, plus custom labels already in use and
+// "+ new". Ticks the items still waiting; when none, ticks all.
+// opts (status manager): noPick — apply to all items without a checklist;
+// api — server call (old-sheet rows use adminSetLegacyStatus); labels —
+// custom labels to offer; after — redraw instead of the order cards.
+function openStatusModal(items, opts) {
+  opts = opts || {};
+  var pending = items.filter(isWaiting);
+  var picked = pending.length ? pending : items;
+  el('modalBody').innerHTML = '';
+
+  var boxes = [];
+  if (opts.noPick) {
+    el('modalBody').appendChild(div('modal-field', '<label>เปลี่ยนสถานะ ' + items.length + ' รายการ</label>'));
+  } else if (items.length > 1) {
+    var pickField = div('modal-field');
+    var pl = document.createElement('label'); pl.textContent = 'รายการที่จะอัปเดต'; pickField.appendChild(pl);
+    items.forEach(function(o) {
+      var row = document.createElement('label'); row.className = 'ship-pick';
+      var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = picked.indexOf(o) !== -1;
+      boxes.push(cb); row.appendChild(cb);
+      var t = document.createElement('span'); t.textContent = o.product + ' ×' + o.qty; row.appendChild(t);
+      var cur = o.shippedAt ? '📦 ' + (o.tracking || 'ส่งแล้ว') : o.status;
+      if (cur) { var st = document.createElement('small'); st.textContent = cur; row.appendChild(st); }
+      pickField.appendChild(row);
+    });
+    el('modalBody').appendChild(pickField);
+  }
+
+  var custom = {};
+  (opts.labels || ((_ordLast && _ordLast.orders) || []).map(function(o) { return o.status; }))
+    .forEach(function(l) { if (l && l !== 'ยกเลิก' && l !== 'จัดส่งแล้ว') custom[l] = true; });
+  var sf = div('modal-field');
+  var sl = document.createElement('label'); sl.htmlFor = 'stSelect'; sl.textContent = 'สถานะ'; sf.appendChild(sl);
+  var sel = document.createElement('select'); sel.id = 'stSelect';
+  [['shipped', '📦 จัดส่งแล้ว'], ['', 'ยังไม่ส่ง'], ['ยกเลิก', '✕ ยกเลิก']]
+    .concat(Object.keys(custom).sort().map(function(c) { return [c, c]; }))
+    .concat([['__new', '+ เพิ่มสถานะใหม่…']])
+    .forEach(function(op) { var e = document.createElement('option'); e.value = op[0]; e.textContent = op[1]; sel.appendChild(e); });
+  // Items still waiting → suggest "shipped"; otherwise show what they share
+  var p0 = picked[0];
+  var same = picked.every(function(o) { return !!o.shippedAt === !!p0.shippedAt && o.status === p0.status; });
+  sel.value = pending.length && !p0.status ? 'shipped' : same ? (p0.shippedAt ? 'shipped' : p0.status) : 'shipped';
+  sf.appendChild(sel);
+  var newInp = document.createElement('input'); newInp.placeholder = 'เช่น ถึงไทย'; newInp.maxLength = 40;
+  newInp.style.marginTop = '8px'; newInp.setAttribute('aria-label', 'ชื่อสถานะใหม่');
+  sf.appendChild(newInp);
+  el('modalBody').appendChild(sf);
+
+  var tf = div('modal-field');
+  var lbl = document.createElement('label'); lbl.htmlFor = 'shipTracking'; lbl.textContent = 'เลขพัสดุ (ไม่บังคับ)';
+  var inp = document.createElement('input'); inp.id = 'shipTracking';
+  inp.placeholder = 'เช่น TH1234567890'; inp.autocomplete = 'off';
+  // Prefill only when every ticked item already shares one tracking number
+  var trk = picked.map(function(o) { return o.tracking || ''; });
+  inp.value = trk.every(function(t) { return t === trk[0]; }) ? trk[0] : '';
+  inp.onkeydown = function(e) { if (e.key === 'Enter') save(); };
+  tf.appendChild(lbl); tf.appendChild(inp); el('modalBody').appendChild(tf);
+
+  function sync() { tf.hidden = sel.value !== 'shipped'; newInp.hidden = sel.value !== '__new'; }
+  sel.onchange = function() { sync(); (sel.value === '__new' ? newInp : inp).focus(); };
+  sync();
+
+  function save() {
+    var chosen = boxes.length ? items.filter(function(o, i) { return boxes[i].checked; }) : items;
+    if (!chosen.length) { toast('กรุณาเลือกอย่างน้อย 1 รายการ', 'error'); return; }
+    var status = sel.value === '__new' ? newInp.value.trim() : sel.value;
+    if (sel.value === '__new' && (!status || status === 'shipped')) { toast('กรุณาพิมพ์ชื่อสถานะ', 'error'); newInp.focus(); return; }
+    var saveBtn = el('modalSave'); saveBtn.disabled = true;
+    google.script.run.withSuccessHandler(function(r) {
+      saveBtn.disabled = false;
+      var res; try { res = JSON.parse(r); } catch (e) { toast('เกิดข้อผิดพลาด', 'error'); return; }
+      if (res.status !== 'Success') { toast(res.message || 'เกิดข้อผิดพลาด', 'error'); return; }
+      // Update the loaded orders in place and redraw — no reload needed
+      chosen.forEach(function(o) { o.shippedAt = res.shippedAt || ''; o.tracking = res.tracking || ''; o.status = res.orderStatus || ''; });
+      closeModal();
+      toast('อัปเดตสถานะแล้ว ' + chosen.length + ' รายการ', 'success');
+      if (opts.after) opts.after();
+      else if (_ordLast && document.body.contains(_ordLast.holder)) renderOrdersTable(_ordLast.orders, _ordLast.holder, _ordLast.isAllView);
+    }).withFailureHandler(function() {
+      saveBtn.disabled = false; toast('บันทึกไม่สำเร็จ', 'error');
+    })[opts.api || 'adminSetOrderStatus'](chosen.map(function(o) { return o.id; }).filter(Boolean), status, inp.value);
+  }
+
+  openModal('&#x1F4E6; ' + (opts.noPick ? 'เปลี่ยนสถานะ' : escapeHtml(items[0].customer || 'สถานะ')), '', save, 'บันทึก');
+  el('modal').classList.add('open');
+}
+
+// Slips + delivery address a customer sent for one list. Photos load on
+// demand and are gone once everything in the list is shipped.
+function openPaymentsModal(pays, who) {
+  function when(d) { return d ? new Date(d).toLocaleString('th-TH', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'; }
+  el('modalBody').innerHTML = '';
+  pays.forEach(function(p) {
+    var box = div('pay-card');
+    var top = div('pay-top');
+    var amt = document.createElement('strong'); amt.textContent = baht(p.amount); top.appendChild(amt);
+    var at = document.createElement('span'); at.textContent = 'โอน ' + when(p.paidAt); top.appendChild(at);
+    box.appendChild(top);
+    if (p.bankRef) { var ref = div('pay-line'); ref.textContent = 'เลขอ้างอิง ' + p.bankRef; box.appendChild(ref); }
+    var addr = div('pay-addr' + (p.address ? '' : ' muted'));
+    addr.textContent = p.address || 'ไม่ได้แนบที่อยู่';
+    box.appendChild(addr);
+    if (p.address) {
+      box.appendChild(makeBtn('btn btn-ghost btn-sm', 'คัดลอกที่อยู่', function() {
+        (navigator.clipboard ? navigator.clipboard.writeText(p.address) : Promise.reject())
+          .then(function() { toast('คัดลอกแล้ว', 'success'); }, function() { toast('คัดลอกไม่สำเร็จ', 'error'); });
+      }));
+    }
+    var sent = div('pay-line muted'); sent.textContent = 'ส่งเมื่อ ' + when(p.createdAt); box.appendChild(sent);
+    var slip = div('pay-slip');
+    if (p.hasSlip) {
+      slip.textContent = 'กำลังโหลดสลิป...';
+      google.script.run.withSuccessHandler(function(r) {
+        var res; try { res = JSON.parse(r); } catch (e) { res = {}; }
+        if (res.status !== 'Success' || !SLIP_RE.test(res.slip || '')) { slip.textContent = 'โหลดสลิปไม่ได้'; return; }
+        slip.textContent = '';
+        var img = document.createElement('img'); img.src = res.slip; img.alt = 'สลิปของ ' + who;
+        img.title = 'แตะเพื่อขยาย'; img.onclick = function() { slip.classList.toggle('zoom'); };
+        slip.appendChild(img);
+      }).withFailureHandler(function() { slip.textContent = 'โหลดสลิปไม่ได้'; }).adminGetPaymentSlip(p.id);
+    } else {
+      slip.className += ' muted'; slip.textContent = 'ลบรูปสลิปแล้ว (จัดส่งครบ)';
+    }
+    box.appendChild(slip);
+    el('modalBody').appendChild(box);
+  });
+  openModal('&#x1F9FE; ' + escapeHtml(who), '', null);
+  el('modal').classList.add('open');
+}
+
+// ════════════════════════════════
+// SLIPS / ADDRESSES — every slip customers sent, across all lists
+// ════════════════════════════════
+var _slipView = { list: '', filter: 'all', q: '' };
+function renderSlipsPanel() {
+  setTopbar('สลิป / ที่อยู่', 'หลักฐานการโอนและที่อยู่จากลูกค้า');
+  el('topbarActions').innerHTML = '';
+  el('topbarActions').appendChild(makeBtn('btn btn-ghost btn-sm', '&#x21BB; รีเฟรช', renderSlipsPanel));
+  el('content').innerHTML = ''; el('content').appendChild(makeSpinner());
+  google.script.run.withSuccessHandler(function(r) {
+    var res; try { res = JSON.parse(r); } catch (e) { res = { message: 'เกิดข้อผิดพลาด' }; }
+    el('content').innerHTML = '';
+    if (res.status !== 'Success') { el('content').appendChild(div('state-empty', '&#x26A0;&#xFE0F; ' + escapeHtml(res.message || 'โหลดไม่สำเร็จ'))); return; }
+    drawSlips(res.payments || []);
+  }).withFailureHandler(function() {
+    el('content').innerHTML = ''; el('content').appendChild(div('state-empty', 'โหลดสลิปไม่สำเร็จ'));
+  }).adminGetPayments();
+}
+
+function drawSlips(pays) {
+  var names = {};
+  allLists.forEach(function(l) { names[l.sheetId] = l.name; });
+  var wrap = document.createElement('div');
+
+  // Controls: list, filter chips, search
+  var ctl = div('section-card slip-ctl');
+  var sel = document.createElement('select'); sel.className = 'slip-list'; sel.setAttribute('aria-label', 'รายการสั่งซื้อ');
+  var used = {}; pays.forEach(function(p) { used[p.listId] = true; });
+  [['', 'ทุกรายการ']].concat(Object.keys(used).map(function(id) { return [id, names[id] || '(รายการที่ลบแล้ว)']; }))
+    .forEach(function(o) { var e = document.createElement('option'); e.value = o[0]; e.textContent = o[1]; sel.appendChild(e); });
+  sel.value = used[_slipView.list] ? _slipView.list : '';
+  sel.onchange = function() { _slipView.list = sel.value; draw(); };
+  ctl.appendChild(sel);
+  var chips = div('ord-chips');
+  [['all', 'ทั้งหมด'], ['addr', 'มีที่อยู่'], ['noaddr', 'ไม่มีที่อยู่'], ['photo', 'ยังมีรูปสลิป']].forEach(function(c) {
+    var b = makeBtn('price-chip' + (_slipView.filter === c[0] ? ' active' : ''), c[1], function() {
+      _slipView.filter = c[0];
+      chips.querySelectorAll('.price-chip').forEach(function(x) { x.classList.toggle('active', x === b); });
+      draw();
+    });
+    b.type = 'button'; chips.appendChild(b);
+  });
+  ctl.appendChild(chips);
+  var sw = div('search-row'); sw.innerHTML = SVG_SEARCH;
+  var si = document.createElement('input'); si.placeholder = 'ค้นหาชื่อ / ที่อยู่ / เลขอ้างอิง'; si.value = _slipView.q;
+  si.oninput = function() { _slipView.q = si.value; draw(); };
+  sw.appendChild(si); ctl.appendChild(sw);
+  wrap.appendChild(ctl);
+
+  var stats = div('stat-row'); wrap.appendChild(stats);
+  var listBox = div('section-card'); wrap.appendChild(listBox);
+  el('content').appendChild(wrap);
+
+  function when(d) { return d ? new Date(d).toLocaleString('th-TH', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'; }
+  function draw() {
+    var q = _slipView.q.trim().toLowerCase();
+    var shown = pays.filter(function(p) {
+      if (_slipView.list && p.listId !== _slipView.list) return false;
+      if (_slipView.filter === 'addr' && !p.address) return false;
+      if (_slipView.filter === 'noaddr' && p.address) return false;
+      if (_slipView.filter === 'photo' && !p.hasSlip) return false;
+      return !q || (p.customer + ' ' + p.address + ' ' + p.bankRef + ' ' + (names[p.listId] || '')).toLowerCase().indexOf(q) !== -1;
+    });
+    var total = 0, cust = {};
+    shown.forEach(function(p) { total += Number(p.amount) || 0; cust[normCust(p.customer)] = true; });
+    stats.innerHTML = '';
+    stats.appendChild(makeStat('สลิป', shown.length, 'primary'));
+    stats.appendChild(makeStat('ลูกค้า', Object.keys(cust).length, ''));
+    stats.appendChild(makeStat('ยอดโอนรวม', fmt(total), 'success'));
+
+    listBox.innerHTML = '';
+    if (!shown.length) { listBox.appendChild(div('state-empty', pays.length ? 'ไม่พบสลิปตามที่ค้นหา' : '&#x1F4ED; ยังไม่มีลูกค้าส่งสลิป')); return; }
+    shown.forEach(function(p) {
+      var row = document.createElement('button'); row.type = 'button'; row.className = 'slip-row';
+      row.setAttribute('aria-label', 'ดูสลิปของ ' + p.customer);
+      var main = div('slip-main');
+      var top = div('slip-top');
+      var nm = document.createElement('strong'); nm.textContent = p.customer; top.appendChild(nm);
+      var ln = document.createElement('span'); ln.className = 'slip-listname'; ln.textContent = names[p.listId] || ''; top.appendChild(ln);
+      main.appendChild(top);
+      var addr = div('slip-addr' + (p.address ? '' : ' muted'));
+      addr.textContent = p.address ? p.address.replace(/\s*\n\s*/g, ' · ') : 'ไม่ได้แนบที่อยู่';
+      main.appendChild(addr);
+      var meta = div('slip-meta');
+      meta.textContent = 'โอน ' + when(p.paidAt) + (p.bankRef ? ' · อ้างอิง ' + p.bankRef : '') + (p.hasSlip ? ' · 🖼 มีรูป' : '');
+      main.appendChild(meta);
+      row.appendChild(main);
+      var amt = div('slip-amt'); amt.textContent = baht(p.amount); row.appendChild(amt);
+      row.onclick = function() { openPaymentsModal([p], p.customer); };
+      listBox.appendChild(row);
+    });
+  }
+  draw();
+}
+
+// ════════════════════════════════
+// STATUS MANAGER — bulk status for web orders and imported old-sheet rows
+// ════════════════════════════════
+var _stm = { src: 'web', round: '', cat: '', q: '', web: null, legacy: null };
+var STM_CAP = 400; // rows drawn at once; filters narrow the rest
+
+// Shipped / waiting / cancelled / custom label, for both sources
+function stmCat(o) {
+  if (o.shippedAt || /^จัดส่งแล้ว/.test(o.status || '')) return 'จัดส่งแล้ว';
+  return o.status || 'รอจัดส่ง';
+}
+
+function renderStatusPanel() {
+  setTopbar('จัดการสถานะ', 'อัปเดตสถานะหลายรายการพร้อมกัน');
+  el('topbarActions').innerHTML = '';
+  el('topbarActions').appendChild(makeBtn('btn btn-ghost btn-sm', '&#x1F4E5; นำเข้าจากชีต', openImportStatusSheet));
+  el('content').innerHTML = ''; el('content').appendChild(makeSpinner());
+  var key = _stm.src;
+  if (_stm[key]) { drawStatusManager(); return; }
+  var run = google.script.run.withSuccessHandler(function(r) {
+    var res; try { res = JSON.parse(r); } catch (e) { res = { message: 'เกิดข้อผิดพลาด' }; }
+    if (res.status !== 'Success') { el('content').innerHTML = ''; el('content').appendChild(div('state-empty', '&#x26A0;&#xFE0F; ' + escapeHtml(res.message || 'โหลดไม่สำเร็จ'))); return; }
+    _stm[key] = key === 'web'
+      ? (res.orders || []).map(function(o) { o.round = o.shopName || ''; return o; })
+      : (res.rows || []).map(function(o) { o.shippedAt = ''; return o; });
+    if (key === 'legacy' && res.missing) _stm.legacyMissing = true;
+    if (_stm.src === key) drawStatusManager();
+  }).withFailureHandler(function() { el('content').innerHTML = ''; el('content').appendChild(div('state-empty', 'โหลดไม่สำเร็จ')); });
+  if (key === 'web') run.adminGetAllOrders(); else run.adminGetLegacy();
+}
+
+function drawStatusManager() {
+  var items = _stm[_stm.src] || [];
+  el('content').innerHTML = '';
+  var wrap = document.createElement('div');
+
+  var ctl = div('section-card slip-ctl');
+  var seg = div('ord-seg'); seg.setAttribute('role', 'group'); seg.setAttribute('aria-label', 'แหล่งข้อมูล');
+  [['web', 'ออเดอร์เว็บ'], ['legacy', 'ประวัติจากชีต']].forEach(function(v) {
+    var b = makeBtn('ord-seg-btn' + (_stm.src === v[0] ? ' on' : ''), v[1], function() {
+      if (_stm.src === v[0]) return;
+      _stm.src = v[0]; _stm.round = ''; _stm.cat = ''; renderStatusPanel();
+    });
+    b.type = 'button'; b.setAttribute('aria-pressed', _stm.src === v[0] ? 'true' : 'false'); seg.appendChild(b);
+  });
+  ctl.appendChild(seg);
+
+  if (!items.length) {
+    wrap.appendChild(ctl);
+    var empty = _stm.src === 'legacy'
+      ? 'ยังไม่ได้นำเข้าชีตสถานะ — กด "📥 นำเข้าจากชีต" ด้านบน' + (_stm.legacyMissing ? '<br><small>(ต้องรัน supabase/migrations/2026-10-29b-legacy-status.sql ก่อน)</small>' : '')
+      : '&#x1F4ED; ยังไม่มีคำสั่งซื้อ';
+    wrap.appendChild(div('state-empty', empty));
+    el('content').appendChild(wrap); return;
+  }
+
+  // Round + status dropdowns (old sheet has ~30 labels, too many for chips)
+  var rounds = [], seenR = {}, cats = {};
+  items.forEach(function(o) {
+    if (!seenR[o.round]) { seenR[o.round] = true; rounds.push(o.round); }
+    var c = stmCat(o); cats[c] = (cats[c] || 0) + 1;
+  });
+  function select(label, opts, val, onChange) {
+    var s = document.createElement('select'); s.className = 'slip-list'; s.setAttribute('aria-label', label);
+    opts.forEach(function(o) { var e = document.createElement('option'); e.value = o[0]; e.textContent = o[1]; s.appendChild(e); });
+    s.value = val; s.onchange = function() { onChange(s.value); };
+    return s;
+  }
+  if (!seenR[_stm.round]) _stm.round = '';
+  if (!cats[_stm.cat]) _stm.cat = '';
+  ctl.appendChild(select('รอบ', [['', 'ทุกรอบ']].concat(rounds.map(function(r) { return [r, r || '(ไม่มีชื่อ)']; })), _stm.round,
+    function(v) { _stm.round = v; draw(); }));
+  var order = ['รอจัดส่ง', 'จัดส่งแล้ว', 'ยกเลิก'];
+  var catKeys = Object.keys(cats).sort(function(a, b) {
+    var ia = order.indexOf(a), ib = order.indexOf(b);
+    return (ia < 0 ? 9 : ia) - (ib < 0 ? 9 : ib) || cats[b] - cats[a];
+  });
+  ctl.appendChild(select('สถานะ', [['', 'ทุกสถานะ (' + items.length + ')']].concat(catKeys.map(function(c) { return [c, c.replace(/\s+/g, ' ') + ' (' + cats[c] + ')']; })), _stm.cat,
+    function(v) { _stm.cat = v; draw(); }));
+  var sw = div('search-row'); sw.innerHTML = SVG_SEARCH;
+  var si = document.createElement('input'); si.placeholder = 'ค้นหาชื่อ / สินค้า / เลขพัสดุ'; si.value = _stm.q;
+  si.oninput = function() { _stm.q = si.value; draw(); };
+  sw.appendChild(si); ctl.appendChild(sw);
+  wrap.appendChild(ctl);
+
+  var stats = div('stat-row'); wrap.appendChild(stats);
+  var card = div('section-card');
+  var list = div('stm-list'); card.appendChild(list);
+  var bar = div('sticky-save-bar obar');
+  var allLbl = document.createElement('label'); allLbl.className = 'obar-all';
+  var allChk = document.createElement('input'); allChk.type = 'checkbox';
+  allLbl.appendChild(allChk); allLbl.appendChild(document.createTextNode(' ทั้งหมด'));
+  bar.appendChild(allLbl);
+  var selInfo = document.createElement('span'); selInfo.className = 'save-count'; bar.appendChild(selInfo);
+  var applyBtn = makeBtn('btn btn-primary btn-sm', '&#x1F4E6; เปลี่ยนสถานะ', function() {
+    var chosen = shown.filter(function(o) { return picked[o.id]; });
+    if (!chosen.length) return;
+    openStatusModal(chosen, {
+      noPick: true,
+      api: _stm.src === 'web' ? 'adminSetOrderStatus' : 'adminSetLegacyStatus',
+      labels: Object.keys(cats).filter(function(c) { return order.indexOf(c) === -1; }),
+      after: function() { picked = {}; drawStatusManager(); }
+    });
+  });
+  bar.appendChild(applyBtn);
+  card.appendChild(bar);
+  wrap.appendChild(card);
+  el('content').appendChild(wrap);
+
+  var picked = {}, shown = [];
+  function refreshBar() {
+    var n = shown.filter(function(o) { return picked[o.id]; }).length;
+    selInfo.textContent = n ? 'เลือก ' + n + ' รายการ' : 'ยังไม่ได้เลือก';
+    selInfo.className = 'save-count' + (n ? ' has-changes' : '');
+    applyBtn.disabled = !n;
+    allChk.checked = n > 0 && n === shown.length; allChk.indeterminate = n > 0 && n < shown.length;
+  }
+  allChk.onchange = function() {
+    shown.forEach(function(o) { picked[o.id] = allChk.checked; });
+    list.querySelectorAll('input[type=checkbox]').forEach(function(cb) { cb.checked = allChk.checked; });
+    refreshBar();
+  };
+
+  function draw() {
+    var q = _stm.q.trim().toLowerCase();
+    shown = items.filter(function(o) {
+      if (_stm.round && o.round !== _stm.round) return false;
+      if (_stm.cat && stmCat(o) !== _stm.cat) return false;
+      return !q || (o.customer + ' ' + o.product + ' ' + (o.tracking || '') + ' ' + (o.status || '')).toLowerCase().indexOf(q) !== -1;
+    });
+    var cust = {}, waiting = 0;
+    shown.forEach(function(o) { cust[normCust(o.customer)] = true; if (stmCat(o) === 'รอจัดส่ง') waiting++; });
+    stats.innerHTML = '';
+    stats.appendChild(makeStat('รายการ', shown.length, 'primary'));
+    stats.appendChild(makeStat('ลูกค้า', Object.keys(cust).length, ''));
+    stats.appendChild(makeStat('รอจัดส่ง', waiting, ''));
+
+    list.innerHTML = '';
+    if (!shown.length) { list.appendChild(div('state-empty', 'ไม่พบรายการตามที่กรอง')); refreshBar(); return; }
+    shown.slice(0, STM_CAP).forEach(function(o) {
+      var row = document.createElement('label'); row.className = 'stm-row';
+      var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!picked[o.id];
+      cb.onchange = function() { picked[o.id] = cb.checked; refreshBar(); };
+      row.appendChild(cb);
+      var main = div('stm-main');
+      var top = div('slip-top');
+      var nm = document.createElement('strong'); nm.textContent = o.customer.replace(/\s*\n\s*/g, ' '); top.appendChild(nm);
+      var rn = document.createElement('span'); rn.className = 'slip-listname'; rn.textContent = o.round; top.appendChild(rn);
+      main.appendChild(top);
+      var pr = div('stm-product'); pr.textContent = o.product + ' ×' + o.qty; main.appendChild(pr);
+      var c = stmCat(o);
+      var st = div('oitem-ship' + (c === 'จัดส่งแล้ว' ? '' : c === 'ยกเลิก' ? ' cancel' : c === 'รอจัดส่ง' ? ' waiting' : ' custom'));
+      st.textContent = (c === 'จัดส่งแล้ว' ? '📦 ' : '') + (o.shippedAt ? 'ส่งแล้ว' : o.status || 'รอจัดส่ง') + (o.tracking ? ' · ' + o.tracking : '');
+      main.appendChild(st);
+      row.appendChild(main);
+      list.appendChild(row);
+    });
+    if (shown.length > STM_CAP) list.appendChild(div('state-empty', 'แสดง ' + STM_CAP + ' จาก ' + shown.length + ' รายการ — เลือก "ทั้งหมด" จะเลือกครบทุกรายการที่กรองไว้ หรือกรองให้แคบลง'));
+    refreshBar();
+  }
+  draw();
+}
+
+// Pulls every tab of the old status sheet into the database, replacing
+// what was imported before.
+function openImportStatusSheet() {
+  el('modalBody').innerHTML = '';
+  var f = div('modal-field');
+  var l = document.createElement('label'); l.htmlFor = 'stmSheetUrl'; l.textContent = 'ลิงก์ Google Sheet สถานะ'; f.appendChild(l);
+  var inp = document.createElement('input'); inp.id = 'stmSheetUrl'; inp.placeholder = 'เว้นว่าง = ใช้ชีตสถานะเดิมของร้าน';
+  f.appendChild(inp); el('modalBody').appendChild(f);
+  el('modalBody').appendChild(div('slip-meta',
+    'นำเข้าทุกแท็บ (หัวคอลัมน์ต้องมี "ชื่อแอคลูกค้า" และ "ชื่อสินค้า") ชีตต้องแชร์เป็น "ทุกคนที่มีลิงก์ดูได้"<br>' +
+    '<strong style="color:var(--danger)">ข้อมูลที่นำเข้าก่อนหน้าจะถูกแทนที่ทั้งหมด</strong> รวมถึงสถานะที่แก้ในหน้านี้'));
+  openModal('&#x1F4E5; นำเข้าชีตสถานะ', '', function() {
+    var btn = el('modalSave'); btn.disabled = true; btn.textContent = 'กำลังนำเข้า...';
+    google.script.run.withSuccessHandler(function(r) {
+      btn.disabled = false; btn.textContent = 'นำเข้า';
+      var res; try { res = JSON.parse(r); } catch (e) { res = {}; }
+      if (res.status !== 'Success') { toast(res.message || 'นำเข้าไม่สำเร็จ', 'error'); return; }
+      closeModal();
+      toast('นำเข้าแล้ว ' + res.imported + ' รายการ จาก ' + res.tabs.length + ' แท็บ', 'success');
+      _stm.legacy = null; _stm.legacyMissing = false; _stm.src = 'legacy'; _stm.round = ''; _stm.cat = ''; _stm.q = '';
+      renderStatusPanel();
+    }).withFailureHandler(function(e) {
+      btn.disabled = false; btn.textContent = 'นำเข้า'; toast('นำเข้าไม่สำเร็จ: ' + (e && e.message || ''), 'error');
+    }).adminImportStatusSheet(inp.value.trim());
+  }, 'นำเข้า');
+  el('modal').classList.add('open');
 }
 
 function confirmDeleteSelectedOrders() {

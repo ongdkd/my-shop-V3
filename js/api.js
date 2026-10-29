@@ -205,6 +205,54 @@
     };
   }
 
+  // ── Old status sheet (one tab per quarter, kept by hand) ──
+  // Imported into legacy_orders from admin. Columns move between tabs, so
+  // they are found by header text; the tracking number is whatever cell
+  // looks like one (some tabs swap the เลขพัสดุ / หมายเหตุ headers).
+  var STATUS_SHEET_URL = 'https://docs.google.com/spreadsheets/d/1tXcsJ-qNRGLXsPCSu4srsmuibxhYZZTRrALn5BVeIx8/edit';
+  var TRACKING_RE = /^[A-Z]{2}\d{9}[A-Z]{2}$/;
+
+  function normName(n) { return String(n || '').trim().toLowerCase().replace(/^@+/, ''); }
+
+  async function fetchStatusSheet(spreadsheetId) {
+    var id = encodeURIComponent(spreadsheetId);
+    var meta = await googleSheetsRequest('spreadsheets/' + id, [['fields', 'sheets.properties.title']]);
+    var titles = (meta.sheets || []).map(function (s) { return s.properties.title; });
+    if (!titles.length) return [];
+    var vals = await googleSheetsRequest('spreadsheets/' + id + '/values:batchGet',
+      titles.map(function (t) { return ['ranges', "'" + t.replace(/'/g, "''") + "'"]; })
+        .concat([['valueRenderOption', 'FORMATTED_VALUE']]));
+    return (vals.valueRanges || []).map(function (vr, i) { return { title: titles[i].trim(), rows: vr.values || [] }; });
+  }
+
+  function parseStatusTab(tab) {
+    var head = (tab.rows[0] || []).map(function (h) { return String(h || ''); });
+    function col(word) { for (var i = 0; i < head.length; i++) if (head[i].indexOf(word) !== -1) return i; return -1; }
+    var c = { name: col('ชื่อแอค'), product: col('ชื่อสินค้า'), qty: col('จำนวน'), pay: col('สถานะชำระ'), status: col('สถานะของ'), note: col('หมายเหตุ'), channel: col('ช่องทาง') };
+    if (c.name < 0) return [];
+    function at(row, i) { return i >= 0 ? String(row[i] || '').trim() : ''; }
+    var out = [], last = '';
+    for (var r = 1; r < tab.rows.length; r++) {
+      var row = tab.rows[r], customer = at(row, c.name), product = at(row, c.product);
+      // Merged name cells only fill their first row: a row with no name and
+      // no channel continues the order above. A new order without a name is skipped.
+      if (!customer && product && c.channel >= 0 && !at(row, c.channel)) customer = last;
+      if (customer) last = customer;
+      if (!customer || !product) continue;
+      var tracking = '';
+      for (var k = 0; k < row.length && !tracking; k++) {
+        var v = String(row[k] || '').trim();
+        if (TRACKING_RE.test(v)) tracking = v;
+      }
+      var status = at(row, c.status);
+      if (/^(cancle|cancel|ยกเลิก)/i.test(status)) status = 'ยกเลิก';
+      var note = at(row, c.note);
+      out.push({ round: tab.title, customer: customer, product: product, qty: at(row, c.qty),
+        pay: at(row, c.pay), status: status, tracking: tracking, note: TRACKING_RE.test(note) ? '' : note });
+    }
+    return out;
+  }
+
   function legacyProducts(rows) {
     if (!rows.length) throw new Error('ชีต Products ว่างเปล่า');
     var find = columnFinder(rows[0]);
@@ -353,11 +401,25 @@
 
   async function fetchOrders(listId) {
     var r = await sb.from('orders')
-      .select('id,seq,list_id,customer,product,qty,pay_type,price,total,yuan,total_yuan,full_price,total_full,remark,created_at,checkout_id')
+      // `*` keeps this working before the shipped_at/tracking migration runs
+      .select('*')
       .eq('list_id', listId)
       .order('seq', { ascending: true });
     if (r.error) throw r.error;
     return r.data || [];
+  }
+
+  // Customer slips without the photo. Empty before the payments migration.
+  async function fetchPayments(listId) {
+    var q = sb.from('payments').select('id,list_id,customer,amount,paid_at,bank_ref,address,created_at,has_slip')
+      .order('created_at', { ascending: false });
+    if (listId) q = q.eq('list_id', listId);
+    var r = await q;
+    if (r.error) { console.warn('[api] payments:', r.error.message); return []; }
+    return (r.data || []).map(function (p) {
+      return { id: p.id, listId: p.list_id, customer: p.customer, amount: num(p.amount), paidAt: p.paid_at || '',
+        bankRef: p.bank_ref || '', address: p.address || '', createdAt: p.created_at, hasSlip: !!p.has_slip };
+    });
   }
 
   function mapOrder(r) {
@@ -375,7 +437,12 @@
       fullPrice: num(r.full_price),
       totalFull: num(r.total_full),
       remark: r.remark || '',
-      checkoutId: r.checkout_id || ''   // groups the items of one checkout
+      checkoutId: r.checkout_id || '',  // groups the items of one checkout
+      id: r.id,
+      listId: r.list_id || '',
+      status: r.status || '',           // '' waiting · 'ยกเลิก' · custom label
+      shippedAt: r.shipped_at || '',
+      tracking: r.tracking || ''
     };
   }
 
@@ -530,6 +597,39 @@
     getAdminEmail: async function () {
       var s = await getSession();
       return (s && s.user && s.user.email) || '';
+    },
+
+    // ── Customer status page (public, by @name) ─────────────
+    // Web orders, slips already sent, and imported old-sheet rows.
+    customerLookup: async function (name) {
+      try {
+        requireSb();
+        name = String(name || '').trim();
+        if (normName(name).length < 2) return err('กรุณากรอกชื่อ @ ของคุณ');
+        var r = await sb.rpc('customer_orders', { p_name: name });
+        if (r.error) {
+          if (r.error.code === 'PGRST202') return err('ระบบเช็คสถานะยังไม่พร้อม กรุณาติดต่อร้าน');
+          return err(r.error.message);
+        }
+        var d = r.data || {};
+        return ok({ orders: d.orders || [], payments: d.payments || [], legacy: d.legacy || [] });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
+    customerSubmitPayment: async function (name, listId, amount, paidAt, bankRef, address, slip) {
+      try {
+        requireSb();
+        var r = await sb.rpc('customer_submit_payment', {
+          p_name: String(name || '').trim(), p_list_id: listId, p_amount: Number(amount),
+          p_paid_at: paidAt || null, p_bank_ref: bankRef || '', p_address: address || '', p_slip: slip
+        });
+        if (r.error) {
+          // Duplicate bank ref racing past the check hits the unique index
+          if (r.error.code === '23505') return err('สลิปนี้ถูกส่งมาแล้ว');
+          return err(r.error.message);
+        }
+        return ok({});
+      } catch (e) { return e.__json || err(e.message || e); }
     },
 
     // ── Order lists (public) ─────────────────────────────────
@@ -894,12 +994,13 @@
     adminGetOrders: async function (sheetId) {
       try {
         requireSb(); await requireAdmin();
-        var data = await fetchOrders(sheetId);
+        var both = await Promise.all([fetchOrders(sheetId), fetchPayments(sheetId)]);
+        var data = both[0];
         var omap = {};
         data.forEach(function (r) { omap[r.seq] = r.id; });
         _orderRowMap[sheetId] = omap;
         var orders = data.map(mapOrder);
-        return ok({ orders: orders });
+        return ok({ orders: orders, payments: both[1] });
       } catch (e) { return e.__json || err(e.message || e); }
     },
 
@@ -915,6 +1016,99 @@
         var r = await sb.from('orders').delete().in('id', ids).select('id');
         if (r.error) return err(r.error.message);
         return ok({ deleted: (r.data || []).length });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
+    // Sets the status of order rows (by id). 'shipped' stamps shipped_at
+    // with an optional tracking number; any other value ('' = waiting,
+    // 'ยกเลิก', or a custom label) clears shipping.
+    adminSetOrderStatus: async function (orderIds, status, tracking) {
+      try {
+        requireSb(); await requireAdmin();
+        if (!orderIds || !orderIds.length) return err('ไม่พบคำสั่งซื้อ');
+        var patch = status === 'shipped'
+          ? { shipped_at: new Date().toISOString(), tracking: String(tracking || '').trim(), status: '' }
+          : { shipped_at: null, tracking: '', status: String(status || '').trim().slice(0, 40) };
+        var r = await sb.from('orders').update(patch).in('id', orderIds).select('id');
+        if (r.error) {
+          if (/shipped_at|tracking|status/.test(String(r.error.message || ''))) {
+            return err('Supabase ยังไม่มีคอลัมน์สถานะ — รันไฟล์ supabase/migrations/2026-10-29-order-status-payments.sql ใน SQL Editor แล้วลองใหม่');
+          }
+          return err(r.error.message);
+        }
+        return ok({ updated: (r.data || []).length, shippedAt: patch.shipped_at, tracking: patch.tracking, orderStatus: patch.status });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
+    // Re-imports the old status sheet: every tab, replacing what was
+    // imported before (status changes made in admin are overwritten).
+    adminImportStatusSheet: async function (sheetUrl) {
+      try {
+        requireSb(); await requireAdmin();
+        var id = spreadsheetIdFromUrl(sheetUrl || STATUS_SHEET_URL);
+        if (!id) return err('URL Google Spreadsheet ไม่ถูกต้อง');
+        var tabs = await fetchStatusSheet(id);
+        var rows = [], perTab = [];
+        tabs.forEach(function (t) { var r = parseStatusTab(t); perTab.push({ title: t.title, rows: r.length }); rows = rows.concat(r); });
+        if (!rows.length) return err('ไม่พบข้อมูลในชีต (ต้องมีหัวคอลัมน์ "ชื่อแอคลูกค้า" และ "ชื่อสินค้า")');
+        var r = await sb.rpc('admin_import_legacy', { p_rows: rows });
+        if (r.error) {
+          if (r.error.code === 'PGRST202') return err('Supabase ยังไม่มีฟังก์ชันนำเข้า — รันไฟล์ supabase/migrations/2026-10-29b-legacy-status.sql ก่อน');
+          return err(r.error.message);
+        }
+        return ok({ imported: r.data, tabs: perTab });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
+    adminGetLegacy: async function () {
+      try {
+        requireSb(); await requireAdmin();
+        var data = [], from = 0, pageSize = 1000;
+        while (true) {
+          var r = await sb.from('legacy_orders').select('id,sort,round,customer,product,qty,pay,status,tracking,note')
+            .order('sort', { ascending: true }).range(from, from + pageSize - 1);
+          if (r.error) {
+            if (/legacy_orders/.test(r.error.message || '')) return ok({ rows: [], missing: true });
+            return err(r.error.message);
+          }
+          data = data.concat(r.data || []);
+          if (!r.data || r.data.length < pageSize) break;
+          from += pageSize;
+        }
+        return ok({ rows: data });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
+    // Same contract as adminSetOrderStatus. Old rows have no shipped date,
+    // so "shipped" is stored as the label จัดส่งแล้ว.
+    adminSetLegacyStatus: async function (ids, status, tracking) {
+      try {
+        requireSb(); await requireAdmin();
+        if (!ids || !ids.length) return err('ไม่พบรายการ');
+        var patch = status === 'shipped'
+          ? { status: 'จัดส่งแล้ว', tracking: String(tracking || '').trim() }
+          : { status: String(status || '').trim().slice(0, 40), tracking: '' };
+        var r = await sb.from('legacy_orders').update(patch).in('id', ids).select('id');
+        if (r.error) return err(r.error.message);
+        return ok({ updated: (r.data || []).length, shippedAt: null, tracking: patch.tracking, orderStatus: patch.status });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
+    // Every slip sent, newest first (no photos)
+    adminGetPayments: async function () {
+      try {
+        requireSb(); await requireAdmin();
+        return ok({ payments: await fetchPayments(null) });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
+    // Full slip photo for one payment (the list call leaves it out)
+    adminGetPaymentSlip: async function (paymentId) {
+      try {
+        requireSb(); await requireAdmin();
+        var r = await sb.from('payments').select('slip_image').eq('id', paymentId).single();
+        if (r.error) return err(r.error.message);
+        return ok({ slip: r.data.slip_image || '' });
       } catch (e) { return e.__json || err(e.message || e); }
     },
 
@@ -1099,7 +1293,7 @@
         var data = [], from = 0, pageSize = 1000, truncated = false;
         while (true) {
           var r = await sb.from('orders')
-            .select('id,seq,list_id,customer,product,qty,pay_type,price,total,yuan,total_yuan,full_price,total_full,remark,created_at,checkout_id,order_lists(name)')
+            .select('*,order_lists(name)')
             .order('created_at', { ascending: false })
             .range(from, from + pageSize - 1);
           if (r.error) return err(r.error.message);
@@ -1113,7 +1307,7 @@
           out.shopName = row.order_lists && row.order_lists.name ? row.order_lists.name : '';
           return out;
         });
-        return ok({ orders: orders, truncated: truncated });
+        return ok({ orders: orders, payments: await fetchPayments(null), truncated: truncated });
       } catch (e) { return e.__json || err(e.message || e); }
     },
 
