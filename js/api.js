@@ -1996,6 +1996,24 @@
       } catch (e) { return e.__json || err(e.message || e); }
     },
 
+    // Delete many warehouse products at once (children cascade; linked
+    // listings in order lists stay, just unlinked via ON DELETE SET NULL).
+    adminDeleteStockProductsBulk: async function (parentRowIndexes) {
+      try {
+        requireSb(); await requireAdmin();
+        var ids = (parentRowIndexes || []).map(function (ri) { return _stockRowMap[ri]; }).filter(Boolean);
+        if (!ids.length) return err('ไม่พบสินค้าในคลัง (กรุณารีเฟรช)');
+        var deleted = 0;
+        // Chunked so a huge warehouse doesn't overflow the request URL
+        for (var i = 0; i < ids.length; i += 100) {
+          var r = await sb.from('stock_items').delete().in('id', ids.slice(i, i + 100)).select('id');
+          if (r.error) return err(r.error.message + (deleted ? ' (ลบไปแล้ว ' + deleted + ' รายการ)' : ''));
+          deleted += (r.data || []).length;
+        }
+        return ok({ deleted: deleted });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
     // Import warehouse stock into an order list.
     // items: [{ parentRowIndex, qty, childQty: { childRowIndex: qty } }]
     //   • single product      → moves `qty` (unlimited stays unlimited)
