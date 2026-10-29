@@ -1859,11 +1859,11 @@ function openStatusModal(items, opts) {
 
   var custom = {};
   (opts.labels || ((_ordLast && _ordLast.orders) || []).map(function(o) { return o.status; }))
-    .forEach(function(l) { if (l && l !== 'ยกเลิก' && l !== 'จัดส่งแล้ว') custom[l] = true; });
+    .forEach(function(l) { if (l && l !== 'ยกเลิก' && l !== 'จัดส่งแล้ว' && l !== ARRIVED_LABEL) custom[l] = true; });
   var sf = div('modal-field');
   var sl = document.createElement('label'); sl.htmlFor = 'stSelect'; sl.textContent = 'สถานะ'; sf.appendChild(sl);
   var sel = document.createElement('select'); sel.id = 'stSelect';
-  [['shipped', '📦 จัดส่งแล้ว'], ['', 'ยังไม่ส่ง'], ['ยกเลิก', '✕ ยกเลิก']]
+  [['shipped', '📦 จัดส่งแล้ว'], ['', 'ยังไม่ส่ง'], [ARRIVED_LABEL, '🇹🇭 ' + ARRIVED_LABEL], ['ยกเลิก', '✕ ยกเลิก']]
     .concat(Object.keys(custom).sort().map(function(c) { return [c, c]; }))
     .concat([['__new', '+ เพิ่มสถานะใหม่…']])
     .forEach(function(op) { var e = document.createElement('option'); e.value = op[0]; e.textContent = op[1]; sel.appendChild(e); });
@@ -1925,6 +1925,7 @@ function openPaymentsModal(pays, who) {
     var box = div('pay-card');
     var top = div('pay-top');
     var amt = document.createElement('strong'); amt.textContent = baht(p.amount); top.appendChild(amt);
+    if (PAY_KIND[p.kind]) top.appendChild(payKindTag(p.kind));
     var at = document.createElement('span'); at.textContent = 'โอน ' + when(p.paidAt); top.appendChild(at);
     box.appendChild(top);
     if (p.bankRef) { var ref = div('pay-line'); ref.textContent = 'เลขอ้างอิง ' + p.bankRef; box.appendChild(ref); }
@@ -1957,6 +1958,13 @@ function openPaymentsModal(pays, who) {
   });
   openModal('&#x1F9FE; ' + escapeHtml(who), '', null);
   el('modal').classList.add('open');
+}
+
+// What a slip paid for (set when the customer sends it)
+var PAY_KIND = { deposit: 'มัดจำ', full: 'จ่ายเต็ม', balance: 'ส่วนที่เหลือ + ค่าส่ง' };
+function payKindTag(kind) {
+  var t = document.createElement('span'); t.className = 'pay-kind ' + kind; t.textContent = PAY_KIND[kind];
+  return t;
 }
 
 // ════════════════════════════════
@@ -2037,6 +2045,7 @@ function drawSlips(pays) {
       var main = div('slip-main');
       var top = div('slip-top');
       var nm = document.createElement('strong'); nm.textContent = p.customer; top.appendChild(nm);
+      if (PAY_KIND[p.kind]) top.appendChild(payKindTag(p.kind));
       var ln = document.createElement('span'); ln.className = 'slip-listname'; ln.textContent = names[p.listId] || ''; top.appendChild(ln);
       main.appendChild(top);
       var addr = div('slip-addr' + (p.address ? '' : ' muted'));
@@ -2072,17 +2081,31 @@ function renderStatusPanel() {
   el('topbarActions').appendChild(makeBtn('btn btn-ghost btn-sm', '&#x1F4E5; นำเข้าจากชีต', openImportStatusSheet));
   el('content').innerHTML = ''; el('content').appendChild(makeSpinner());
   var key = _stm.src;
+  if (key === 'bills') { loadBills(); return; } // always fresh: statuses change elsewhere
   if (_stm[key]) { drawStatusManager(); return; }
   var run = google.script.run.withSuccessHandler(function(r) {
     var res; try { res = JSON.parse(r); } catch (e) { res = { message: 'เกิดข้อผิดพลาด' }; }
     if (res.status !== 'Success') { el('content').innerHTML = ''; el('content').appendChild(div('state-empty', '&#x26A0;&#xFE0F; ' + escapeHtml(res.message || 'โหลดไม่สำเร็จ'))); return; }
     _stm[key] = key === 'web'
-      ? (res.orders || []).map(function(o) { o.round = o.shopName || ''; return o; })
+      // POS sales are handed over at the counter: nothing to ship or track
+      ? (res.orders || []).filter(function(o) { return o.remark !== 'POS'; }).map(function(o) { o.round = o.shopName || ''; return o; })
       : (res.rows || []).map(function(o) { o.shippedAt = ''; return o; });
     if (key === 'legacy' && res.missing) _stm.legacyMissing = true;
     if (_stm.src === key) drawStatusManager();
   }).withFailureHandler(function() { el('content').innerHTML = ''; el('content').appendChild(div('state-empty', 'โหลดไม่สำเร็จ')); });
   if (key === 'web') run.adminGetAllOrders(); else run.adminGetLegacy();
+}
+
+function stmSeg() {
+  var seg = div('ord-seg ord-seg-3'); seg.setAttribute('role', 'group'); seg.setAttribute('aria-label', 'แหล่งข้อมูล');
+  [['web', 'ออเดอร์เว็บ'], ['legacy', 'ประวัติจากชีต'], ['bills', '🇹🇭 ถึงไทย / บิลค่าส่ง']].forEach(function(v) {
+    var b = makeBtn('ord-seg-btn' + (_stm.src === v[0] ? ' on' : ''), v[1], function() {
+      if (_stm.src === v[0]) return;
+      _stm.src = v[0]; _stm.round = ''; _stm.cat = ''; renderStatusPanel();
+    });
+    b.type = 'button'; b.setAttribute('aria-pressed', _stm.src === v[0] ? 'true' : 'false'); seg.appendChild(b);
+  });
+  return seg;
 }
 
 function drawStatusManager() {
@@ -2091,15 +2114,7 @@ function drawStatusManager() {
   var wrap = document.createElement('div');
 
   var ctl = div('section-card slip-ctl');
-  var seg = div('ord-seg'); seg.setAttribute('role', 'group'); seg.setAttribute('aria-label', 'แหล่งข้อมูล');
-  [['web', 'ออเดอร์เว็บ'], ['legacy', 'ประวัติจากชีต']].forEach(function(v) {
-    var b = makeBtn('ord-seg-btn' + (_stm.src === v[0] ? ' on' : ''), v[1], function() {
-      if (_stm.src === v[0]) return;
-      _stm.src = v[0]; _stm.round = ''; _stm.cat = ''; renderStatusPanel();
-    });
-    b.type = 'button'; b.setAttribute('aria-pressed', _stm.src === v[0] ? 'true' : 'false'); seg.appendChild(b);
-  });
-  ctl.appendChild(seg);
+  ctl.appendChild(stmSeg());
 
   if (!items.length) {
     wrap.appendChild(ctl);
@@ -2173,9 +2188,85 @@ function drawStatusManager() {
   }
   allChk.onchange = function() {
     shown.forEach(function(o) { picked[o.id] = allChk.checked; });
-    list.querySelectorAll('input[type=checkbox]').forEach(function(cb) { cb.checked = allChk.checked; });
+    list.querySelectorAll('input[type=checkbox]').forEach(function(cb) { cb.checked = allChk.checked; cb.indeterminate = false; });
     refreshBar();
   };
+
+  function stmStatus(o) {
+    var c = stmCat(o);
+    var st = div('oitem-ship' + (c === 'จัดส่งแล้ว' ? '' : c === 'ยกเลิก' ? ' cancel' : c === 'รอจัดส่ง' ? ' waiting' : ' custom'));
+    st.textContent = (c === 'จัดส่งแล้ว' ? '📦 ' : '') + (o.shippedAt ? 'ส่งแล้ว' : o.status || 'รอจัดส่ง') + (o.tracking ? ' · ' + o.tracking : '');
+    return st;
+  }
+
+  // Web orders: one card per checkout, like the orders page
+  function drawCards(rows) {
+    var groups = [], byKey = {};
+    rows.forEach(function(o) {
+      var key = o.checkoutId ? 'c:' + o.checkoutId : 't:' + o.listId + '|' + o.customer + '|' + String(o.timestamp || '').slice(0, 16);
+      if (!byKey[key]) { byKey[key] = []; groups.push(byKey[key]); }
+      byKey[key].push(o);
+    });
+    var cards = div('olist');
+    groups.forEach(function(g) {
+      var o0 = g[0], sum = 0, pcs = 0;
+      var gc = div('ocard');
+      var head = div('ocard-head');
+      var gSel = document.createElement('input'); gSel.type = 'checkbox'; gSel.className = 'ocard-sel';
+      gSel.setAttribute('aria-label', 'เลือกคำสั่งซื้อทั้งหมดของ ' + o0.customer);
+      head.appendChild(gSel);
+      var who = div('ocard-who');
+      var nm = document.createElement('span'); nm.className = 'ocard-name'; nm.textContent = o0.customer || '—'; who.appendChild(nm);
+      var sub = div('ocard-sub');
+      if (o0.round) { var shop = document.createElement('span'); shop.className = 'ocard-shop'; shop.textContent = o0.round; sub.appendChild(shop); }
+      if (o0.remark) { var ph = document.createElement('span'); ph.className = 'ocard-phone'; ph.textContent = o0.remark; sub.appendChild(ph); }
+      if (sub.childNodes.length) who.appendChild(sub);
+      head.appendChild(who);
+      var time = div('ocard-time');
+      time.textContent = o0.timestamp ? new Date(o0.timestamp).toLocaleDateString('th-TH', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+      head.appendChild(time);
+      gc.appendChild(head);
+
+      var boxes = [];
+      function syncCard() {
+        var on = g.filter(function(o) { return picked[o.id]; }).length;
+        gSel.checked = on === g.length; gSel.indeterminate = on > 0 && on < g.length;
+      }
+      gSel.onchange = function() {
+        g.forEach(function(o) { picked[o.id] = gSel.checked; });
+        boxes.forEach(function(cb) { cb.checked = gSel.checked; });
+        refreshBar();
+      };
+      var itemsBox = div('ocard-items');
+      g.forEach(function(o) {
+        sum += Number(o.total) || 0; if (o.payType !== 'Gift') pcs += Number(o.qty) || 0;
+        var it = document.createElement('label'); it.className = 'oitem';
+        var cb = document.createElement('input'); cb.type = 'checkbox'; cb.className = 'order-sel'; cb.checked = !!picked[o.id];
+        cb.onchange = function() { picked[o.id] = cb.checked; syncCard(); refreshBar(); };
+        boxes.push(cb); it.appendChild(cb);
+        var info = div('oitem-info');
+        var pn = div('oitem-name'); pn.textContent = o.product; info.appendChild(pn);
+        info.appendChild(o.payType === 'Deposit'
+          ? div('oitem-sub', '<span class="badge badge-deposit">มัดจำ</span> ราคาเต็ม ' + escapeHtml(baht(o.totalFull || o.fullPrice * o.qty)))
+          : o.payType === 'Gift'
+            ? div('oitem-sub', '<span class="badge badge-gift">ของแถม</span>')
+            : div('oitem-sub', '<span class="badge badge-full">จ่ายเต็ม</span>'));
+        info.appendChild(stmStatus(o));
+        it.appendChild(info);
+        var qty = div('oitem-qty'); qty.textContent = '×' + o.qty; it.appendChild(qty);
+        var pr = div('oitem-price'); pr.textContent = baht(o.total); it.appendChild(pr);
+        itemsBox.appendChild(it);
+      });
+      syncCard();
+      gc.appendChild(itemsBox);
+      var foot = div('ocard-foot');
+      var cnt = div('ocard-count'); cnt.textContent = g.length + ' รายการ · ' + pcs + ' ชิ้น'; foot.appendChild(cnt);
+      var tot = div('ocard-total'); tot.innerHTML = 'รวม <strong>' + escapeHtml(baht(sum)) + '</strong>'; foot.appendChild(tot);
+      gc.appendChild(foot);
+      cards.appendChild(gc);
+    });
+    list.appendChild(cards);
+  }
 
   function draw() {
     var q = _stm.q.trim().toLowerCase();
@@ -2193,7 +2284,9 @@ function drawStatusManager() {
 
     list.innerHTML = '';
     if (!shown.length) { list.appendChild(div('state-empty', 'ไม่พบรายการตามที่กรอง')); refreshBar(); return; }
-    shown.slice(0, STM_CAP).forEach(function(o) {
+    var rows = shown.slice(0, STM_CAP);
+    if (_stm.src === 'web') drawCards(rows);
+    else rows.forEach(function(o) {
       var row = document.createElement('label'); row.className = 'stm-row';
       var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!picked[o.id];
       cb.onchange = function() { picked[o.id] = cb.checked; refreshBar(); };
@@ -2204,10 +2297,7 @@ function drawStatusManager() {
       var rn = document.createElement('span'); rn.className = 'slip-listname'; rn.textContent = o.round; top.appendChild(rn);
       main.appendChild(top);
       var pr = div('stm-product'); pr.textContent = o.product + ' ×' + o.qty; main.appendChild(pr);
-      var c = stmCat(o);
-      var st = div('oitem-ship' + (c === 'จัดส่งแล้ว' ? '' : c === 'ยกเลิก' ? ' cancel' : c === 'รอจัดส่ง' ? ' waiting' : ' custom'));
-      st.textContent = (c === 'จัดส่งแล้ว' ? '📦 ' : '') + (o.shippedAt ? 'ส่งแล้ว' : o.status || 'รอจัดส่ง') + (o.tracking ? ' · ' + o.tracking : '');
-      main.appendChild(st);
+      main.appendChild(stmStatus(o));
       row.appendChild(main);
       list.appendChild(row);
     });
@@ -2215,6 +2305,303 @@ function drawStatusManager() {
     refreshBar();
   }
   draw();
+}
+
+// ════════════════════════════════
+// DELIVERY BILLS — items that arrived in Thailand, grouped into bills with
+// one delivery fee each. Drag a whole order or one item to the right for a
+// new bill, onto a bill to add to it, or onto another order to bill both
+// together; drag out of a bill back to the left to take it out.
+// ════════════════════════════════
+var ARRIVED_LABEL = 'ถึงไทยแล้ว';
+var ARRIVED_RE = /ถึงไทย/;
+var _billDrag = null; // { ids, cust, from: 'left' | 'bill', key, bill }
+
+function loadBills() {
+  var got = {}, failed = false;
+  function fail(msg) {
+    if (failed) return; failed = true;
+    el('content').innerHTML = ''; el('content').appendChild(div('state-empty', '&#x26A0;&#xFE0F; ' + escapeHtml(msg || 'โหลดไม่สำเร็จ')));
+  }
+  function done() {
+    if (failed || !got.o || !got.d) return;
+    _stm.bills = { orders: got.o.orders || [], payments: got.o.payments || [], deliveries: got.d.deliveries || [], missing: !!got.d.missing };
+    if (_stm.src === 'bills' && currentPanel === 'status') drawBillsBoard();
+  }
+  function handler(k) {
+    return function(r) {
+      var res; try { res = JSON.parse(r); } catch (e) { res = {}; }
+      if (res.status !== 'Success') { fail(res.message); return; }
+      got[k] = res; done();
+    };
+  }
+  google.script.run.withSuccessHandler(handler('o')).withFailureHandler(function() { fail(); }).adminGetAllOrders();
+  google.script.run.withSuccessHandler(handler('d')).withFailureHandler(function() { fail(); }).adminGetDeliveries();
+}
+
+function drawBillsBoard() {
+  var B = _stm.bills;
+  el('content').innerHTML = '';
+  var wrap = document.createElement('div');
+  var ctl = div('section-card slip-ctl');
+  ctl.appendChild(stmSeg());
+  var sw = div('search-row'); sw.innerHTML = SVG_SEARCH;
+  var si = document.createElement('input'); si.placeholder = 'ค้นหาชื่อลูกค้า / สินค้า'; si.value = _stm.q;
+  sw.appendChild(si); ctl.appendChild(sw);
+  wrap.appendChild(ctl);
+  el('content').appendChild(wrap);
+  if (B.missing) {
+    wrap.appendChild(div('state-empty', 'ต้องรันไฟล์ supabase/migrations/2026-10-29c-delivery-bills.sql ใน SQL Editor ก่อน'));
+    return;
+  }
+  wrap.appendChild(div('slip-meta bill-help',
+    'ลากออเดอร์ทั้งก้อน หรือสินค้าทีละชิ้น ไปทางขวาเพื่อสร้างบิลค่าส่ง · วางบนบิลที่มีอยู่เพื่อรวม · ' +
+    'วางออเดอร์ทับอีกออเดอร์เพื่อรวมเป็นบิลเดียว · ลากออกจากบิลกลับมาทางซ้ายเพื่อนำออก ' +
+    '(ตั้งสถานะสินค้าเป็น "' + ARRIVED_LABEL + '" ในแท็บออเดอร์เว็บก่อน)'));
+  var board = div('bill-board');
+  var left = div('bill-col'), right = div('bill-col bill-col-right');
+  board.appendChild(left); board.appendChild(right);
+  wrap.appendChild(board);
+
+  var listName = {};
+  B.orders.forEach(function(o) { listName[o.listId] = o.shopName; });
+  function itemLine(o) {
+    var row = div('bill-item');
+    var t = div('bill-item-name'); t.textContent = o.product + ' ×' + o.qty; row.appendChild(t);
+    var m = div('bill-item-meta');
+    m.textContent = o.payType === 'Deposit' ? 'มัดจำ · เหลือ ' + baht(Math.max(0, o.totalFull - o.total))
+      : o.payType === 'Gift' ? 'ของแถม' : 'จ่ายเต็มแล้ว';
+    row.appendChild(m);
+    return row;
+  }
+  function custName(items) { return items[0].customer.replace(/\s*\n\s*/g, ' '); }
+  function ids(items) { return items.map(function(o) { return o.id; }); }
+  function unique(a) { return a.filter(function(v, i) { return a.indexOf(v) === i; }); }
+
+  function draw() {
+    var q = _stm.q.trim().toLowerCase();
+    function hit(o) { return !q || (o.customer + ' ' + o.product).toLowerCase().indexOf(q) !== -1; }
+    left.innerHTML = ''; right.innerHTML = '';
+    left.appendChild(div('bill-col-title', '🇹🇭 ถึงไทยแล้ว · ยังไม่มีบิล'));
+    right.appendChild(div('bill-col-title', '🧾 บิลค่าส่ง · ลูกค้าเห็นบิลเมื่อกด "ส่งบิลให้ลูกค้า"'));
+
+    // Left: arrived, not shipped, not POS, not in a bill — per customer, per checkout
+    var custs = [], byCust = {};
+    B.orders.forEach(function(o) {
+      if (o.deliveryId || o.shippedAt || o.remark === 'POS' || !ARRIVED_RE.test(o.status || '') || !hit(o)) return;
+      var c = normCust(o.customer);
+      if (!byCust[c]) { byCust[c] = { keys: [], byKey: {} }; custs.push(c); }
+      var key = o.checkoutId || o.listId + '|' + o.timestamp;
+      if (!byCust[c].byKey[key]) { byCust[c].byKey[key] = []; byCust[c].keys.push(key); }
+      byCust[c].byKey[key].push(o);
+    });
+    if (!custs.length) left.appendChild(div('state-empty', q ? 'ไม่พบรายการตามที่ค้นหา' : 'ไม่มีสินค้าที่ถึงไทยแล้วและรอทำบิล'));
+    custs.sort().forEach(function(c) {
+      var g = byCust[c];
+      var box = div('bill-cust');
+      var h = div('bill-cust-name'); h.textContent = custName(g.byKey[g.keys[0]]); box.appendChild(h);
+      g.keys.forEach(function(key) {
+        var items = g.byKey[key];
+        var card = div('bill-order');
+        var top = div('bill-order-top');
+        var nm = document.createElement('strong');
+        nm.textContent = (listName[items[0].listId] || 'ออเดอร์') + ' · ' +
+          new Date(items[0].timestamp).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' });
+        top.appendChild(nm);
+        // Tap fallback for touch screens, where drag and drop doesn't work
+        var go = makeBtn('btn btn-ghost btn-sm', 'สร้างบิล &#x2192;', function() { setBill(ids(items), null, true, c); });
+        go.type = 'button'; go.title = 'ย้ายทั้งออเดอร์ไปเป็นบิลใหม่'; top.appendChild(go);
+        card.appendChild(top);
+        items.forEach(function(o) {
+          var line = itemLine(o);
+          dragSource(line, function() { return { ids: [o.id], cust: c, from: 'left', key: key + '#' + o.id }; });
+          card.appendChild(line);
+        });
+        dragSource(card, function() { return { ids: ids(items), cust: c, from: 'left', key: key }; });
+        // Another order dropped on this one → both become one bill
+        dropZone(card, function(d) {
+          if (d.from === 'bill') { setBill(d.ids, null, false, d.cust); return; }
+          if (d.key === key || d.key.indexOf(key + '#') === 0) return;
+          if (d.cust !== c) { toast('รวมบิลได้เฉพาะสินค้าของลูกค้าคนเดียวกัน', 'error'); return; }
+          setBill(unique(d.ids.concat(ids(items))), null, true, c);
+        });
+        box.appendChild(card);
+      });
+      left.appendChild(box);
+    });
+
+    // Right: open bills (something still to ship), per customer
+    var bills = B.deliveries.map(function(b) {
+      return { b: b, items: B.orders.filter(function(o) { return o.deliveryId === b.id; }),
+               pays: B.payments.filter(function(p) { return p.deliveryId === b.id; }) };
+    }).filter(function(x) {
+      var open = x.items.some(isWaiting) || (!x.items.length && x.pays.length);
+      return open && (!q || x.items.some(hit) || x.b.customer.indexOf(q) !== -1);
+    });
+    if (!bills.length) right.appendChild(div('state-empty', 'ลากออเดอร์จากทางซ้ายมาวางที่นี่เพื่อสร้างบิล'));
+    var n = {};
+    bills.sort(function(a, b) { return a.b.customer < b.b.customer ? -1 : a.b.customer > b.b.customer ? 1 : 0; }).forEach(function(x) {
+      var b = x.b; n[b.customer] = (n[b.customer] || 0) + 1;
+      var card = div('bill-card' + (b.sentAt ? '' : ' draft'));
+      var top = div('bill-order-top');
+      var nm = document.createElement('strong');
+      nm.textContent = (x.items.length ? custName(x.items) : '@' + b.customer) + ' · บิล ' + n[b.customer];
+      top.appendChild(nm);
+      var ship = makeBtn('btn btn-ghost btn-sm', '&#x1F4E6; จัดส่ง', function() {
+        var waiting = x.items.filter(isWaiting);
+        if (!waiting.length) { toast('ไม่มีสินค้าที่รอจัดส่งในบิลนี้', 'error'); return; }
+        openStatusModal(waiting, { after: function() { _stm.web = null; draw(); } });
+      });
+      ship.type = 'button'; top.appendChild(ship);
+      card.appendChild(top);
+      if (!x.items.length) card.appendChild(div('slip-meta', '⚠️ บิลนี้ไม่มีสินค้าแล้ว แต่ลูกค้าโอนเข้ามาแล้ว — ลากสินค้ากลับเข้ามา'));
+      var rest = 0, pcs = 0;
+      x.items.forEach(function(o) {
+        if (o.payType === 'Deposit') rest += Math.max(0, o.totalFull - o.total);
+        if (o.payType !== 'Gift') pcs += Number(o.qty) || 0;
+        var line = itemLine(o);
+        if (o.shippedAt) line.classList.add('shipped');
+        dragSource(line, function() { return { ids: [o.id], cust: b.customer, from: 'bill', bill: b.id }; });
+        card.appendChild(line);
+      });
+      dragSource(card, function() { return { ids: ids(x.items), cust: b.customer, from: 'bill', bill: b.id }; });
+
+      var sum = div('bill-sum');
+      var r1 = div('bill-sum-row');
+      var rl = document.createElement('span'); rl.textContent = pcs + ' ชิ้น · ส่วนที่เหลือ'; r1.appendChild(rl);
+      var rv = document.createElement('span'); rv.textContent = baht(rest); r1.appendChild(rv);
+      sum.appendChild(r1);
+      var r2 = div('bill-sum-row');
+      var fl = document.createElement('label'); fl.textContent = 'ค่าส่ง'; fl.htmlFor = 'fee-' + b.id; r2.appendChild(fl);
+      var fee = document.createElement('input'); fee.type = 'number'; fee.min = '0'; fee.step = '1'; fee.inputMode = 'decimal';
+      fee.id = 'fee-' + b.id; fee.className = 'bill-fee'; fee.placeholder = 'ยังไม่ระบุ';
+      fee.value = b.fee === null ? '' : b.fee;
+      fee.onchange = function() {
+        var v = fee.value.trim() === '' ? null : Number(fee.value);
+        if (v === null && b.sentAt) { toast('ถอนบิลก่อนลบค่าส่ง', 'error'); fee.value = b.fee; return; }
+        google.script.run.withSuccessHandler(function(r) {
+          var res; try { res = JSON.parse(r); } catch (e) { res = {}; }
+          if (res.status !== 'Success') { toast(res.message || 'บันทึกค่าส่งไม่สำเร็จ', 'error'); fee.value = b.fee === null ? '' : b.fee; return; }
+          b.fee = res.fee; toast('บันทึกค่าส่งแล้ว', 'success'); draw();
+        }).withFailureHandler(function() { toast('บันทึกค่าส่งไม่สำเร็จ', 'error'); }).adminSetDeliveryFee(b.id, v);
+      };
+      r2.appendChild(fee); sum.appendChild(r2);
+      var r3 = div('bill-sum-row total');
+      r3.appendChild(document.createTextNode('ลูกค้าต้องโอน'));
+      var tv = document.createElement('strong'); tv.textContent = b.fee === null ? 'รอใส่ค่าส่ง' : baht(rest + b.fee); r3.appendChild(tv);
+      sum.appendChild(r3);
+      card.appendChild(sum);
+
+      // Draft until sent: the customer keeps seeing these items as "waiting to arrive"
+      if (!b.sentAt) {
+        card.appendChild(div('slip-meta bill-state', 'ร่าง · ลูกค้ายังไม่เห็นบิลนี้'));
+        var send = makeBtn('btn btn-primary btn-sm bill-send', '&#x1F4E8; ส่งบิลให้ลูกค้า', function() { sendBill(b, true); });
+        send.type = 'button';
+        if (b.fee === null) { send.disabled = true; send.title = 'ใส่ค่าส่งก่อน'; }
+        card.appendChild(send);
+      } else {
+        var sentRow = div('bill-sent-row');
+        var sentAt = div('slip-meta bill-state sent');
+        sentAt.textContent = '✓ ส่งบิลแล้ว ' + new Date(b.sentAt).toLocaleString('th-TH', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+        sentRow.appendChild(sentAt);
+        if (!x.pays.length) {
+          var unsend = makeBtn('btn btn-ghost btn-sm', 'ถอนบิล', function() { sendBill(b, false); });
+          unsend.type = 'button'; unsend.title = 'ซ่อนบิลจากลูกค้า กลับเป็นร่าง';
+          sentRow.appendChild(unsend);
+        }
+        card.appendChild(sentRow);
+        var paid = 0; x.pays.forEach(function(p) { paid += Number(p.amount) || 0; });
+        var ps = makeBtn('bill-paid' + (x.pays.length ? ' ok' : ''), x.pays.length ? '✓ โอนแล้ว ' + baht(paid) + ' · ดูสลิป' : 'รอลูกค้าโอน', null);
+        ps.type = 'button';
+        if (x.pays.length) ps.onclick = function() { openPaymentsModal(x.pays, x.items.length ? custName(x.items) : b.customer); };
+        else ps.disabled = true;
+        card.appendChild(ps);
+      }
+
+      dropZone(card, function(d) {
+        if (d.bill === b.id) return;
+        if (d.cust !== b.customer) { toast('รวมบิลได้เฉพาะสินค้าของลูกค้าคนเดียวกัน', 'error'); return; }
+        setBill(d.ids, b.id, false, d.cust);
+      });
+      right.appendChild(card);
+    });
+  }
+
+  // Empty space on the right → new bill; on the left → out of its bill
+  dropZone(right, function(d) { setBill(d.ids, null, true, d.cust); });
+  dropZone(left, function(d) { if (d.from === 'bill') setBill(d.ids, null, false, d.cust); });
+
+  function sendBill(b, send) {
+    if (!send && !confirm('ถอนบิลนี้กลับเป็นร่าง? ลูกค้าจะไม่เห็นบิลจนกว่าจะส่งใหม่')) return;
+    board.classList.add('busy');
+    google.script.run.withSuccessHandler(function(r) {
+      board.classList.remove('busy');
+      var res; try { res = JSON.parse(r); } catch (e) { res = {}; }
+      if (res.status !== 'Success') { toast(res.message || 'ส่งบิลไม่สำเร็จ', 'error'); return; }
+      b.sentAt = res.sentAt || '';
+      toast(send ? 'ส่งบิลให้ลูกค้าแล้ว' : 'ถอนบิลแล้ว', 'success');
+      draw();
+    }).withFailureHandler(function() { board.classList.remove('busy'); toast('ส่งบิลไม่สำเร็จ', 'error'); })
+      .adminSendDelivery(b.id, send);
+  }
+
+  function setBill(orderIds, deliveryId, isNew, cust) {
+    if (!orderIds.length) return;
+    var leavingPaid = B.orders.some(function(o) {
+      return orderIds.indexOf(o.id) !== -1 && o.deliveryId && o.deliveryId !== deliveryId &&
+        B.payments.some(function(p) { return p.deliveryId === o.deliveryId; });
+    });
+    if (leavingPaid && !confirm('ลูกค้าโอนค่าบิลเดิมของสินค้านี้แล้ว — ย้ายออกจากบิลนั้นจริงไหม?')) return;
+    board.classList.add('busy');
+    google.script.run.withSuccessHandler(function(r) {
+      board.classList.remove('busy');
+      var res; try { res = JSON.parse(r); } catch (e) { res = {}; }
+      if (res.status !== 'Success') { toast(res.message || 'ย้ายไม่สำเร็จ', 'error'); return; }
+      var target = res.deliveryId || '';
+      if (isNew && target) B.deliveries.push({ id: target, customer: cust, fee: null, createdAt: new Date().toISOString(), sentAt: '' });
+      B.orders.forEach(function(o) { if (orderIds.indexOf(o.id) !== -1) o.deliveryId = target; });
+      // Mirror the database: bills with no items and no payments are gone
+      B.deliveries = B.deliveries.filter(function(b) {
+        return B.orders.some(function(o) { return o.deliveryId === b.id; }) || B.payments.some(function(p) { return p.deliveryId === b.id; });
+      });
+      toast(isNew ? 'สร้างบิลแล้ว' : target ? 'รวมเข้าบิลแล้ว' : 'นำออกจากบิลแล้ว', 'success');
+      draw();
+    }).withFailureHandler(function() { board.classList.remove('busy'); toast('ย้ายไม่สำเร็จ', 'error'); })
+      .adminSetDelivery(orderIds, deliveryId, isNew);
+  }
+
+  si.oninput = function() { _stm.q = si.value; draw(); };
+  draw();
+}
+
+function dragSource(node, getData) {
+  node.draggable = true;
+  node.addEventListener('dragstart', function(e) {
+    e.stopPropagation(); // an item inside an order drags on its own
+    _billDrag = getData();
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', 'bill'); } catch (x) {}
+    node.classList.add('dragging');
+  });
+  node.addEventListener('dragend', function() {
+    node.classList.remove('dragging'); _billDrag = null;
+    document.querySelectorAll('.drop-on').forEach(function(n) { n.classList.remove('drop-on'); });
+  });
+}
+function dropZone(node, onDrop) {
+  node.addEventListener('dragover', function(e) {
+    if (!_billDrag) return;
+    e.preventDefault(); e.stopPropagation();
+    document.querySelectorAll('.drop-on').forEach(function(n) { if (n !== node) n.classList.remove('drop-on'); });
+    node.classList.add('drop-on');
+  });
+  node.addEventListener('dragleave', function(e) { if (!node.contains(e.relatedTarget)) node.classList.remove('drop-on'); });
+  node.addEventListener('drop', function(e) {
+    e.preventDefault(); e.stopPropagation();
+    node.classList.remove('drop-on');
+    var d = _billDrag; _billDrag = null;
+    if (d) onDrop(d);
+  });
 }
 
 // Pulls every tab of the old status sheet into the database, replacing

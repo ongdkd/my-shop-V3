@@ -800,3 +800,46 @@ a.ocard-phone{text-decoration:underline;text-decoration-color:var(--border-stron
 .gift-ed-row .bcard-input{background:var(--surface);}
 .gift-ed-line{display:grid;grid-template-columns:96px minmax(0,1fr) 84px 28px;gap:6px;align-items:center;}
 .gift-ed-cur{padding:0 6px;}
+
+/* Payment kind on slips */
+.pay-kind{font-size:0.7rem;font-weight:700;border-radius:999px;padding:1px 8px;background:var(--surface-2);color:var(--text-2);border:1px solid var(--border);}
+.pay-kind.deposit{background:#FFF4DB;color:#8B5E00;border-color:transparent;}
+.pay-kind.full{background:var(--primary-light);color:var(--primary);border-color:transparent;}
+.pay-kind.balance{background:#E3F8F0;color:#007A5A;border-color:transparent;}
+.ord-seg.ord-seg-3{grid-template-columns:repeat(3,minmax(0,1fr));}
+@media(max-width:560px){.ord-seg.ord-seg-3{grid-template-columns:1fr;}}
+
+/* Delivery bills board: arrived items (left) → bills (right) */
+.bill-help{margin:0 0 12px;}
+.bill-board{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start;}
+.bill-board.busy{opacity:0.6;pointer-events:none;}
+@media(max-width:850px){.bill-board{grid-template-columns:1fr;}}
+.bill-col{background:var(--surface);border:1.5px dashed var(--border);border-radius:var(--radius-lg);padding:12px;min-height:240px;}
+.bill-col.drop-on{border-color:var(--primary);background:var(--primary-light);}
+.bill-col-title{font-size:0.82rem;font-weight:700;color:var(--text-2);margin:2px 2px 10px;}
+.bill-cust{margin-bottom:14px;}
+.bill-cust-name{font-weight:700;font-size:0.9rem;margin:0 2px 6px;overflow-wrap:anywhere;}
+.bill-order,.bill-card{background:var(--surface);border:1.5px solid var(--border);border-radius:12px;padding:10px;margin-bottom:8px;cursor:grab;transition:border-color 0.15s,box-shadow 0.15s;}
+.bill-card{border-color:var(--primary);}
+.bill-order.drop-on,.bill-card.drop-on{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-light);}
+.bill-order.dragging,.bill-card.dragging,.bill-item.dragging{opacity:0.45;}
+.bill-order-top{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;}
+.bill-order-top strong{font-size:0.84rem;min-width:0;overflow-wrap:anywhere;}
+.bill-item{padding:6px 8px;border-radius:8px;background:var(--surface-2);margin-top:4px;cursor:grab;}
+.bill-item:hover{outline:1.5px solid var(--border-strong,var(--border));}
+.bill-item.shipped{opacity:0.55;}
+.bill-item-name{font-size:0.82rem;overflow-wrap:anywhere;}
+.bill-item-meta{font-size:0.72rem;color:var(--text-3);}
+.bill-sum{margin-top:8px;border-top:1px dashed var(--border);padding-top:8px;font-size:0.82rem;}
+.bill-sum-row{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:32px;}
+.bill-sum-row.total{font-weight:700;}
+.bill-sum-row.total strong{font-size:1.1rem;color:var(--primary);}
+.bill-fee{width:110px;min-height:36px;padding:4px 8px;border:1.5px solid var(--border);border-radius:8px;font-family:var(--font);font-size:0.9rem;text-align:right;}
+.bill-fee:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-light);}
+.bill-paid{width:100%;margin-top:8px;min-height:36px;border:none;border-radius:8px;background:var(--surface-2);color:var(--text-3);font-family:var(--font);font-size:0.8rem;font-weight:600;}
+.bill-paid.ok{background:#E3F8F0;color:#007A5A;cursor:pointer;}
+.bill-card.draft{border-style:dashed;border-color:var(--border);}
+.bill-state{margin-top:8px;}
+.bill-state.sent{color:#007A5A;font-weight:600;margin-top:0;}
+.bill-send{width:100%;margin-top:6px;}
+.bill-sent-row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:8px;}
