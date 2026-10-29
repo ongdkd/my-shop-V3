@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/index.css?v=20261029b">
-<link rel="stylesheet" href="css/status.css?v=20261029b">
+<link rel="stylesheet" href="css/status.css?v=20261029f">
 </head>
 <body>
 <main class="st-page">
@@ -48,11 +48,13 @@
       </label>
     </div>
 
-    <label class="st-field">
-      <span>ที่อยู่จัดส่ง (ชื่อ เบอร์โทร ที่อยู่)</span>
-      <textarea id="payAddress" rows="4" maxlength="1000" placeholder="ชื่อผู้รับ&#10;เบอร์โทร&#10;ที่อยู่ + รหัสไปรษณีย์"></textarea>
-    </label>
-    <p class="st-note">ไม่ต้องกรอกที่อยู่ถ้าเป็นการโอนมัดจำ / ส่งที่อยู่ไปแล้ว</p>
+    <div id="payAddrBox" hidden>
+      <label class="st-field">
+        <span>ที่อยู่จัดส่ง (ชื่อ เบอร์โทร ที่อยู่) <b class="st-fix-mark">*</b></span>
+        <textarea id="payAddress" rows="4" maxlength="1000" placeholder="ชื่อผู้รับ&#10;เบอร์โทร&#10;ที่อยู่ + รหัสไปรษณีย์"></textarea>
+      </label>
+      <p class="st-note st-note-fix">* กรอกที่อยู่ผิด? ส่งสลิปเดิมอีกครั้งพร้อมที่อยู่ใหม่ได้เลย ระบบจะแก้ที่อยู่ให้ (ไม่นับเป็นยอดโอนใหม่)</p>
+    </div>
 
     <div class="st-dlg-actions">
       <button type="button" class="st-btn ghost" id="payCancel">ยกเลิก</button>
@@ -65,7 +67,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.7/dist/umd/supabase.min.js" integrity="sha384-BmlQlKlDvXvKoxkn5OQuUo/aJQCTXeB+Kls6EccBmG4Kf8AXvp89RtO9MtPxP/r5" crossorigin="anonymous"></script>
 <script src="js/config.js?v=20261029b"></script>
-<script src="js/api.js?v=20261029b"></script>
-<script src="js/status.js?v=20261029b"></script>
+<script src="js/api.js?v=20261029i"></script>
+<script src="js/status.js?v=20261029f"></script>
 </body>
 </html>

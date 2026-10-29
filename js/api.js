@@ -411,14 +411,19 @@
 
   // Customer slips without the photo. Empty before the payments migration.
   async function fetchPayments(listId) {
-    var q = sb.from('payments').select('id,list_id,customer,amount,paid_at,bank_ref,address,created_at,has_slip')
-      .order('created_at', { ascending: false });
-    if (listId) q = q.eq('list_id', listId);
-    var r = await q;
+    var cols = 'id,list_id,customer,amount,paid_at,bank_ref,address,created_at,has_slip';
+    function query(c) {
+      var q = sb.from('payments').select(c).order('created_at', { ascending: false });
+      return listId ? q.eq('list_id', listId) : q;
+    }
+    var r = await query(cols + ',delivery_id,kind');
+    // Delivery-bill columns come from 2026-10-29c-delivery-bills.sql
+    if (r.error && /delivery_id|kind/.test(String(r.error.message || ''))) r = await query(cols);
     if (r.error) { console.warn('[api] payments:', r.error.message); return []; }
     return (r.data || []).map(function (p) {
       return { id: p.id, listId: p.list_id, customer: p.customer, amount: num(p.amount), paidAt: p.paid_at || '',
-        bankRef: p.bank_ref || '', address: p.address || '', createdAt: p.created_at, hasSlip: !!p.has_slip };
+        bankRef: p.bank_ref || '', address: p.address || '', createdAt: p.created_at, hasSlip: !!p.has_slip,
+        deliveryId: p.delivery_id || '', kind: p.kind || '' };
     });
   }
 
@@ -442,7 +447,8 @@
       listId: r.list_id || '',
       status: r.status || '',           // '' waiting · 'ยกเลิก' · custom label
       shippedAt: r.shipped_at || '',
-      tracking: r.tracking || ''
+      tracking: r.tracking || '',
+      deliveryId: r.delivery_id || ''  // delivery bill (arrived items grouped for one fee)
     };
   }
 
@@ -612,23 +618,26 @@
           return err(r.error.message);
         }
         var d = r.data || {};
-        return ok({ orders: d.orders || [], payments: d.payments || [], legacy: d.legacy || [] });
+        return ok({ orders: d.orders || [], payments: d.payments || [], legacy: d.legacy || [], deliveries: d.deliveries || [] });
       } catch (e) { return e.__json || err(e.message || e); }
     },
 
-    customerSubmitPayment: async function (name, listId, amount, paidAt, bankRef, address, slip) {
+    // deliveryId: pay the rest + delivery fee for one bill instead of a list
+    customerSubmitPayment: async function (name, listId, amount, paidAt, bankRef, address, slip, deliveryId) {
       try {
         requireSb();
-        var r = await sb.rpc('customer_submit_payment', {
-          p_name: String(name || '').trim(), p_list_id: listId, p_amount: Number(amount),
+        var params = {
+          p_name: String(name || '').trim(), p_list_id: listId || null, p_amount: Number(amount),
           p_paid_at: paidAt || null, p_bank_ref: bankRef || '', p_address: address || '', p_slip: slip
-        });
+        };
+        if (deliveryId) params.p_delivery_id = deliveryId;
+        var r = await sb.rpc('customer_submit_payment', params);
         if (r.error) {
           // Duplicate bank ref racing past the check hits the unique index
           if (r.error.code === '23505') return err('สลิปนี้ถูกส่งมาแล้ว');
           return err(r.error.message);
         }
-        return ok({});
+        return ok({ addressUpdated: !!(r.data && r.data.addressUpdated) });
       } catch (e) { return e.__json || err(e.message || e); }
     },
 
@@ -1091,6 +1100,62 @@
         var r = await sb.from('legacy_orders').update(patch).in('id', ids).select('id');
         if (r.error) return err(r.error.message);
         return ok({ updated: (r.data || []).length, shippedAt: null, tracking: patch.tracking, orderStatus: patch.status });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
+    // ── Delivery bills: arrived items grouped for one delivery fee ──
+    adminGetDeliveries: async function () {
+      try {
+        requireSb(); await requireAdmin();
+        var r = await sb.from('deliveries').select('id,customer,fee,created_at,sent_at').order('created_at', { ascending: true });
+        if (r.error) {
+          if (/deliveries/.test(r.error.message || '')) return ok({ deliveries: [], missing: true });
+          return err(r.error.message);
+        }
+        return ok({ deliveries: (r.data || []).map(function (d) {
+          return { id: d.id, customer: d.customer, fee: d.fee === null ? null : num(d.fee), createdAt: d.created_at, sentAt: d.sent_at || '' };
+        }) });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
+    // isNew → a new bill; deliveryId → that bill; neither → out of any bill
+    adminSetDelivery: async function (orderIds, deliveryId, isNew) {
+      try {
+        requireSb(); await requireAdmin();
+        if (!orderIds || !orderIds.length) return err('ไม่พบรายการสินค้า');
+        var r = await sb.rpc('admin_set_delivery', { p_order_ids: orderIds, p_delivery: deliveryId || null, p_new: !!isNew });
+        if (r.error) {
+          if (r.error.code === 'PGRST202') return err('รันไฟล์ supabase/migrations/2026-10-29c-delivery-bills.sql ใน SQL Editor ก่อน');
+          return err(r.error.message);
+        }
+        return ok({ deliveryId: r.data || '' });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
+    // send = true shows the bill to the customer (its items move to tab 3
+    // "pay the rest / delivery fee"); false takes it back to a draft
+    adminSendDelivery: async function (deliveryId, send) {
+      try {
+        requireSb(); await requireAdmin();
+        var q = sb.from('deliveries').update({ sent_at: send ? new Date().toISOString() : null }).eq('id', deliveryId);
+        if (send) q = q.not('fee', 'is', null); // a bill goes out with its delivery fee
+        var r = await q.select('id,sent_at');
+        if (r.error) return err(r.error.message);
+        if (!r.data || !r.data.length) return err(send ? 'ใส่ค่าส่งก่อนส่งบิล' : 'ไม่พบบิลนี้ (อาจถูกลบไปแล้ว)');
+        return ok({ sentAt: r.data[0].sent_at || '' });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
+    // fee: number, or null = not decided yet (customer can't pay the bill)
+    adminSetDeliveryFee: async function (deliveryId, fee) {
+      try {
+        requireSb(); await requireAdmin();
+        var v = fee === null || fee === '' ? null : Number(fee);
+        if (v !== null && !(v >= 0 && v <= 100000)) return err('ค่าส่งไม่ถูกต้อง');
+        var r = await sb.from('deliveries').update({ fee: v }).eq('id', deliveryId).select('id');
+        if (r.error) return err(r.error.message);
+        if (!r.data || !r.data.length) return err('ไม่พบบิลนี้ (อาจถูกลบไปแล้ว)');
+        return ok({ fee: v });
       } catch (e) { return e.__json || err(e.message || e); }
     },
 
