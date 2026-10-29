@@ -3494,17 +3494,36 @@ var _stockSelected = {};    // parent rowIndex → true
 var _stockQtyMap = {};      // single product rowIndex → qty to import
 var _stockVariantQty = {};  // variant product rowIndex → { childRowIndex: qty } (unlimited variant: 1 = included)
 var _whTarget = '';         // order list the import goes into
+var _whDelMode = false;     // "เลือกลบ" mode: taps pick products to delete instead of import
+var _stockDelSelected = {}; // parent rowIndex → true (delete mode)
+var _whVisibleRows = [];    // rowIndexes currently shown (after search) — what "เลือกทั้งหมด" picks
 
 function renderStockPanel() {
-  setTopbar('คลังสินค้า', 'เลือกรายการปลายทาง แล้วเลือกสินค้าที่จะนำเข้า');
+  _whDelMode = false; _stockDelSelected = {};
+  renderStockTopbar();
+  el('content').innerHTML = ''; el('content').appendChild(makeSpinner());
+  loadStock(renderStockContent);
+}
+
+function renderStockTopbar() {
+  setTopbar('คลังสินค้า', _whDelMode ? 'แตะสินค้าที่จะลบ หรือกด "เลือกทั้งหมด"' : 'เลือกรายการปลายทาง แล้วเลือกสินค้าที่จะนำเข้า');
   el('topbarActions').innerHTML = '';
+  if (_whDelMode) {
+    el('topbarActions').appendChild(makeBtn('btn btn-ghost btn-sm', '&#x2715; ยกเลิกการลบ', function() { whSetDelMode(false); }));
+    return;
+  }
   el('topbarActions').appendChild(makeBtn('btn btn-primary btn-sm', '&#x2B; เพิ่มสินค้า', openCreateStockModal));
   el('topbarActions').appendChild(makeBtn('btn btn-ghost btn-sm', '&#x1F4CB; เพิ่มหลาย', openBulkStockModal));
+  el('topbarActions').appendChild(makeBtn('btn btn-ghost btn-sm', '&#x1F5D1; เลือกลบ', function() { whSetDelMode(true); }));
   var refBtn = makeBtn('btn btn-ghost btn-sm', '&#x21BB;', function() { loadStock(renderStockContent); });
   refBtn.title = 'รีเฟรช'; refBtn.setAttribute('aria-label', 'รีเฟรช');
   el('topbarActions').appendChild(refBtn);
-  el('content').innerHTML = ''; el('content').appendChild(makeSpinner());
-  loadStock(renderStockContent);
+}
+
+function whSetDelMode(on) {
+  _whDelMode = !!on; _stockDelSelected = {};
+  renderStockTopbar();
+  renderStockContent();
 }
 
 function loadStock(cb) {
@@ -3546,6 +3565,9 @@ function renderStockContent() {
   Object.keys(_stockSelected).forEach(function(k) {
     if (!stockCache.some(function(p) { return String(p.rowIndex) === k; })) { delete _stockSelected[k]; delete _stockQtyMap[k]; delete _stockVariantQty[k]; }
   });
+  Object.keys(_stockDelSelected).forEach(function(k) {
+    if (!stockCache.some(function(p) { return String(p.rowIndex) === k; })) delete _stockDelSelected[k];
+  });
 
   // ── 1. Destination list first ──
   var lists = getVisibleLists();
@@ -3567,7 +3589,7 @@ function renderStockContent() {
     renderStockCards(el('stockCardGrid'), stockSearchQuery);
   };
   tgt.appendChild(tLbl); tgt.appendChild(tSel);
-  wrap.appendChild(tgt);
+  if (!_whDelMode) wrap.appendChild(tgt);
 
   // ── Stats: variant stock counts too; unlimited items are counted separately ──
   var total = 0, unlimited = 0;
@@ -3595,10 +3617,27 @@ function renderStockContent() {
   sInp.oninput = function() { stockSearchQuery = sInp.value.toLowerCase().trim(); renderStockCards(grid, stockSearchQuery); };
   var scan = makeBtn('wh-scan', '&#x1F4F7;'); scan.type = 'button'; scan.title = 'สแกนเพื่อเลือกสินค้า (สแกนต่อเนื่องได้)'; scan.setAttribute('aria-label', 'สแกนบาร์โค้ดเพื่อเลือกสินค้า');
   scan.onclick = whScanLoop;
-  sRow.appendChild(sInp); sRow.appendChild(scan);
+  sRow.appendChild(sInp); if (!_whDelMode) sRow.appendChild(scan);
   bar.appendChild(sRow);
   var act = div('wh-act'); act.id = 'whAct';
   var cnt = document.createElement('span'); cnt.className = 'wh-count'; cnt.id = 'whCount';
+  if (_whDelMode) {
+    act.classList.add('del');
+    var all = makeBtn('btn btn-ghost btn-sm', 'เลือกทั้งหมด', function() {
+      var allOn = _whVisibleRows.length && _whVisibleRows.every(function(k) { return _stockDelSelected[k]; });
+      _whVisibleRows.forEach(function(k) { if (allOn) delete _stockDelSelected[k]; else _stockDelSelected[k] = true; });
+      whRerender();
+    });
+    all.id = 'whSelAllBtn';
+    var del = makeBtn('btn btn-danger', '&#x1F5D1; ลบ', confirmDeleteSelectedStock);
+    del.id = 'whDelBtn';
+    act.appendChild(cnt); act.appendChild(all); act.appendChild(del);
+    bar.appendChild(act);
+    wrap.appendChild(bar);
+    el('content').appendChild(wrap);
+    renderStockCards(grid, stockSearchQuery);
+    return;
+  }
   var clr = makeBtn('btn btn-ghost btn-sm', 'ล้าง', function() { _stockSelected = {}; _stockQtyMap = {}; _stockVariantQty = {}; renderStockCards(grid, stockSearchQuery); });
   var go = makeBtn('btn btn-primary', 'นำเข้า &#x2192;', function() { pushSelectedToShop(_whTarget); });
   go.id = 'stockPushBtn';
@@ -3612,6 +3651,16 @@ function renderStockContent() {
 
 function refreshStockPushBar() {
   var act = el('whAct'); if (!act) return;
+  if (_whDelMode) {
+    var n = Object.keys(_stockDelSelected).length;
+    var allOn = _whVisibleRows.length && _whVisibleRows.every(function(k) { return _stockDelSelected[k]; });
+    act.classList.add('show');
+    el('whCount').textContent = n ? 'เลือกลบ ' + n + ' รายการ' : 'ยังไม่ได้เลือก';
+    el('whSelAllBtn').textContent = allOn ? 'ไม่เลือกทั้งหมด' : 'เลือกทั้งหมด (' + _whVisibleRows.length + ')';
+    el('whSelAllBtn').disabled = !_whVisibleRows.length;
+    el('whDelBtn').disabled = !n;
+    return;
+  }
   var rows = Object.keys(_stockSelected).filter(function(k) { return _stockSelected[k]; });
   var pcs = 0;
   rows.forEach(function(k) { var p = stockCache.find(function(x) { return String(x.rowIndex) === k; }); if (p) pcs += whChosenPieces(p); });
@@ -3630,6 +3679,7 @@ function renderStockCards(container, query) {
     var hay = (p.name + ' ' + p.id + ' ' + (p.children || []).map(function(c) { return c.name + ' ' + c.id; }).join(' ')).toLowerCase();
     return hay.indexOf(query) !== -1;
   }).slice().sort(function(a, b) { return stockAvailabilityRank(a) - stockAvailabilityRank(b); });
+  _whVisibleRows = filtered.map(function(p) { return String(p.rowIndex); });
 
   if (!filtered.length) {
     container.appendChild(div('wh-empty', query ? 'ไม่พบสินค้าที่ค้นหา' : 'ยังไม่มีสินค้าในคลัง'));
@@ -3638,12 +3688,12 @@ function renderStockCards(container, query) {
 
   filtered.forEach(function(p) {
     var hasKids = !!(p.children && p.children.length);
-    var sel = !!_stockSelected[p.rowIndex], soldOut = whSoldOut(p), stockNow = whStockOf(p);
-    var card = div('wcard' + (sel ? ' selected' : '') + (soldOut ? ' sold-out' : ''));
+    var sel = !!(_whDelMode ? _stockDelSelected : _stockSelected)[p.rowIndex], soldOut = whSoldOut(p), stockNow = whStockOf(p);
+    var card = div('wcard' + (sel ? ' selected' : '') + (soldOut ? ' sold-out' : '') + (_whDelMode ? ' del' : ''));
     card.setAttribute('data-row', p.rowIndex);
     card.setAttribute('role', 'button'); card.tabIndex = 0;
     card.setAttribute('aria-pressed', sel ? 'true' : 'false');
-    card.setAttribute('aria-label', (hasKids ? 'เลือกแบบของ ' : 'เลือก ') + p.name);
+    card.setAttribute('aria-label', _whDelMode ? 'เลือกลบ ' + p.name : (hasKids ? 'เลือกแบบของ ' : 'เลือก ') + p.name);
 
     var img = div('wcard-img');
     if (p.image) { var im = document.createElement('img'); im.src = p.image; im.alt = ''; im.loading = 'lazy'; img.appendChild(im); }
@@ -3662,6 +3712,10 @@ function renderStockCards(container, query) {
     body.appendChild(div('wcard-meta', escapeHtml(meta.join(' · '))));
 
     var foot = div('wcard-foot');
+    if (_whDelMode) {
+      body.appendChild(foot); card.appendChild(body); container.appendChild(card);
+      return;
+    }
     if (hasKids) {
       var m = _stockVariantQty[p.rowIndex] || {}, nKinds = Object.keys(m).length;
       var pick = makeBtn('wcard-pick' + (sel ? ' on' : ''), sel ? 'เลือก ' + nKinds + ' แบบ · ' + whChosenPieces(p) + ' ชิ้น' : 'เลือกแบบ &#x203A;');
@@ -3696,6 +3750,10 @@ function renderStockCards(container, query) {
   container.onclick = function(e) {
     var card = e.target.closest('.wcard'); if (!card) return;
     var p = stockCache.find(function(x) { return String(x.rowIndex) === card.getAttribute('data-row'); }); if (!p) return;
+    if (_whDelMode) {
+      if (_stockDelSelected[p.rowIndex]) delete _stockDelSelected[p.rowIndex]; else _stockDelSelected[p.rowIndex] = true;
+      whRerender(); return;
+    }
     var actEl = e.target.closest('[data-act]'), act = actEl && actEl.getAttribute('data-act');
     if (act === 'edit') { openEditStockModal(p); return; }
     if (act === 'qty') return;
@@ -5290,6 +5348,38 @@ function confirmDeleteStockProduct(prod) {
       } catch(e) { toast('เกิดข้อผิดพลาด', 'error'); }
     }).adminDeleteStockProduct(prod.rowIndex, childRows);
   }, 'ลบ');
+  el('modalSave').className = 'btn btn-danger';
+  el('modal').classList.add('open');
+}
+
+function confirmDeleteSelectedStock() {
+  var rows = Object.keys(_stockDelSelected);
+  var picked = stockCache.filter(function(p) { return _stockDelSelected[p.rowIndex]; });
+  if (!picked.length) return;
+  var kids = picked.reduce(function(s, p) { return s + (p.children ? p.children.length : 0); }, 0);
+  var isAll = picked.length === stockCache.length;
+  el('modalBody').innerHTML = '';
+  var wrap = document.createElement('div'); wrap.style.cssText = 'text-align:center;padding:8px 0;';
+  wrap.innerHTML = '<div style="font-size:2.5rem;margin-bottom:12px;">&#x26A0;&#xFE0F;</div>' +
+    '<div style="font-weight:700;font-size:0.95rem;margin-bottom:8px;">' + (isAll ? 'ลบสินค้าทั้งหมดในคลัง?' : 'ยืนยันการลบ?') + '</div>' +
+    '<div style="font-size:0.85rem;color:var(--text-2);">ลบ <strong>' + picked.length + ' รายการ</strong>' +
+    (kids ? ' (รวม ' + kids + ' ตัวเลือก)' : '') + ' ออกจากคลัง<br>' +
+    '<span style="color:var(--text-3);">สินค้าที่นำเข้าไปในรายการสั่งซื้อแล้วจะยังอยู่ แต่จะไม่ลิงก์กับคลังอีก · ย้อนกลับไม่ได้</span></div>';
+  el('modalBody').appendChild(wrap);
+  openModal('&#x1F5D1; ลบสินค้าที่เลือก', '', function() {
+    var btn = el('modalSave'); btn.disabled = true; btn.textContent = 'กำลังลบ...';
+    google.script.run.withSuccessHandler(function(r) {
+      btn.disabled = false;
+      try {
+        var res = JSON.parse(r);
+        if (res.status === 'Success') {
+          closeModal(); toast('ลบสินค้าแล้ว ' + (res.deleted || 0) + ' รายการ', 'success');
+          _whDelMode = false; _stockDelSelected = {}; renderStockTopbar();
+          loadStock(renderStockContent);
+        } else { btn.textContent = 'ลบ'; toast(res.message || 'เกิดข้อผิดพลาด', 'error'); loadStock(renderStockContent); }
+      } catch(e) { btn.textContent = 'ลบ'; toast('เกิดข้อผิดพลาด', 'error'); }
+    }).adminDeleteStockProductsBulk(rows);
+  }, 'ลบ ' + picked.length + ' รายการ');
   el('modalSave').className = 'btn btn-danger';
   el('modal').classList.add('open');
 }
