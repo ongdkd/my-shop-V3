@@ -167,7 +167,8 @@
     if (!response.ok) {
       var message = payload && payload.error && payload.error.message;
       if (response.status === 403) {
-        message = 'Google Sheets API ปฏิเสธคำขอ — ตรวจสอบว่าเปิด API, จำกัด key ให้ตรงโดเมน และแชร์ชีตเป็น “ทุกคนที่มีลิงก์ดูได้”';
+        message = 'Google Sheets API ปฏิเสธคำขอ — ตรวจสอบว่าเปิด API, จำกัด key ให้ตรงโดเมน และแชร์ชีตเป็น “ทุกคนที่มีลิงก์ดูได้”' +
+          (message ? ' (' + message + ')' : '');
       } else if (response.status === 404) {
         message = 'ไม่พบ Spreadsheet หรือบัญชีนี้ไม่มีสิทธิ์ดู';
       }

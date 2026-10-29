@@ -794,19 +794,15 @@ function makeStat(label, value, cls) {
   return chip;
 }
 
+// Admin pickers list every order list: "Hide" only hides it from customers.
+// Open first, hidden last; otherwise keeps the original order.
 function getVisibleLists() {
-  var visible = allLists.filter(function(l) {
+  function rank(l) {
     var d = String(l.display).toLowerCase();
-    return d !== 'hidden' && d !== 'hide' && d !== 'false' && d !== 'no'; 
-  });
-  
-  visible.sort(function(a, b) {
-    if (a.status === 'Open' && b.status !== 'Open') return -1;
-    if (a.status !== 'Open' && b.status === 'Open') return 1;
-    return 0; // Keeps original order for matching statuses
-  });
-  
-  return visible;
+    var hidden = d === 'hidden' || d === 'hide' || d === 'false' || d === 'no';
+    return (hidden ? 2 : 0) + (l.status === 'Open' ? 0 : 1);
+  }
+  return allLists.slice().sort(function(a, b) { return rank(a) - rank(b); });
 }
 
 // ════════════════════════════════
