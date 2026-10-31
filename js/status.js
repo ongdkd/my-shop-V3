@@ -256,7 +256,8 @@
       var card = h('section', 'st-card');
       var head = h('div', 'st-card-head');
       head.appendChild(h('div', 'st-card-name', 'บิลค่าส่ง ' + (ids.length > 1 ? i + 1 : '') + (bill.createdAt ? ' · ' + day(bill.createdAt) : '')));
-      head.appendChild(h('div', 'st-card-meta' + (paid.length ? ' ok' : ''), paid.length ? '✓ โอนแล้ว ' + baht(paid[0].amount) : 'ยังไม่ได้โอน'));
+      head.appendChild(h('div', 'st-card-meta' + (paid.length || bill.paidMarkAt ? ' ok' : ''),
+        paid.length ? '✓ โอนแล้ว ' + baht(paid[0].amount) : bill.paidMarkAt ? '✓ ชำระแล้ว' : 'ยังไม่ได้โอน'));
       card.appendChild(head);
       var rest = 0, pcs = 0;
       items.forEach(function (o) {
@@ -266,12 +267,23 @@
         card.appendChild(row);
       });
       var foot = h('div', 'st-card-foot');
+      // The shop keeps a paid bill to ship with the customer's next order (one delivery fee)
+      if (bill.holdAt) foot.appendChild(h('div', 'st-paid hold', '⏸ ร้านพักไว้ จะส่งพร้อมออเดอร์ถัดไปของคุณ ไม่ต้องจ่ายค่าส่งซ้ำ'));
       if (bill.fee === null || bill.fee === undefined) {
         foot.appendChild(amountBox('ส่วนที่เหลือ ' + baht(rest) + ' + ค่าส่ง', 'รอร้านแจ้งค่าส่ง'));
       } else {
         var total = rest + Number(bill.fee);
+        var paidSum = paid.reduce(function (s, p) { return s + (Number(p.amount) || 0); }, 0);
+        var due = Math.round((total - paidSum) * 100) / 100;
         foot.appendChild(amountBox('ยอดที่ต้องโอน · ' + pcs + ' ชิ้น (ส่วนที่เหลือ ' + baht(rest) + ' + ค่าส่ง ' + baht(bill.fee) + ')', baht(total)));
-        if (paid.length) {
+        if (bill.paidMarkAt && !paid.length) {
+          // Paid to the shop another way (cash, …): nothing to send here
+          foot.appendChild(h('div', 'st-paid ok', '✓ ร้านได้รับชำระแล้ว'));
+        } else if (paid.length && due > 0) {
+          // Items added after paying (sent together with a held bill): only the difference is due
+          foot.appendChild(amountBox('โอนแล้ว ' + baht(paidSum) + ' · ต้องโอนเพิ่ม', baht(due)));
+          foot.appendChild(payButton('ส่งสลิปยอดเพิ่ม', function () { openPay({ deliveryId: id, listId: items[0].listId, title: 'บิลค่าส่ง (ยอดเพิ่ม)', amount: due, address: true }); }));
+        } else if (paid.length) {
           foot.appendChild(payButton('แก้ที่อยู่', function () { openPay({ deliveryId: id, listId: items[0].listId, title: 'บิลค่าส่ง', amount: paid[0].amount, address: true }); }, true));
         } else {
           foot.appendChild(payButton('ส่งสลิป / ที่อยู่', function () { openPay({ deliveryId: id, listId: items[0].listId, title: 'บิลค่าส่ง', amount: total, address: true }); }));

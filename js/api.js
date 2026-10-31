@@ -418,6 +418,24 @@
     return r.data || [];
   }
 
+  // listId → photo of its first product (screen order), used as the list's cover.
+  // list_covers() (2026-10-31-iship.sql) also covers closed lists, whose products
+  // customers can't read. all: admins also read the products themselves, which
+  // adds hidden lists. Paged: one request returns at most 1000 rows.
+  async function firstProductImages(all) {
+    var first = {};
+    var c = await sb.rpc('list_covers');
+    if (!c.error && c.data) Object.keys(c.data).forEach(function (k) { first[k] = c.data[k]; });
+    if (!c.error && !all) return first;
+    for (var from = 0; ; from += 1000) {
+      var r = await sb.from('products').select('list_id,image').neq('image', '')
+        .order('seq', { ascending: true }).range(from, from + 999);
+      if (r.error) return first; // covers are cosmetic: fall back to the lists' own images
+      (r.data || []).forEach(function (p) { if (!first[p.list_id] && /^https?:\/\//.test(p.image)) first[p.list_id] = p.image; });
+      if (!r.data || r.data.length < 1000) return first;
+    }
+  }
+
   async function fetchProducts(listId) {
     var r = await sb.from('products')
       // `*` keeps this client compatible while the optional option_details
@@ -713,6 +731,7 @@
     getOrderLists: async function () {
       requireSb();
       var data = await fetchLists();
+      var covers = await firstProductImages();
       var out = [];
       for (var i = 0; i < data.length; i++) {
         var row = data[i];
@@ -723,7 +742,8 @@
           status: String(row.status || 'Open').trim(),
           name: String(row.name || '').trim() || 'รายการสั่งซื้อ',
           description: String(row.description || '').trim(),
-          image: String(row.image || '').trim() || PLACEHOLDER_IMG,
+          // Cover = the first product's photo; the list's own image only when no product has one
+          image: covers[row.id] || String(row.image || '').trim() || PLACEHOLDER_IMG,
           sheetId: row.id,
           giftRules: giftRulesOf(row),
           giftMode: row.gift_mode === 'best' ? 'best' : 'all'
@@ -812,6 +832,7 @@
       try {
         requireSb(); await requireAdmin();
         var data = await fetchLists();
+        var covers = await firstProductImages(true);
         _listRowMap = {};
         var rows = data.map(function (row, i) {
           var rowIndex = i + 2;
@@ -824,7 +845,8 @@
             sourceSpreadsheetId: sourceId,
             name: String(row.name || 'รายการสั่งซื้อ').trim(),
             desc: String(row.description || '').trim(),
-            image: String(row.image || '').trim(),
+            image: String(row.image || '').trim(), // the list's own image (edit form)
+            cover: covers[row.id] || String(row.image || '').trim(), // what the cards show
             status: String(row.status || 'Open').trim(),
             display: String(row.display || '').trim(),
             giftRules: giftRulesOf(row),
@@ -1315,8 +1337,37 @@
         return ok({ deliveries: (r.data || []).map(function (d) {
           return { id: d.id, customer: d.customer, fee: d.fee === null ? null : num(d.fee), createdAt: d.created_at, sentAt: d.sent_at || '',
             courier: d.courier || '', tracking: d.tracking || '', ishipStatus: d.iship_status_text || '', ishipStatusAt: d.iship_status_at || '',
-            ishipCode: d.iship_status || '', deliveredAt: d.delivered_at || '' };
+            ishipCode: d.iship_status || '', deliveredAt: d.delivered_at || '', holdAt: d.hold_at || '',
+            paidMarkAt: d.paid_mark_at || '' };
         }) });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
+    // Bill paid without a slip (cash, another transfer): counts as paid, moves to รอจัดส่ง
+    adminMarkDeliveryPaid: async function (deliveryId, on) {
+      try {
+        requireSb(); await requireAdmin();
+        var r = await sb.from('deliveries').update({ paid_mark_at: on ? new Date().toISOString() : null }).eq('id', deliveryId).select('id,paid_mark_at');
+        if (r.error) {
+          if (/paid_mark_at/.test(r.error.message || '')) return err('รันไฟล์ supabase/migrations/2026-10-31-iship.sql ใน SQL Editor อีกครั้งก่อน');
+          return err(r.error.message);
+        }
+        if (!r.data || !r.data.length) return err('ไม่พบบิลนี้');
+        return ok({ paidMarkAt: r.data[0].paid_mark_at || '' });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
+    // Paid bill the customer wants shipped with their next order: on = hold it
+    adminSetDeliveryHold: async function (deliveryId, on) {
+      try {
+        requireSb(); await requireAdmin();
+        var r = await sb.from('deliveries').update({ hold_at: on ? new Date().toISOString() : null }).eq('id', deliveryId).select('id,hold_at');
+        if (r.error) {
+          if (/hold_at/.test(r.error.message || '')) return err('รันไฟล์ supabase/migrations/2026-10-31-iship.sql ใน SQL Editor อีกครั้งก่อน');
+          return err(r.error.message);
+        }
+        if (!r.data || !r.data.length) return err('ไม่พบบิลนี้');
+        return ok({ holdAt: r.data[0].hold_at || '' });
       } catch (e) { return e.__json || err(e.message || e); }
     },
 

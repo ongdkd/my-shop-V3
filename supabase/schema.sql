@@ -1369,7 +1369,11 @@ alter table public.deliveries
   add column if not exists iship_status_text text not null default '',
   add column if not exists iship_status_at   timestamptz,
   -- when the shop first learned the parcel was delivered (notifies the admin once)
-  add column if not exists delivered_at      timestamptz;
+  add column if not exists delivered_at      timestamptz,
+  -- paid, but the customer asked to ship it with their next order (no second fee)
+  add column if not exists hold_at           timestamptz,
+  -- the shop marked the bill paid without a slip (cash, another transfer, ...)
+  add column if not exists paid_mark_at      timestamptz;
 create index if not exists deliveries_tracking_idx on public.deliveries(tracking) where tracking <> '';
 
 -- ── Shop settings (admin only), e.g. key 'iship' = sender address + parcel defaults ──
@@ -1406,7 +1410,8 @@ begin
     'deliveries', coalesce((
       select jsonb_agg(jsonb_build_object('id', d.id, 'fee', d.fee, 'createdAt', d.sent_at,
                          'courier', d.courier, 'tracking', d.tracking,
-                         'ishipStatus', d.iship_status_text, 'ishipStatusAt', d.iship_status_at)
+                         'ishipStatus', d.iship_status_text, 'ishipStatusAt', d.iship_status_at,
+                         'holdAt', d.hold_at, 'paidMarkAt', d.paid_mark_at)
                        order by d.sent_at desc)
       from public.deliveries d where d.customer = v and d.sent_at is not null), '[]'::jsonb),
     'payments', coalesce((
@@ -1512,6 +1517,20 @@ revoke all on function public.customer_orders(text) from public;
 revoke all on function public.customer_submit_payment(text, uuid, numeric, timestamptz, text, text, text, uuid, jsonb) from public;
 grant execute on function public.customer_orders(text) to anon, authenticated;
 grant execute on function public.customer_submit_payment(text, uuid, numeric, timestamptz, text, text, text, uuid, jsonb) to anon, authenticated;
+
+-- ── Shop: each list's cover is the photo of its first product ──
+-- Customers can only read products of open lists, so this returns just the
+-- first photo of every visible list, closed ones included.
+create or replace function public.list_covers()
+returns jsonb language sql stable security definer set search_path = public as $$
+  select coalesce(jsonb_object_agg(t.list_id, t.image), '{}'::jsonb) from (
+    select distinct on (p.list_id) p.list_id, p.image
+      from public.products p join public.order_lists l on l.id = p.list_id
+     where p.image ~ '^https?://' and lower(btrim(coalesce(l.display, ''))) not in ('hidden', 'hide', 'false', 'no')
+     order by p.list_id, p.seq) t;
+$$;
+revoke all on function public.list_covers() from public;
+grant execute on function public.list_covers() to anon, authenticated;
 
 notify pgrst, 'reload schema';
 

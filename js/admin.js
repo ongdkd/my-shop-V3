@@ -1041,7 +1041,7 @@ function renderOrderLists() {
     if (isHidden) card.style.opacity = '0.55';
  
     var img = document.createElement('img');
-    img.src = cdnThumb(item.image, 600) || PLACEHOLDER; img.className = 'ol-card-img';
+    img.src = cdnThumb(item.cover || item.image, 600) || PLACEHOLDER; img.className = 'ol-card-img';
     img.onerror = function() { this.src = PLACEHOLDER; };
     card.appendChild(img);
  
@@ -2581,6 +2581,8 @@ function drawStages() {
     if (p.deliveryId) B.billPaid[p.deliveryId] = true;
     else B.paid[p.listId + '|' + normCust(p.customer)] = true;
   });
+  // Marked paid by the shop (no slip) counts the same
+  B.deliveries.forEach(function(b) { if (b.paidMarkAt) B.billPaid[b.id] = true; });
   var listName = {};
   B.orders.forEach(function(o) { listName[o.listId] = o.shopName; });
   // Order-list filter: narrows every step and its count
@@ -2771,11 +2773,27 @@ function drawStages() {
   }
   function paidButton(x) {
     var paid = 0; x.pays.forEach(function(p) { paid += Number(p.amount) || 0; });
-    var ps = makeBtn('bill-paid' + (x.pays.length ? ' ok' : ''), x.pays.length ? '✓ โอนแล้ว ' + baht(paid) + ' · ดูสลิป' : 'รอลูกค้าโอน', null);
+    var label = x.pays.length ? '✓ โอนแล้ว ' + baht(paid) + ' · ดูสลิป'
+      : x.b.paidMarkAt ? '✓ ร้านบันทึกว่าชำระแล้ว (ไม่มีสลิป)' : 'รอลูกค้าโอน';
+    var ps = makeBtn('bill-paid' + (x.pays.length || x.b.paidMarkAt ? ' ok' : ''), escapeHtml(label), null);
     ps.type = 'button';
     if (x.pays.length) ps.onclick = function() { openPaymentsModal(x.pays, x.items.length ? custName(x.items) : x.b.customer); };
     else ps.disabled = true;
     return ps;
+  }
+  // Paid another way (cash, another transfer): like "✓ ชำระแล้ว" in step 1, the bill moves on to รอจัดส่ง
+  function markBillPaid(b, x) {
+    askConfirm('ยังไม่ได้รับสลิปค่าบิลของ ' + billTitle(x) + ' — ถือว่าชำระแล้ว และย้ายไปรอจัดส่ง?', 'ชำระแล้ว').then(function(ok) {
+      if (!ok) return;
+      body.classList.add('busy');
+      apiCall('adminMarkDeliveryPaid', b.id, true).then(function(res) {
+        body.classList.remove('busy');
+        if (res.status !== 'Success') { toast(res.message || 'บันทึกไม่สำเร็จ', 'error'); return; }
+        b.paidMarkAt = res.paidMarkAt;
+        toast('ย้ายไปแท็บ "รอจัดส่ง" แล้ว', 'success');
+        drawStages();
+      });
+    });
   }
   // Chat message for the bill: items, rest + fee, how to pay, delivery rounds
   function summaryBtn(x, cls) {
@@ -2838,6 +2856,21 @@ function drawStages() {
     board.appendChild(left); board.appendChild(right);
     body.appendChild(board);
 
+    // Paid bills on hold, waiting for the customer's next order
+    var held = billsOf(S.ship).filter(function(x) {
+      return x.b.holdAt && (!q() || x.items.some(hit) || x.b.customer.indexOf(q()) !== -1);
+    });
+    function heldOf(c) { return held.filter(function(x) { return x.b.customer === c; })[0] || null; }
+    function addToHeld(orderIds, x) {
+      var moving = B.orders.filter(function(o) { return orderIds.indexOf(o.id) !== -1; });
+      var rest = 0;
+      moving.forEach(function(o) { if (o.payType === 'Deposit') rest += Math.max(0, o.totalFull - o.total); });
+      askConfirm('รวม ' + moving.length + ' รายการเข้าบิลที่จ่ายแล้วของ ' + billTitle(x) + ' — ส่งพร้อมกัน ไม่เก็บค่าส่งซ้ำ' +
+        (rest > 0 ? '\nสินค้านี้ยังค้างส่วนที่เหลือ ' + baht(rest) + ' — ลูกค้าต้องโอนเพิ่ม' : ''), 'รวมบิล').then(function(ok) {
+        if (ok) setBill(orderIds, x.b.id, false, x.b.customer);
+      });
+    }
+
     function byCustomer(rows) {
       var custs = [], by = {};
       rows.forEach(function(o) {
@@ -2863,6 +2896,12 @@ function drawStages() {
         // Tap fallback for touch screens, where drag and drop doesn't work
         var go = makeBtn('btn btn-ghost btn-sm touch-only', 'สร้างบิล &#x2192;', function() { setBill(ids(items), null, true, c); });
         go.type = 'button'; go.title = 'ย้ายทั้งออเดอร์ไปเป็นบิลใหม่'; top.appendChild(go);
+        // This customer has a paid bill on hold: join it instead of a new bill (tap version of the drop)
+        var hb = heldOf(c);
+        if (hb) {
+          var jn = makeBtn('btn btn-ghost btn-sm', '&#x23F8; รวมกับบิลที่พักไว้', function() { addToHeld(ids(items), hb); });
+          jn.type = 'button'; jn.title = 'ส่งรวมกับบิลที่ลูกค้าจ่ายแล้ว ไม่เก็บค่าส่งซ้ำ'; top.appendChild(jn);
+        }
       }
       card.appendChild(top);
       itemList(card, items, function(line, o) {
@@ -2937,6 +2976,26 @@ function drawStages() {
       right.appendChild(card);
     });
 
+    // Paid bills on hold (รอจัดส่ง → ⏸): drop the customer's newly arrived order here to ship together
+    if (held.length) {
+      right.appendChild(div('bill-col-title stg-sub', '&#x23F8;&#xFE0F; บิลที่พักไว้ · วางออเดอร์ใหม่ของลูกค้าคนเดิมเพื่อส่งรวม (ไม่เก็บค่าส่งซ้ำ)'));
+      held.forEach(function(x) {
+        var b = x.b;
+        var card = div('bill-card held');
+        var top = div('bill-order-top');
+        var nm = document.createElement('strong'); nm.textContent = billTitle(x); top.appendChild(nm);
+        top.appendChild(div('slip-meta', '✓ จ่ายแล้ว'));
+        card.appendChild(top);
+        itemList(card, x.items);
+        dropZone(card, function(d) {
+          if (d.cust !== b.customer) { toast('รวมได้เฉพาะออเดอร์ของลูกค้าคนเดียวกัน', 'error'); return; }
+          if (d.bill === b.id) return;
+          addToHeld(d.ids, x);
+        });
+        right.appendChild(card);
+      });
+    }
+
     // Sent bills stay in this step until the customer sends the slip; then they move to "รอจัดส่ง".
     // Full width under the board: nothing is dragged here
     var waiting = unpaid().filter(function(x) { return !t || x.items.some(hit) || x.b.customer.indexOf(t) !== -1; });
@@ -2959,12 +3018,8 @@ function drawStages() {
         var un = makeBtn('btn btn-ghost btn-sm', 'ถอนบิล', function() { sendBill(b, false); });
         un.type = 'button'; un.title = 'ซ่อนบิลจากลูกค้า กลับเป็นร่าง'; act.appendChild(un);
         // e.g. paid in cash or another way
-        var go = makeBtn('btn btn-ghost btn-sm', '&#x1F69A; จัดส่งเลย (ไม่รอโอน)', function() {
-          askConfirm('ลูกค้ายังไม่ได้ส่งสลิปค่าบิลนี้ — จัดส่งเลยไหม?', 'จัดส่งเลย').then(function(ok) {
-            if (ok) openIshipModal(b, x, renderStatusPanel);
-          });
-        });
-        go.type = 'button'; act.appendChild(go);
+        var go = makeBtn('btn btn-primary btn-sm', '&#x2713; ชำระแล้ว &#x2192;', function() { markBillPaid(b, x); });
+        go.type = 'button'; go.title = 'ย้ายไป "รอจัดส่ง" โดยไม่ต้องรอสลิป'; act.appendChild(go);
         card.appendChild(act);
         grid.appendChild(card);
       });
@@ -2976,29 +3031,96 @@ function drawStages() {
   }
 
   // ── 3. Bill sent: the one action is "deliver", which books iShip ──
+  // Like step 2, two columns built by drag and drop: left = on hold (the customer
+  // will add their next order, no second fee), right = goes out this round (🚚).
+  // A bill dropped on a column moves there; a bill or one item dropped on another
+  // bill of the same customer joins it, so they go out as one parcel.
   function drawShip() {
     body.appendChild(tools());
     var t = q();
     var bills = billsOf(S.ship).filter(function(x) { return !t || x.items.some(hit); });
     if (!bills.length) return empty(STAGES[2].empty);
-    var grid = div('stg-grid');
-    bills.slice(0, STAGE_CAP).forEach(function(x) {
-      var b = x.b;
-      var card = div('bill-card stg-bill');
-      var top = div('bill-order-top');
-      var nm = document.createElement('strong'); nm.textContent = billTitle(x); top.appendChild(nm);
-      top.appendChild(div('slip-meta', escapeHtml('ส่งบิล ' + when(b.sentAt))));
-      card.appendChild(top);
-      itemList(card, x.items);
-      card.appendChild(billSum(x));
-      card.appendChild(paidButton(x));
-      var act = div('stg-actions');
+    body.appendChild(div('slip-meta bill-help mouse-only',
+      'ลากบิลไปซ้าย = พักไว้รอรวมกับออเดอร์ถัดไป · ไปขวา = ส่งรอบนี้ · ลากบิล (หรือทีละชิ้น) ไปวางบนบิลอื่นของลูกค้าคนเดิม = รวมเป็นกล่องเดียว'));
+    var board = div('bill-board');
+    var left = div('bill-col'), right = div('bill-col bill-col-right');
+    board.appendChild(left); board.appendChild(right);
+    body.appendChild(board);
+    var held = bills.filter(function(x) { return x.b.holdAt; }), active = bills.filter(function(x) { return !x.b.holdAt; });
+    left.appendChild(div('bill-col-title', '&#x23F8;&#xFE0F; พักไว้ · รอส่งพร้อมออเดอร์ถัดไป (' + held.length + ')'));
+    if (!held.length) left.appendChild(div('state-empty', 'ลากบิลมาวางที่นี่ เมื่อลูกค้าขอรอส่งพร้อมออเดอร์ถัดไป'));
+    else left.appendChild(div('slip-meta', 'ออเดอร์ใหม่ที่ถึงไทย ลากมาวางที่บิลเหล่านี้ได้ในแท็บ "ถึงไทย / ส่งบิล" — ไม่เก็บค่าส่งซ้ำ'));
+    held.forEach(function(x) { left.appendChild(shipCard(x, true)); });
+    right.appendChild(div('bill-col-title', '&#x1F69A; ส่งรอบนี้ (' + active.length + ')'));
+    if (!active.length) right.appendChild(div('state-empty', 'ลากบิลมาวางที่นี่เพื่อส่งรอบนี้'));
+    active.slice(0, STAGE_CAP).forEach(function(x) { right.appendChild(shipCard(x, false)); });
+    if (active.length > STAGE_CAP) right.appendChild(div('slip-meta', 'แสดง ' + STAGE_CAP + ' จาก ' + active.length + ' — ค้นหาให้แคบลง'));
+    // Empty space of a column: the dropped bill moves there
+    dropZone(left, function(d) { if (d.from === 'shipbill' && !B.billById[d.bill].holdAt) holdBill(B.billById[d.bill], true); });
+    dropZone(right, function(d) { if (d.from === 'shipbill' && B.billById[d.bill].holdAt) holdBill(B.billById[d.bill], false); });
+  }
+  function shipCard(x, held) {
+    var b = x.b;
+    var card = div('bill-card stg-bill' + (held ? ' held' : ''));
+    var top = div('bill-order-top');
+    var nm = document.createElement('strong'); nm.textContent = billTitle(x); top.appendChild(nm);
+    top.appendChild(div('slip-meta', escapeHtml(held ? 'พักไว้ ' + when(b.holdAt) : 'ส่งบิล ' + when(b.sentAt))));
+    card.appendChild(top);
+    // One item at a time, or the whole bill, can be dragged onto another bill of this customer
+    itemList(card, x.items, function(line, o) {
+      dragSource(line, function() { return { ids: [o.id], cust: b.customer, from: 'shipitem', bill: b.id }; });
+    });
+    dragSource(card, function() { return { ids: ids(x.items), cust: b.customer, from: 'shipbill', bill: b.id }; });
+    dropZone(card, function(d) {
+      if (d.bill === b.id || !/^ship/.test(d.from || '')) return;
+      if (d.cust !== b.customer) { toast('รวมได้เฉพาะบิลของลูกค้าคนเดียวกัน', 'error'); return; }
+      joinBills(d, x);
+    });
+    card.appendChild(billSum(x));
+    card.appendChild(paidButton(x));
+    var extra = owedMore(x);
+    if (extra > 0) card.appendChild(div('bill-owed', 'ลูกค้าต้องโอนเพิ่ม ' + escapeHtml(baht(extra)) + ' (มีสินค้าที่เพิ่มเข้ามาทีหลัง)'));
+    var act = div('stg-actions');
+    if (held) {
+      var go1 = makeBtn('btn btn-primary btn-sm', '&#x25B6; พร้อมส่งแล้ว', function() { holdBill(b, false); });
+      go1.type = 'button'; go1.title = 'ย้ายกลับไปรอจัดส่ง'; act.appendChild(go1);
+    } else {
+      var hold = makeBtn('btn btn-ghost btn-sm', '&#x23F8; รอรวมส่ง', function() { holdBill(b, true); });
+      hold.type = 'button'; hold.title = 'ลูกค้าขอรอส่งพร้อมออเดอร์ถัดไป (ไม่ต้องจ่ายค่าส่งซ้ำ)'; act.appendChild(hold);
       var go = makeBtn('btn btn-primary btn-sm', '&#x1F69A; จัดส่ง', function() { openIshipModal(b, x, renderStatusPanel); });
       go.type = 'button'; act.appendChild(go);
-      card.appendChild(act);
-      grid.appendChild(card);
+    }
+    card.appendChild(act);
+    return card;
+  }
+  // A paid bill (or one item of it) dropped onto another bill of the same customer:
+  // its items join that bill and go out as one parcel. If the whole bill moves and it
+  // had its own payment, the customer paid that bill's fee too — the shop settles it.
+  function joinBills(d, x) {
+    var from = B.billById[d.bill], whole = d.from === 'shipbill';
+    var fromPaid = whole && B.payments.some(function(p) { return p.deliveryId === d.bill; });
+    askConfirm('ย้าย ' + (whole ? 'ทั้งบิล (' + d.ids.length + ' รายการ)' : '1 รายการ') + ' ไปรวมกับบิล ' + billTitle(x) + ' — ส่งเป็นกล่องเดียว' +
+      (fromPaid ? '\nบิลที่ย้ายมามีค่าส่งที่ลูกค้าโอนแล้ว ฿' + (Number(from.fee) || 0) + ' — คืนเงินหรือหักให้ลูกค้าเอง' : ''), 'รวมบิล').then(function(ok) {
+      // setBillNow: the "leaving a paid bill" question was just asked here
+      if (ok) setBillNow(d.ids, x.b.id, false, x.b.customer);
     });
-    body.appendChild(grid); more(bills.length);
+  }
+  // What the customer still owes on a bill: items added after they paid
+  function owedMore(x) {
+    var rest = 0, paid = 0;
+    x.items.forEach(function(o) { if (o.payType === 'Deposit') rest += Math.max(0, o.totalFull - o.total); });
+    x.pays.forEach(function(p) { paid += Number(p.amount) || 0; });
+    return x.pays.length ? Math.round((rest + (Number(x.b.fee) || 0) - paid) * 100) / 100 : 0;
+  }
+  function holdBill(b, on) {
+    body.classList.add('busy');
+    apiCall('adminSetDeliveryHold', b.id, on).then(function(res) {
+      body.classList.remove('busy');
+      if (res.status !== 'Success') { toast(res.message || 'บันทึกไม่สำเร็จ', 'error'); return; }
+      b.holdAt = res.holdAt;
+      toast(on ? 'พักบิลไว้แล้ว — รอส่งพร้อมออเดอร์ถัดไป' : 'ย้ายกลับไปรอจัดส่งแล้ว', 'success');
+      drawStages();
+    });
   }
 
   // ── 4. Booked with iShip, not delivered yet ──
@@ -3027,7 +3149,7 @@ function drawStages() {
       card.appendChild(tr);
       itemList(card, x.items);
       var act = div('stg-actions');
-      [['&#x1F5A8; ใบปะหน้า A6', function() { openIshipLabel(b.tracking); }],
+      [['&#x1F5A8; ใบปะหน้า', function() { openIshipLabel(b.tracking); }],
        ['&#x1F4CD; เช็คสถานะ', function() { openIshipTrace(b.tracking, b.courier, renderStatusPanel); }]].forEach(function(p) {
         var bt = makeBtn('btn btn-ghost btn-sm', p[0], p[1]); bt.type = 'button'; act.appendChild(bt);
       });
