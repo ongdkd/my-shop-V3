@@ -41,33 +41,7 @@ end $$;
 revoke all on function public.admin_import_legacy(jsonb) from public;
 grant execute on function public.admin_import_legacy(jsonb) to authenticated;
 
--- Customer lookup now also returns their imported sheet rows
-create or replace function public.customer_orders(p_name text)
-returns jsonb language plpgsql stable security definer set search_path = public as $$
-declare v text := public.norm_customer(p_name);
-begin
-  if length(v) < 2 then
-    return jsonb_build_object('orders', '[]'::jsonb, 'payments', '[]'::jsonb, 'legacy', '[]'::jsonb);
-  end if;
-  return jsonb_build_object(
-    'orders', coalesce((
-      select jsonb_agg(jsonb_build_object(
-        'listId', o.list_id, 'listName', l.name, 'product', o.product, 'qty', o.qty,
-        'payType', o.pay_type, 'total', o.total, 'totalFull', o.total_full,
-        'status', o.status, 'shippedAt', o.shipped_at, 'tracking', o.tracking,
-        'createdAt', o.created_at) order by o.created_at desc)
-      from public.orders o join public.order_lists l on l.id = o.list_id
-      where public.norm_customer(o.customer) = v), '[]'::jsonb),
-    'payments', coalesce((
-      select jsonb_agg(jsonb_build_object(
-        'listId', p.list_id, 'amount', p.amount, 'paidAt', p.paid_at,
-        'createdAt', p.created_at, 'hasAddress', p.address <> '') order by p.created_at desc)
-      from public.payments p
-      where public.norm_customer(p.customer) = v), '[]'::jsonb),
-    'legacy', coalesce((
-      select jsonb_agg(jsonb_build_object(
-        'round', g.round, 'product', g.product, 'qty', g.qty, 'pay', g.pay,
-        'status', g.status, 'tracking', g.tracking, 'note', g.note) order by g.sort)
-      from public.legacy_orders g
-      where v = any (select public.norm_customer(x) from regexp_split_to_table(g.customer, '[\s,]+') x)), '[]'::jsonb));
-end $$;
+-- The customer lookup (customer_orders) that returns these rows is defined in
+-- 2026-10-31-iship.sql, the latest version. It used to be redefined here too,
+-- which replaced the newer one (no delivery bills on the customer page) when
+-- this file was run again. To restore it, run 2026-10-31-iship.sql.
