@@ -1943,14 +1943,15 @@
     // A6 label PDF for one or more tracking numbers (comma-separated). The
     // function returns the PDF itself, which invoke() would read as text, so
     // fetch it directly; the page opens the blob URL.
-    adminIshipLabel: async function (tracking) {
+    // size: '' (A6) or one of iShip's own layouts — 'a7', '100', 'a5'
+    adminIshipLabel: async function (tracking, size) {
       try {
         requireSb(); await requireAdmin();
         var s = await getSession();
         var r = await fetch(window.SUPABASE_URL + '/functions/v1/iship', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', apikey: window.SUPABASE_ANON_KEY, Authorization: 'Bearer ' + s.access_token },
-          body: JSON.stringify({ action: 'label', tracking: tracking })
+          body: JSON.stringify({ action: 'label', tracking: tracking, size: size || '' })
         });
         if (r.status === 404) return err('iShip ใช้งานไม่ได้ — ยังไม่ได้ deploy ฟังก์ชัน iship');
         if (!/pdf/.test(r.headers.get('content-type') || '')) {

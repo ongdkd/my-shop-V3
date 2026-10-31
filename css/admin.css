@@ -219,6 +219,11 @@ button{font-family:var(--font);cursor:pointer;border:none;}
 .modal-field textarea.summary-text{min-height:320px;line-height:1.7;margin-bottom:8px;}
 .sync-last{margin:10px 0 14px;padding:10px 12px;border-radius:var(--radius-sm);background:var(--surface-2);font-size:0.82rem;color:var(--text-2);}
 .sync-bad{color:var(--error);font-weight:600;}
+.label-sizes{display:grid;gap:8px;}
+.label-size{display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:12px 14px;border:1.5px solid var(--border);border-radius:var(--radius-md);background:var(--surface);color:var(--text);font-family:var(--font);text-align:left;cursor:pointer;}
+.label-size strong{font-size:0.92rem;}
+.label-size span{font-size:0.76rem;color:var(--text-3);}
+.label-size.on{border-color:var(--primary);background:var(--primary-light);box-shadow:0 0 0 3px var(--primary-light);}
 .sync-preview{margin-top:12px;}
 .sync-sum{padding:10px 12px;border-radius:var(--radius-sm);background:var(--primary-light);color:var(--text);font-size:0.86rem;margin-bottom:8px;}
 .sync-h{margin:12px 0 6px;font-size:0.82rem;font-weight:700;color:var(--text-2);}
@@ -983,9 +988,7 @@ a.ocard-phone{text-decoration:underline;text-decoration-color:var(--border-stron
 .iship-line{font-size:0.8rem;font-weight:600;color:var(--text);overflow-wrap:anywhere;}
 .iship-actions{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;}
 .iship-to{padding:10px 12px;border-radius:10px;background:var(--surface-2);margin-bottom:12px;font-size:0.84rem;display:flex;flex-direction:column;gap:4px;align-items:flex-start;}
-.parcel-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr)) auto;gap:6px;}
-.parcel-row input{min-width:0;min-height:40px;padding:6px 8px;border:1.5px solid var(--border);border-radius:8px;font-family:var(--font);font-size:16px;}
-@media(max-width:420px){.parcel-row{grid-template-columns:repeat(2,minmax(0,1fr));}}
+.iship-quote-row{display:flex;justify-content:flex-end;margin:4px 0 8px;}
 .iship-prices{display:flex;flex-direction:column;gap:6px;margin-bottom:12px;max-height:280px;overflow-y:auto;}
 .iship-price{display:flex;align-items:center;gap:10px;padding:9px 10px;border:1.5px solid var(--border);border-radius:10px;cursor:pointer;}
 .iship-price:has(input:checked){border-color:var(--primary);background:var(--primary-light);}

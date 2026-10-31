@@ -2795,6 +2795,12 @@ function drawStages() {
     [['&#x2699;&#xFE0F; ตั้งค่าผู้ส่ง iShip', openIshipSettings], ['&#x1F69A; เรียกรถเข้ารับ', openPickupModal]].forEach(function(a) {
       var b = makeBtn('btn btn-ghost btn-sm', a[0], a[1]); b.type = 'button'; t.appendChild(b);
     });
+    // iShip's API has no credit balance, so these open iShip's own pages (signed in to iShip there)
+    [['&#x1F4B3; เครดิต iShip &#x2197;', 'https://app.iship.cloud/hold-credit', 'ดูเครดิตคงเหลือบนเว็บ iShip'],
+     ['&#x2795; เติมเครดิต &#x2197;', 'https://app.iship.cloud/topup', 'แจ้งเติมเงินบนเว็บ iShip']].forEach(function(a) {
+      var l = document.createElement('a'); l.className = 'btn btn-ghost btn-sm'; l.innerHTML = a[0];
+      l.href = a[1]; l.target = '_blank'; l.rel = 'noopener'; l.title = a[2]; t.appendChild(l);
+    });
     return t;
   }
 
@@ -3407,19 +3413,17 @@ function openIshipSettings() {
     el('modalBody').appendChild(div('iship-sec', '1. ที่อยู่ผู้ส่ง <small>พิมพ์บนใบปะหน้าทุกกล่อง</small>'));
     var addr = makeAddressFields(v, 'isf', 'ชื่อผู้ส่ง / ชื่อร้าน');
     el('modalBody').appendChild(addr.node);
-    // Parcel defaults: iShip needs a category and size to price a parcel; each booking can change them
-    el('modalBody').appendChild(div('iship-sec', '2. ค่าเริ่มต้นของพัสดุ <small>ขนส่งใช้คิดราคา · ปรับได้ทุกครั้งตอนกดจัดส่ง</small>'));
+    // The product category couriers ask for (weight and size aren't sent: iShip doesn't need them)
+    el('modalBody').appendChild(div('iship-sec', '2. ประเภทสินค้า <small>แจ้งขนส่งว่าในกล่องคืออะไร</small>'));
     var cf = div('modal-field'); var cl = document.createElement('label'); cl.htmlFor = 'isfCat'; cl.textContent = 'ประเภทสินค้า (แจ้งขนส่ง)'; cf.appendChild(cl);
     var cat = document.createElement('select'); cat.id = 'isfCat';
     ISHIP_CATEGORIES.forEach(function(c) { var o = document.createElement('option'); o.value = c[0]; o.textContent = c[1]; cat.appendChild(o); });
     cat.value = v.category_id === undefined ? 99 : v.category_id; cf.appendChild(cat); el('modalBody').appendChild(cf);
-    var parcel = makeParcelInputs(v);
-    el('modalBody').appendChild(parcel.node);
     openModal('&#x2699;&#xFE0F; ตั้งค่าผู้ส่ง iShip', '', function() {
       var p = addr.get();
       var bad = addressProblem(p);
       if (bad) { toast(bad, 'error'); return; }
-      var value = Object.assign(p, { category_id: Number(cat.value) }, parcel.get());
+      var value = Object.assign(p, { category_id: Number(cat.value) });
       el('modalSave').disabled = true;
       apiCall('adminSaveSetting', 'iship', value).then(function(r) {
         el('modalSave').disabled = false;
@@ -3430,20 +3434,7 @@ function openIshipSettings() {
   });
 }
 
-function makeParcelInputs(v) {
-  var f = div('modal-field');
-  var l = document.createElement('label'); l.textContent = 'พัสดุ: น้ำหนัก (กก.) · กว้าง × ยาว × สูง (ซม.)'; f.appendChild(l);
-  var row = div('parcel-row'), ins = {};
-  [['weight', 'กก.', 1, '0.1'], ['width', 'กว้าง', 10, '1'], ['length', 'ยาว', 15, '1'], ['height', 'สูง', 5, '1']].forEach(function(d) {
-    var i = document.createElement('input'); i.type = 'number'; i.min = '0'; i.step = d[3]; i.inputMode = 'decimal';
-    i.value = v[d[0]] || d[2]; i.setAttribute('aria-label', d[1]); i.title = d[1];
-    row.appendChild(i); ins[d[0]] = i;
-  });
-  f.appendChild(row);
-  return { node: f, row: row, get: function() { var o = {}; Object.keys(ins).forEach(function(k) { o[k] = Number(ins[k].value) || 0; }); return o; } };
-}
-
-// Book one delivery bill: recipient, parcel size, courier prices → tracking number
+// Book one delivery bill: recipient, courier prices → tracking number
 function openIshipModal(b, x, after) {
   var who = x.items.length ? x.items[0].customer : '@' + b.customer;
   el('modalBody').innerHTML = '';
@@ -3455,10 +3446,11 @@ function openIshipModal(b, x, after) {
     if (!addr) { addr = makeAddressFields(prefill || {}, 'ism'); editWrap.appendChild(addr.node); }
     editWrap.hidden = false;
   }
-  var parcel = makeParcelInputs({});
-  var qBtn = makeBtn('btn btn-ghost btn-sm', 'เช็คราคา', function() { quote(); }); qBtn.type = 'button';
-  parcel.row.appendChild(qBtn);
-  el('modalBody').appendChild(parcel.node);
+  // No weight/size: iShip takes the parcel without them (it's optional), so nothing to fill
+  var qRow = div('iship-quote-row');
+  var qBtn = makeBtn('btn btn-ghost btn-sm', '&#x1F504; เช็คราคาใหม่', function() { quote(); }); qBtn.type = 'button';
+  qBtn.title = 'กดหลังแก้ที่อยู่ผู้รับ'; qRow.appendChild(qBtn);
+  el('modalBody').appendChild(qRow);
   var prices = div('iship-prices'); el('modalBody').appendChild(prices);
   var rf = div('modal-field'); var rl = document.createElement('label'); rl.htmlFor = 'ismRemark'; rl.textContent = 'หมายเหตุถึงขนส่ง (ไม่บังคับ)'; rf.appendChild(rl);
   var remark = document.createElement('input'); remark.id = 'ismRemark'; remark.maxLength = 200; remark.placeholder = 'เช่น ห้ามโยน'; rf.appendChild(remark);
@@ -3473,19 +3465,14 @@ function openIshipModal(b, x, after) {
   openModal('&#x1F69A; ส่งด้วย iShip · ' + escapeHtml(who), '', save, 'สร้างเลขพัสดุ');
   el('modalSave').disabled = true;
 
-  apiCall('adminGetSetting', 'iship').then(function(res) {
-    var v = (res && res.value) || {};
-    var p = makeParcelInputs(v).get(); // defaults from settings
-    parcel.row.querySelectorAll('input').forEach(function(i, k) { i.value = p[['weight', 'width', 'length', 'height'][k]]; });
-    quote();
-  });
+  quote();
 
   function quote() {
     var to = addr && !editWrap.hidden ? addr.get() : undefined;
     if (to) { var bad = addressProblem(to); if (bad) { toast(bad, 'error'); return; } }
     prices.innerHTML = ''; prices.appendChild(makeSpinner());
     chosen = null; el('modalSave').disabled = true;
-    apiCall('adminIship', 'quote', { deliveryId: b.id, parcel: parcel.get(), to: to }).then(function(res) {
+    apiCall('adminIship', 'quote', { deliveryId: b.id, to: to }).then(function(res) {
       prices.innerHTML = '';
       if (res.status !== 'Success') {
         var msg = res.message || 'เช็คราคาไม่สำเร็จ';
@@ -3533,7 +3520,7 @@ function openIshipModal(b, x, after) {
   }
   function create(to) {
     el('modalSave').disabled = true; el('modalSave').textContent = 'กำลังสร้าง...';
-    apiCall('adminIship', 'create', { deliveryId: b.id, courier: chosen.code, parcel: parcel.get(), remark: remark.value.trim(), to: to }).then(function(res) {
+    apiCall('adminIship', 'create', { deliveryId: b.id, courier: chosen.code, remark: remark.value.trim(), to: to }).then(function(res) {
       if (res.status !== 'Success') {
         el('modalSave').disabled = false; el('modalSave').textContent = 'สร้างเลขพัสดุ · ' + baht(chosen.price);
         toast(res.message || 'สร้างเลขพัสดุไม่สำเร็จ', 'error'); return;
@@ -3551,13 +3538,84 @@ function openIshipModal(b, x, after) {
 }
 
 // Label PDF in a new tab (opened now so the pop-up blocker allows it)
-function openIshipLabel(tracking) {
-  var w = window.open('', '_blank');
-  if (w) w.document.write('<p style="font-family:sans-serif">กำลังโหลดใบปะหน้า...</p>');
-  apiCall('adminIshipLabel', tracking).then(function(res) {
-    if (res.status !== 'Success') { if (w) w.close(); toast(res.message || 'โหลดใบปะหน้าไม่สำเร็จ', 'error'); return; }
-    if (w) w.location = res.url; else window.open(res.url, '_blank');
+// iship: a layout iShip itself makes (its API's undocumented ?size=, the same
+// sizes as its website's print menu). w/h: made here instead by placing iShip's
+// A6 pages on other paper (pdf-lib), in PDF points (1 mm = 2.835 pt).
+var LABEL_SIZES = [
+  { id: 'a6', name: 'A6 · 100×150 มม.', sub: 'ขนาดมาตรฐานของ iShip' },
+  { id: 'a7', iship: 'a7', name: 'A7 · 100×75 มม.', sub: 'สติกเกอร์ขนาดเล็ก · iShip จัดหน้าให้ บาร์โค้ดเต็มขนาด' },
+  { id: 's100', iship: '100', name: '100×100 มม.', sub: 'สติกเกอร์สี่เหลี่ยม · iShip จัดหน้าให้' },
+  { id: 'a5', iship: 'a5', name: 'A5 · 148×210 มม.', sub: 'ใบใหญ่ อ่านง่าย' },
+  { id: '4x6', name: '4×6 นิ้ว (101.6×152.4 มม.)', sub: 'เครื่องพิมพ์สติกเกอร์ความร้อนขนาด 4×6', w: 288, h: 432, cols: 1, rows: 1 },
+  { id: 'a4', name: 'A4 · 1 ใบต่อหน้า', sub: 'ขยายเต็มหน้า', w: 595.28, h: 841.89, cols: 1, rows: 1 },
+  { id: 'a4x4', name: 'A4 · 4 ใบต่อแผ่น', sub: 'สติกเกอร์ A4 แบ่ง 4 / ตัดเป็น A6', w: 595.28, h: 841.89, cols: 2, rows: 2 }
+];
+var _pdfLib = null;
+function loadPdfLib() {
+  if (window.PDFLib) return Promise.resolve(window.PDFLib);
+  if (_pdfLib) return _pdfLib;
+  _pdfLib = new Promise(function(resolve, reject) {
+    var s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js';
+    s.onload = function() { resolve(window.PDFLib); };
+    s.onerror = function() { _pdfLib = null; reject(new Error('โหลดตัวจัดหน้า PDF ไม่สำเร็จ')); };
+    document.head.appendChild(s);
   });
+  return _pdfLib;
+}
+// Every label page of `bytes`, scaled to fit its cell, cells filled left→right, top→bottom
+function relayLabels(bytes, size) {
+  return loadPdfLib().then(function(L) {
+    return L.PDFDocument.load(bytes).then(function(src) {
+      return L.PDFDocument.create().then(function(out) {
+        return out.embedPages(src.getPages()).then(function(pages) {
+          var per = size.cols * size.rows, cw = size.w / size.cols, ch = size.h / size.rows, sheet = null;
+          pages.forEach(function(p, i) {
+            if (i % per === 0) sheet = out.addPage([size.w, size.h]);
+            var slot = i % per, col = slot % size.cols, row = Math.floor(slot / size.cols);
+            var k = Math.min(cw / p.width, ch / p.height), w = p.width * k, h = p.height * k;
+            sheet.drawPage(p, { x: col * cw + (cw - w) / 2, y: size.h - (row + 1) * ch + (ch - h) / 2, width: w, height: h });
+          });
+          return out.save();
+        });
+      });
+    });
+  });
+}
+
+// 🖨: pick the paper (remembered), then open the label PDF in a new tab
+function openIshipLabel(tracking) {
+  var saved = 'a6';
+  try { saved = localStorage.getItem('labelSize') || 'a6'; } catch (e) {}
+  var body = el('modalBody'); body.innerHTML = '';
+  var list = div('label-sizes'), pick = saved;
+  LABEL_SIZES.forEach(function(s) {
+    var b = makeBtn('label-size' + (s.id === pick ? ' on' : ''), '<strong>' + escapeHtml(s.name) + '</strong><span>' + escapeHtml(s.sub) + '</span>', function() {
+      pick = s.id;
+      list.querySelectorAll('.label-size').forEach(function(x) { x.classList.toggle('on', x === b); });
+    });
+    b.type = 'button'; list.appendChild(b);
+  });
+  body.appendChild(list);
+  openModal('&#x1F5A8; ใบปะหน้า · ' + escapeHtml(tracking), '', function() {
+    try { localStorage.setItem('labelSize', pick); } catch (e) {}
+    var size = LABEL_SIZES.filter(function(s) { return s.id === pick; })[0];
+    // Opened now, during the click, so the pop-up blocker allows it
+    var w = window.open('', '_blank');
+    if (w) w.document.write('<p style="font-family:sans-serif">กำลังโหลดใบปะหน้า...</p>');
+    closeModal();
+    apiCall('adminIshipLabel', tracking, size.iship || '').then(function(res) {
+      if (res.status !== 'Success') throw new Error(res.message || 'โหลดใบปะหน้าไม่สำเร็จ');
+      if (!size.w) return res.url;
+      return fetch(res.url).then(function(r) { return r.arrayBuffer(); }).then(function(bytes) { return relayLabels(bytes, size); })
+        .then(function(pdf) { return URL.createObjectURL(new Blob([pdf], { type: 'application/pdf' })); });
+    }).then(function(url) {
+      if (w) w.location = url; else window.open(url, '_blank');
+    }).catch(function(e) {
+      if (w) w.close();
+      toast(e.message || 'โหลดใบปะหน้าไม่สำเร็จ', 'error');
+    });
+  }, 'เปิดใบปะหน้า');
 }
 
 function openIshipTrace(tracking, courier, onUpdated) {

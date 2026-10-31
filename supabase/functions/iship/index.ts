@@ -23,8 +23,7 @@ const reply = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
 
 type Parts = { name?: string; phone?: string; address?: string; district?: string; amphoe?: string; province?: string; zipcode?: string };
-type Parcel = { weight?: number; width?: number; length?: number; height?: number };
-type Settings = Parts & Parcel & { category_id?: number };
+type Settings = Parts & { category_id?: number };
 
 function call(path: string, body?: unknown): Promise<Response> {
   return fetch(BASE + path, {
@@ -74,12 +73,6 @@ function route(from: Parts, to: Parts) {
   return {
     src_zipcode: from.zipcode, src_province: from.province, src_amphure: from.amphoe, src_district: from.district,
     dst_zipcode: to.zipcode, dst_province: to.province, dst_amphure: to.amphoe, dst_district: to.district,
-  };
-}
-function parcelOf(input: Parcel, from: Settings) {
-  return {
-    weight: num(input.weight, num(from.weight, 1)), width: num(input.width, num(from.width, 10)),
-    length: num(input.length, num(from.length, 15)), height: num(input.height, num(from.height, 5)),
   };
 }
 
@@ -139,11 +132,11 @@ Deno.serve(async (req) => {
         const { from, to: saved } = await billContext(sb, String(input.deliveryId));
         const to = (input.to as Parts) ?? saved ?? {};
         need(from, "ผู้ส่ง (ตั้งค่า iShip)"); need(to, "ผู้รับ");
-        const parcel = parcelOf((input.parcel ?? {}) as Parcel, from);
+        // No weight/size: they're optional for iShip, and the shop doesn't measure parcels
         const list = ((await callJson("/api/courier_code")).data ?? []) as { code: string; name: string }[];
         const prices = await Promise.all(list.map(async (c) => {
           try {
-            const j = await callJson("/api/v2/check-price", { courier_code: c.code, ...route(from, to), ...parcel });
+            const j = await callJson("/api/v2/check-price", { courier_code: c.code, ...route(from, to) });
             const d = (j.data ?? j) as Record<string, unknown>;
             return { code: c.code, name: c.name, price: Number(d.total_price ?? d.price), remote: Number(d.remote_area) || 0 };
           } catch (e) {
@@ -151,7 +144,7 @@ Deno.serve(async (req) => {
           }
         }));
         prices.sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity));
-        return reply({ prices, to, parcel });
+        return reply({ prices, to });
       }
 
       case "create": {
@@ -162,7 +155,6 @@ Deno.serve(async (req) => {
         need(from, "ผู้ส่ง (ตั้งค่า iShip)"); need(to, "ผู้รับ");
         const courier = String(input.courier || "");
         if (!courier) throw new Error("กรุณาเลือกขนส่ง");
-        const parcel = parcelOf((input.parcel ?? {}) as Parcel, from);
         const j = await callJson("/api/create_order", {
           platform_name: "Order Hub",
           courier_code: courier,
@@ -171,7 +163,6 @@ Deno.serve(async (req) => {
           src_district: from.district, src_amphure: from.amphoe, src_province: from.province, src_zipcode: from.zipcode,
           dst_name: to.name, dst_phone: to.phone, dst_address: to.address,
           dst_district: to.district, dst_amphure: to.amphoe, dst_province: to.province, dst_zipcode: to.zipcode,
-          ...parcel,
           cod_amount: 0,
           category_id: Number.isInteger(from.category_id) ? from.category_id : 99,
           remark: String(input.remark ?? "").slice(0, 200),
@@ -193,7 +184,10 @@ Deno.serve(async (req) => {
       case "label": {
         const tracks = String(input.tracking ?? "").replace(/[^A-Za-z0-9,]/g, "");
         if (!tracks) throw new Error("ไม่พบเลขพัสดุ");
-        const r = await call(`/api/download/pdf?tracks=${encodeURIComponent(tracks)}`);
+        // size: iShip's other layouts (not in its docs; same as its website's print
+        // menu): a7 = 100×75 mm, 100 = 100×100 mm, a5. Anything else → A6.
+        const size = ["a7", "100", "a5"].includes(String(input.size ?? "")) ? `&size=${input.size}` : "";
+        const r = await call(`/api/download/pdf?tracks=${encodeURIComponent(tracks)}${size}`);
         if (!r.ok || !(r.headers.get("content-type") ?? "").includes("pdf")) {
           throw new Error(`โหลดใบปะหน้าไม่สำเร็จ (iShip ${r.status}): ${(await r.text()).slice(0, 150)}`);
         }
