@@ -2847,7 +2847,7 @@ function drawStages() {
     var bar = div('bill-tools stg-arrive-bar');
     bar.appendChild(div('slip-meta bill-help mouse-only',
       'ลากออเดอร์ (หรือทีละชิ้น) ไปทางขวาเพื่อทำบิล · วางบนบิลเพื่อรวม · ลากกลับมาทางซ้ายเพื่อนำออก'));
-    var set = makeBtn('btn btn-ghost btn-sm', '&#x2699;&#xFE0F; ตั้งค่าบิล' + (_billSet.fee !== null ? ' · ค่าส่ง ' + escapeHtml(baht(_billSet.fee)) : ''),
+    var set = makeBtn('btn btn-ghost btn-sm', '&#x2699;&#xFE0F; ตั้งค่าบิล · ค่าส่ง ' + escapeHtml(baht(billFee())),
       function() { openBillSettings(drawStages); });
     set.type = 'button'; set.title = 'ค่าส่งเริ่มต้น และข้อความสรุปยอด'; bar.appendChild(set);
     body.appendChild(bar);
@@ -2855,21 +2855,6 @@ function drawStages() {
     var left = div('bill-col'), right = div('bill-col bill-col-right');
     board.appendChild(left); board.appendChild(right);
     body.appendChild(board);
-
-    // Paid bills on hold, waiting for the customer's next order
-    var held = billsOf(S.ship).filter(function(x) {
-      return x.b.holdAt && (!q() || x.items.some(hit) || x.b.customer.indexOf(q()) !== -1);
-    });
-    function heldOf(c) { return held.filter(function(x) { return x.b.customer === c; })[0] || null; }
-    function addToHeld(orderIds, x) {
-      var moving = B.orders.filter(function(o) { return orderIds.indexOf(o.id) !== -1; });
-      var rest = 0;
-      moving.forEach(function(o) { if (o.payType === 'Deposit') rest += Math.max(0, o.totalFull - o.total); });
-      askConfirm('รวม ' + moving.length + ' รายการเข้าบิลที่จ่ายแล้วของ ' + billTitle(x) + ' — ส่งพร้อมกัน ไม่เก็บค่าส่งซ้ำ' +
-        (rest > 0 ? '\nสินค้านี้ยังค้างส่วนที่เหลือ ' + baht(rest) + ' — ลูกค้าต้องโอนเพิ่ม' : ''), 'รวมบิล').then(function(ok) {
-        if (ok) setBill(orderIds, x.b.id, false, x.b.customer);
-      });
-    }
 
     function byCustomer(rows) {
       var custs = [], by = {};
@@ -2896,12 +2881,6 @@ function drawStages() {
         // Tap fallback for touch screens, where drag and drop doesn't work
         var go = makeBtn('btn btn-ghost btn-sm touch-only', 'สร้างบิล &#x2192;', function() { setBill(ids(items), null, true, c); });
         go.type = 'button'; go.title = 'ย้ายทั้งออเดอร์ไปเป็นบิลใหม่'; top.appendChild(go);
-        // This customer has a paid bill on hold: join it instead of a new bill (tap version of the drop)
-        var hb = heldOf(c);
-        if (hb) {
-          var jn = makeBtn('btn btn-ghost btn-sm', '&#x23F8; รวมกับบิลที่พักไว้', function() { addToHeld(ids(items), hb); });
-          jn.type = 'button'; jn.title = 'ส่งรวมกับบิลที่ลูกค้าจ่ายแล้ว ไม่เก็บค่าส่งซ้ำ'; top.appendChild(jn);
-        }
       }
       card.appendChild(top);
       itemList(card, items, function(line, o) {
@@ -2976,26 +2955,6 @@ function drawStages() {
       right.appendChild(card);
     });
 
-    // Paid bills on hold (รอจัดส่ง → ⏸): drop the customer's newly arrived order here to ship together
-    if (held.length) {
-      right.appendChild(div('bill-col-title stg-sub', '&#x23F8;&#xFE0F; บิลที่พักไว้ · วางออเดอร์ใหม่ของลูกค้าคนเดิมเพื่อส่งรวม (ไม่เก็บค่าส่งซ้ำ)'));
-      held.forEach(function(x) {
-        var b = x.b;
-        var card = div('bill-card held');
-        var top = div('bill-order-top');
-        var nm = document.createElement('strong'); nm.textContent = billTitle(x); top.appendChild(nm);
-        top.appendChild(div('slip-meta', '✓ จ่ายแล้ว'));
-        card.appendChild(top);
-        itemList(card, x.items);
-        dropZone(card, function(d) {
-          if (d.cust !== b.customer) { toast('รวมได้เฉพาะออเดอร์ของลูกค้าคนเดียวกัน', 'error'); return; }
-          if (d.bill === b.id) return;
-          addToHeld(d.ids, x);
-        });
-        right.appendChild(card);
-      });
-    }
-
     // Sent bills stay in this step until the customer sends the slip; then they move to "รอจัดส่ง".
     // Full width under the board: nothing is dragged here
     var waiting = unpaid().filter(function(x) { return !t || x.items.some(hit) || x.b.customer.indexOf(t) !== -1; });
@@ -3049,7 +3008,7 @@ function drawStages() {
     var held = bills.filter(function(x) { return x.b.holdAt; }), active = bills.filter(function(x) { return !x.b.holdAt; });
     left.appendChild(div('bill-col-title', '&#x23F8;&#xFE0F; พักไว้ · รอส่งพร้อมออเดอร์ถัดไป (' + held.length + ')'));
     if (!held.length) left.appendChild(div('state-empty', 'ลากบิลมาวางที่นี่ เมื่อลูกค้าขอรอส่งพร้อมออเดอร์ถัดไป'));
-    else left.appendChild(div('slip-meta', 'ออเดอร์ใหม่ที่ถึงไทย ลากมาวางที่บิลเหล่านี้ได้ในแท็บ "ถึงไทย / ส่งบิล" — ไม่เก็บค่าส่งซ้ำ'));
+    else left.appendChild(div('slip-meta', 'บิลใหม่ของลูกค้าคนเดิมที่มาถึงแท็บนี้ ลากมาวางบนบิลที่พักไว้เพื่อรวมเป็นกล่องเดียว · ถ้าไม่เก็บค่าส่งซ้ำ แก้ค่าส่งของบิลใหม่ก่อนส่งบิล'));
     held.forEach(function(x) { left.appendChild(shipCard(x, true)); });
     right.appendChild(div('bill-col-title', '&#x1F69A; ส่งรอบนี้ (' + active.length + ')'));
     if (!active.length) right.appendChild(div('state-empty', 'ลากบิลมาวางที่นี่เพื่อส่งรอบนี้'));
@@ -3242,8 +3201,8 @@ function drawStages() {
       if (isNew && target) {
         var nb = { id: target, customer: cust, fee: null, createdAt: new Date().toISOString(), sentAt: '' };
         B.deliveries.push(nb);
-        // New bills start with the default fee from ⚙️ ตั้งค่าบิล (still editable on the draft)
-        if (_billSet.fee !== null) apiCall('adminSetDeliveryFee', target, _billSet.fee).then(function(f) {
+        // New bills start with the default fee (⚙️ ตั้งค่าบิล, else ฿40); still editable on the draft
+        apiCall('adminSetDeliveryFee', target, billFee()).then(function(f) {
           if (f.status === 'Success') { nb.fee = f.fee; drawStages(); }
         });
       }
@@ -4566,6 +4525,9 @@ var SUMMARY_DEFAULT =
   'เพื่อให้น้อง ๆ ได้ออกเดินทางไปหาอย่างถูกต้องน้าา 💕 ขอบคุณมาก ๆ เลยนะคะที่มารับน้อง ๆ ไปอยู่ด้วย 🧸✨ 💖';
 // Saved in app_settings 'bill': { template, fee } — fee = default delivery fee of new bills
 var _billSet = { template: '', fee: null };
+// New bills start at this fee unless ⚙️ ตั้งค่าบิล sets another; the admin edits it per bill
+var DEFAULT_BILL_FEE = 40;
+function billFee() { return _billSet.fee === null ? DEFAULT_BILL_FEE : _billSet.fee; }
 
 // o: { items, fee, arrive, round1, round2 } — the dates are Date objects
 function summaryMessage(o) {
@@ -4600,7 +4562,7 @@ function openBillSettings(after) {
   var ff = div('modal-field');
   var fl = document.createElement('label'); fl.htmlFor = 'bsFee'; fl.textContent = 'ค่าส่งเริ่มต้นของบิลใหม่ (บาท)'; ff.appendChild(fl);
   var fee = document.createElement('input'); fee.id = 'bsFee'; fee.type = 'number'; fee.min = '0'; fee.step = '1'; fee.inputMode = 'decimal';
-  fee.placeholder = 'ว่าง = ใส่เองทุกบิล'; fee.value = _billSet.fee === null ? '' : _billSet.fee; ff.appendChild(fee);
+  fee.placeholder = 'ว่าง = ' + DEFAULT_BILL_FEE + ' บาท'; fee.value = _billSet.fee === null ? '' : _billSet.fee; ff.appendChild(fee);
   body.appendChild(ff);
 
   var tf = div('modal-field');
