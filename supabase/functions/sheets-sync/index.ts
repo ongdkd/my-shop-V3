@@ -119,7 +119,10 @@ function rowFor(o: Record<string, any>, listPaid: boolean, bill: Record<string, 
   };
 }
 
-async function sync(db: SupabaseClient) {
+// dry: work out every change but write nothing (no new tabs either) — the
+// result lists the rows to add and the cells to change, for the admin to check
+const PREVIEW_MAX = 300;
+async function sync(db: SupabaseClient, dry = false) {
   const { data: setting } = await db.from("app_settings").select("value").eq("key", "sheets").maybeSingle();
   const conf = (setting?.value ?? {}) as { from?: string; url?: string };
   const since = String(conf.from ?? "");
@@ -141,7 +144,7 @@ async function sync(db: SupabaseClient) {
     if (!byQuarter.has(k)) byQuarter.set(k, []);
     byQuarter.get(k)!.push(rowFor(o, listPaid.has(o.list_id + "|" + norm(o.customer)), billById.get(o.delivery_id), billPaid.has(o.delivery_id)));
   }
-  if (!byQuarter.size) return { added: 0, updated: 0, created: [] as string[] };
+  if (!byQuarter.size) return { added: 0, updated: 0, created: [] as string[], preview: { rows: [], cells: [], headers: [] } };
 
   const { token, email } = await googleToken();
   const api = (path: string, init?: RequestInit) => sheets(sheetId, token, email, path, init);
@@ -152,27 +155,36 @@ async function sync(db: SupabaseClient) {
   const titleOf = new Map(titles.map((t) => [tabKey(t), t]));
   const created: string[] = [];
   const missing = [...byQuarter.keys()].filter((k) => !titleOf.has(k));
-  if (missing.length) {
+  if (missing.length && !dry) {
     await api(":batchUpdate", { method: "POST", body: JSON.stringify({
       requests: missing.map((k) => ({ addSheet: { properties: { title: "เดือน" + k, gridProperties: { frozenRowCount: 1 } } } })),
     }) });
-    missing.forEach((k) => { titleOf.set(k, "เดือน" + k); created.push("เดือน" + k); });
   }
+  // A preview treats a missing tab as a new, empty one
+  missing.forEach((k) => { titleOf.set(k, "เดือน" + k); created.push("เดือน" + k); });
 
   const quarters = [...byQuarter.keys()];
-  const got = await api("/values:batchGet?" + quarters.map((k) => "ranges=" + encodeURIComponent(quote(titleOf.get(k)!))).join("&"));
+  const reading = quarters.filter((k) => !(dry && missing.includes(k)));
+  const got = reading.length
+    ? await api("/values:batchGet?" + reading.map((k) => "ranges=" + encodeURIComponent(quote(titleOf.get(k)!))).join("&"))
+    : {};
   const data: { range: string; values: string[][] }[] = [];
   let added = 0, updated = 0;
+  const preview = { rows: [] as Record<string, string>[], cells: [] as Record<string, string>[], headers: [] as string[] };
 
-  quarters.forEach((k, qi) => {
+  quarters.forEach((k) => {
     const title = titleOf.get(k)!;
-    const values: string[][] = (got.valueRanges?.[qi]?.values ?? []) as string[][];
+    const ri = reading.indexOf(k);
+    const values: string[][] = (ri < 0 ? [] : got.valueRanges?.[ri]?.values ?? []) as string[][];
     const head = (values[0] ?? []).map((h) => String(h ?? ""));
     let width = Math.max(head.length, ...values.map((r) => r.length), 0);
     const col = {} as Record<Field, number>;
     for (const f of FIELDS) {
       let i = head.findIndex((h) => f.find.some((w) => h.includes(w)));
-      if (i < 0) { i = width++; data.push({ range: `${quote(title)}!${colA1(i)}1`, values: [[f.head]] }); }
+      if (i < 0) {
+        i = width++; data.push({ range: `${quote(title)}!${colA1(i)}1`, values: [[f.head]] });
+        if (!missing.includes(k)) preview.headers.push(`${title} · ${colA1(i)}1 "${f.head}"`);
+      }
       col[f.id] = i;
     }
     // Synced rows already in the tab, by order id
@@ -185,19 +197,23 @@ async function sync(db: SupabaseClient) {
         const r = next++;
         for (const f of FIELDS) data.push({ range: `${quote(title)}!${colA1(col[f.id])}${r + 1}`, values: [[want[f.id]]] });
         added++;
+        if (preview.rows.length < PREVIEW_MAX) preview.rows.push({ tab: title, row: String(r + 1), ...want });
         continue;
       }
       // Only the cells that changed
       let changed = false;
       for (const f of FIELDS) {
-        if (String(values[i][col[f.id]] ?? "") === want[f.id]) continue;
+        const was = String(values[i][col[f.id]] ?? "");
+        if (was === want[f.id]) continue;
         data.push({ range: `${quote(title)}!${colA1(col[f.id])}${i + 1}`, values: [[want[f.id]]] });
+        if (preview.cells.length < PREVIEW_MAX) preview.cells.push({ tab: title, row: String(i + 1), name: want.name, field: f.head, from: was, to: want[f.id] });
         changed = true;
       }
       if (changed) updated++;
     }
   });
 
+  if (dry) return { added, updated, created, orders: orders.length, sheetId, preview };
   for (let i = 0; i < data.length; i += 2000) {
     await api("/values:batchUpdate", { method: "POST", body: JSON.stringify({ valueInputOption: "RAW", data: data.slice(i, i + 2000) }) });
   }
@@ -216,6 +232,12 @@ Deno.serve(async (req) => {
     if (isAdmin !== true) return reply({ error: "Forbidden — ต้องเข้าสู่ระบบแอดมิน" }, 403);
   }
   const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  let input: { action?: string } = {};
+  try { input = await req.json(); } catch { /* sync */ }
+  // A preview changes nothing, not even the "last run" record
+  if (input.action === "preview" && !byCron) {
+    try { return reply(await sync(db, true)); } catch (e) { return reply({ error: (e as Error).message }); }
+  }
   try {
     const res = await sync(db);
     // Remembered for the admin page ("last synced …")

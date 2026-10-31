@@ -2257,6 +2257,20 @@ function openSheetsSync() {
   var from = document.createElement('input'); from.type = 'date'; from.id = 'syncFrom'; ff.appendChild(from);
   ff.appendChild(div('slip-meta', 'ใช้กันออเดอร์เก่าที่เคยพิมพ์ลงชีตเองไว้แล้วซ้ำ'));
   body.appendChild(ff);
+  var pv = makeBtn('btn btn-ghost btn-sm', '&#x1F440; ดูตัวอย่างก่อน (ยังไม่เขียนลงชีต)', function() {
+    pv.disabled = true; out.innerHTML = ''; out.appendChild(makeSpinner());
+    apiCall('adminSaveSetting', 'sheets', Object.assign({}, saved, { from: from.value })).then(function(s) {
+      if (s.status !== 'Success') throw new Error(s.message);
+      saved.from = from.value;
+      return apiCall('adminSheetsSync', 'preview');
+    }).then(function(res) {
+      pv.disabled = false; out.innerHTML = '';
+      if (res.status !== 'Success') { out.appendChild(div('sync-bad', escapeHtml(res.message || 'ดูตัวอย่างไม่สำเร็จ'))); return; }
+      drawSyncPreview(out, res);
+    }).catch(function(e) { pv.disabled = false; out.innerHTML = ''; out.appendChild(div('sync-bad', escapeHtml(e.message || 'บันทึกไม่สำเร็จ'))); });
+  });
+  pv.type = 'button'; body.appendChild(pv);
+  var out = div('sync-preview'); body.appendChild(out);
   var saved = {};
   Promise.all([apiCall('adminGetSetting', 'sheets'), apiCall('adminGetSetting', 'sheets_last')]).then(function(r) {
     saved = r[0].value || {};
@@ -2284,6 +2298,32 @@ function openSheetsSync() {
       toast(e.message || 'บันทึกไม่สำเร็จ', 'error');
     });
   }, 'อัปเดตชีตตอนนี้');
+}
+
+// What "อัปเดตชีตตอนนี้" would do: new tabs, rows to add, cells to change
+function drawSyncPreview(out, res) {
+  var p = res.preview || { rows: [], cells: [], headers: [] };
+  out.appendChild(div('sync-sum', 'จะ<strong>เพิ่ม ' + res.added + ' แถว</strong> · <strong>แก้ ' + res.updated + ' แถว</strong>' +
+    (res.created && res.created.length ? ' · สร้างแท็บใหม่ <strong>' + escapeHtml(res.created.join(', ')) + '</strong>' : '') +
+    ' (จากออเดอร์เว็บ ' + (res.orders || 0) + ' ชิ้น)'));
+  if (!res.added && !res.updated) { out.appendChild(div('slip-meta', '✓ ชีตตรงกับเว็บแล้ว ไม่มีอะไรต้องอัปเดต')); return; }
+  if (p.headers.length) out.appendChild(div('slip-meta', 'เพิ่มหัวคอลัมน์: ' + escapeHtml(p.headers.join(' · '))));
+  function table(title, heads, rows, total) {
+    if (!rows.length) return;
+    out.appendChild(div('sync-h', escapeHtml(title) + (total > rows.length ? ' (แสดง ' + rows.length + ' จาก ' + total + ')' : '')));
+    var wrap = div('sync-table-wrap'), t = document.createElement('table'); t.className = 'sync-table';
+    var tr = document.createElement('tr');
+    heads.forEach(function(h) { var th = document.createElement('th'); th.textContent = h[1]; tr.appendChild(th); });
+    t.appendChild(tr);
+    rows.forEach(function(r) {
+      var row = document.createElement('tr');
+      heads.forEach(function(h) { var td = document.createElement('td'); td.textContent = r[h[0]] || ''; if (h[2]) td.className = h[2]; row.appendChild(td); });
+      t.appendChild(row);
+    });
+    wrap.appendChild(t); out.appendChild(wrap);
+  }
+  table('แถวที่จะเพิ่ม', [['tab', 'แท็บ'], ['row', 'แถว'], ['name', 'ชื่อแอค'], ['product', 'สินค้า'], ['qty', 'จำนวน'], ['pay', 'ชำระ'], ['status', 'สถานะ'], ['tracking', 'เลขพัสดุ']], p.rows, res.added);
+  table('ช่องที่จะแก้', [['tab', 'แท็บ'], ['row', 'แถว'], ['name', 'ชื่อแอค'], ['field', 'คอลัมน์'], ['from', 'เดิม', 'sync-from'], ['to', 'ใหม่', 'sync-to']], p.cells, p.cells.length);
 }
 
 // Old orders imported from the status sheet, with bulk status changes

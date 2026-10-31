@@ -1908,10 +1908,11 @@
     },
 
     // Website orders → status Google Sheet (supabase/functions/sheets-sync)
-    adminSheetsSync: async function () {
+    // action: 'sync' (default) or 'preview' (lists the changes, writes nothing)
+    adminSheetsSync: async function (action) {
       try {
         requireSb(); await requireAdmin();
-        var r = await sb.functions.invoke('sheets-sync', { body: { action: 'sync' } });
+        var r = await sb.functions.invoke('sheets-sync', { body: { action: action || 'sync' } });
         if (r.error) {
           var st = r.error.context && r.error.context.status;
           if (st === 404) return err('ยังไม่ได้ deploy ฟังก์ชัน sheets-sync');
