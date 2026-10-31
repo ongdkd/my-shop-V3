@@ -263,3 +263,60 @@ npx supabase functions deploy identify-product
 Only signed-in admins (`is_admin()`) can call it. If Gemini fails (e.g. wrong
 model name or free-tier limit), the admin sees Google's error message instead
 of a name. Set the optional `GEMINI_MODEL` secret to pin a specific model.
+
+## iShip shipping (optional)
+
+Delivery bills can be booked with [iShip](https://iship.co.th) straight from
+admin → จัดการสถานะ → 🇹🇭 ถึงไทย / บิลค่าส่ง: **🚚 สร้างเลขพัสดุ iShip** compares
+every courier's price, books the parcel, saves the tracking number (the bill's
+items become "shipped") and gives the A6 label (🖨) and tracking history (📍).
+**🚚 เรียกรถเข้ารับ** asks a courier to collect from the shop. iShip's status
+updates come back through a webhook and show on the customer status page.
+Customers now fill a structured address (with Thai subdistrict autocomplete and
+a "paste the whole address" helper), which is what iShip needs.
+
+API docs: https://api-docs.iship.cloud — calls go through the Edge Function
+`supabase/functions/iship`; the iShip token stays in Supabase secrets.
+**Booking a parcel spends iShip credit.**
+
+1. Run `supabase/migrations/2026-10-31-iship.sql` in the SQL Editor.
+2. Get an iShip API token (valid 1 year) with your iShip login. Run this
+   yourself; it is the only place your iShip password is used:
+   ```bash
+   curl -X POST https://app.iship.cloud/api/auth/requestToken -H "Content-Type: application/json" -d '{"phone":"<iShip phone>","password":"<iShip password>"}'
+   ```
+   Copy `data.accessToken` from the reply.
+3. Set the secrets and deploy (`--no-verify-jwt` because iShip's webhook calls
+   it without a Supabase login; admin actions still check `is_admin()`):
+   ```bash
+   npx supabase secrets set ISHIP_TOKEN=<accessToken> ISHIP_WEBHOOK_KEY=<any long random text>
+   npx supabase functions deploy iship --no-verify-jwt
+   ```
+   To try it on iShip's test system first, also set
+   `ISHIP_BASE_URL=https://app-uat.iship.cloud` (with a UAT token).
+4. Send iShip support your webhook URL:
+   `https://<project-ref>.supabase.co/functions/v1/iship?hook=<ISHIP_WEBHOOK_KEY>`
+5. In admin, press **⚙️ ตั้งค่าผู้ส่ง iShip** and fill the shop's sender
+   address, product category and default parcel size.
+
+Parcels shipped without iShip can still pick a courier in the 📦 status popup,
+so customers get the right tracking link (Thailand Post, Flash and KEX open
+the courier's page; others open 17TRACK).
+
+## Cloudinary photos (two accounts, cleanup)
+
+Uploads go to the accounts in `js/config.js` → `CLOUDINARY_ACCOUNTS`, in order:
+when the first refuses an upload (e.g. its storage is full) the next one is
+used, and a red toast says so. Each account needs an **unsigned** upload preset.
+
+Deleting stock also deletes its photos from Cloudinary, unless an order list,
+product, option or other stock item still shows them. **🧹** on the stock page
+lists every photo nothing uses any more and deletes them on request (photos
+used outside this website, e.g. in the old Google Sheet, would be lost too).
+Both go through the Edge Function `supabase/functions/cloudinary`; until its
+secret is set, deletes leave the photos in place.
+
+1. For each account, copy the API key and secret (Cloudinary → Settings → API Keys).
+2. Supabase Dashboard → Edge Functions → Secrets → add `CLOUDINARY_ACCOUNTS`:
+   `{"dk5f1v2ro":{"key":"…","secret":"…"},"dkjqjkc6":{"key":"…","secret":"…"}}`
+3. `npx supabase functions deploy cloudinary`

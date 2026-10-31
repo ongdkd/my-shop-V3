@@ -324,6 +324,25 @@
     return out;
   }
 
+  // New display order without a schema change: the rows swap their own seq
+  // numbers (seq only decides the order lists/products are shown in)
+  async function reorderRows(table, ids) {
+    if (!ids.length || ids.some(function (id) { return !id; })) throw new Error('ข้อมูลไม่ตรงกับหน้าจอ กรุณารีเฟรชแล้วลองใหม่');
+    var r = await sb.from(table).select('id,seq').in('id', ids);
+    if (r.error) throw r.error;
+    if ((r.data || []).length !== ids.length) throw new Error('ข้อมูลไม่ตรงกับหน้าจอ กรุณารีเฟรชแล้วลองใหม่');
+    var cur = {};
+    r.data.forEach(function (x) { cur[x.id] = Number(x.seq); });
+    var seqs = r.data.map(function (x) { return Number(x.seq); }).sort(function (a, b) { return a - b; });
+    var jobs = [];
+    ids.forEach(function (id, i) {
+      if (cur[id] !== seqs[i]) jobs.push(sb.from(table).update({ seq: seqs[i] }).eq('id', id));
+    });
+    var res = await Promise.all(jobs);
+    res.forEach(function (x) { if (x.error) throw x.error; });
+    return jobs.length;
+  }
+
   function requireSb() { if (!sb) throw new Error(NOT_CONFIGURED_MSG); }
 
   // "admin" → "admin@orderhub.local"; real e-mail addresses pass through
@@ -427,6 +446,36 @@
     });
   }
 
+  async function invokeCloudinary(action, payload) {
+    var r = await sb.functions.invoke('cloudinary', { body: Object.assign({ action: action }, payload || {}) });
+    if (r.error) {
+      var st = r.error.context && r.error.context.status;
+      if (st === 404) return err('ยังไม่ได้ deploy ฟังก์ชัน cloudinary');
+      return err('Cloudinary ไม่ตอบ' + (st ? ' (' + st + ')' : '') + ' — ลองใหม่อีกครั้ง');
+    }
+    var d = r.data || {};
+    return d.error ? err(d.error) : ok(d);
+  }
+  // Photo URLs of stock items and their options, read before they're deleted
+  async function stockPhotos(ids) {
+    var out = [];
+    for (var i = 0; i < ids.length; i += 100) {
+      var list = ids.slice(i, i + 100).join(',');
+      var r = await sb.from('stock_items').select('image').or('id.in.(' + list + '),parent_id.in.(' + list + ')');
+      (r.data || []).forEach(function (x) { if (x.image) out.push(x.image); });
+    }
+    return out;
+  }
+  // After a delete: removes those photos from Cloudinary unless something still
+  // shows them. Never fails the delete itself; the result only says what happened.
+  async function cleanupPhotos(urls) {
+    if (!urls.length) return { deleted: 0 };
+    try {
+      var res = await invokeCloudinary('cleanup', { urls: urls });
+      return res.status === 'Success' ? res : { deleted: 0, error: res.message };
+    } catch (e) { return { deleted: 0, error: String(e.message || e) }; }
+  }
+
   function mapOrder(r) {
     return {
       rowIndex: r.seq,
@@ -448,7 +497,8 @@
       status: r.status || '',           // '' waiting · 'ยกเลิก' · custom label
       shippedAt: r.shipped_at || '',
       tracking: r.tracking || '',
-      deliveryId: r.delivery_id || ''  // delivery bill (arrived items grouped for one fee)
+      deliveryId: r.delivery_id || '', // delivery bill (arrived items grouped for one fee)
+      courier: r.courier || ''          // iShip courier code of the parcel
     };
   }
 
@@ -623,7 +673,8 @@
     },
 
     // deliveryId: pay the rest + delivery fee for one bill instead of a list
-    customerSubmitPayment: async function (name, listId, amount, paidAt, bankRef, address, slip, deliveryId) {
+    // addressParts: { name, phone, address, district, amphoe, province, zipcode }
+    customerSubmitPayment: async function (name, listId, amount, paidAt, bankRef, address, slip, deliveryId, addressParts) {
       try {
         requireSb();
         var params = {
@@ -631,7 +682,13 @@
           p_paid_at: paidAt || null, p_bank_ref: bankRef || '', p_address: address || '', p_slip: slip
         };
         if (deliveryId) params.p_delivery_id = deliveryId;
+        if (addressParts) params.p_address_parts = addressParts;
         var r = await sb.rpc('customer_submit_payment', params);
+        // Database without the iShip migration: send the address as text only
+        if (r.error && r.error.code === 'PGRST202' && params.p_address_parts) {
+          delete params.p_address_parts;
+          r = await sb.rpc('customer_submit_payment', params);
+        }
         if (r.error) {
           // Duplicate bank ref racing past the check hits the unique index
           if (r.error.code === '23505') return err('สลิปนี้ถูกส่งมาแล้ว');
@@ -1031,21 +1088,27 @@
     // Sets the status of order rows (by id). 'shipped' stamps shipped_at
     // with an optional tracking number; any other value ('' = waiting,
     // 'ยกเลิก', or a custom label) clears shipping.
-    adminSetOrderStatus: async function (orderIds, status, tracking) {
+    // courier: iShip courier code of the parcel (gives the customer the right tracking link)
+    adminSetOrderStatus: async function (orderIds, status, tracking, courier) {
       try {
         requireSb(); await requireAdmin();
         if (!orderIds || !orderIds.length) return err('ไม่พบคำสั่งซื้อ');
         var patch = status === 'shipped'
-          ? { shipped_at: new Date().toISOString(), tracking: String(tracking || '').trim(), status: '' }
-          : { shipped_at: null, tracking: '', status: String(status || '').trim().slice(0, 40) };
+          ? { shipped_at: new Date().toISOString(), tracking: String(tracking || '').trim(), status: '', courier: String(courier || '') }
+          : { shipped_at: null, tracking: '', status: String(status || '').trim().slice(0, 40), courier: '' };
         var r = await sb.from('orders').update(patch).in('id', orderIds).select('id');
+        // Before the iShip migration there is no courier column
+        if (r.error && /courier/.test(String(r.error.message || ''))) {
+          delete patch.courier;
+          r = await sb.from('orders').update(patch).in('id', orderIds).select('id');
+        }
         if (r.error) {
           if (/shipped_at|tracking|status/.test(String(r.error.message || ''))) {
             return err('Supabase ยังไม่มีคอลัมน์สถานะ — รันไฟล์ supabase/migrations/2026-10-29-order-status-payments.sql ใน SQL Editor แล้วลองใหม่');
           }
           return err(r.error.message);
         }
-        return ok({ updated: (r.data || []).length, shippedAt: patch.shipped_at, tracking: patch.tracking, orderStatus: patch.status });
+        return ok({ updated: (r.data || []).length, shippedAt: patch.shipped_at, tracking: patch.tracking, orderStatus: patch.status, courier: patch.courier || '' });
       } catch (e) { return e.__json || err(e.message || e); }
     },
 
@@ -1103,17 +1166,137 @@
       } catch (e) { return e.__json || err(e.message || e); }
     },
 
+    // ── Admin notifications: new web orders and slips since `since` ──
+    // One event per checkout (its rows share checkout_id, or customer +
+    // list + minute for older rows) and one per slip, newest first.
+    adminGetNotifications: async function (since) {
+      try {
+        requireSb(); await requireAdmin();
+        var from = since || new Date(Date.now() - 7 * 864e5).toISOString();
+        var o = await sb.from('orders').select('customer,list_id,created_at,checkout_id,qty,pay_type,total,remark,order_lists(name)')
+          .gt('created_at', from).neq('remark', 'POS').order('created_at', { ascending: false }).limit(500);
+        if (o.error) return err(o.error.message);
+        var events = [], byKey = {};
+        (o.data || []).forEach(function (r) {
+          var key = r.checkout_id || r.list_id + '|' + normName(r.customer) + '|' + String(r.created_at).slice(0, 16);
+          var e = byKey[key];
+          if (!e) {
+            e = byKey[key] = { type: 'order', at: r.created_at, customer: r.customer, listId: r.list_id,
+              listName: r.order_lists && r.order_lists.name ? r.order_lists.name : '', pieces: 0, total: 0, deposit: false };
+            events.push(e);
+          }
+          if (r.pay_type !== 'Gift') e.pieces += num(r.qty);
+          e.total += num(r.total);
+          if (r.pay_type === 'Deposit') e.deposit = true;
+        });
+        var cols = 'id,customer,amount,list_id,created_at,address,order_lists(name)';
+        var pq = function (c) { return sb.from('payments').select(c).gt('created_at', from).order('created_at', { ascending: false }).limit(200); };
+        var p = await pq(cols + ',kind,delivery_id');
+        if (p.error && /kind|delivery_id/.test(String(p.error.message || ''))) p = await pq(cols);
+        if (p.error && !/payments/.test(String(p.error.message || ''))) return err(p.error.message);
+        (p.error ? [] : p.data || []).forEach(function (r) {
+          events.push({ type: 'slip', at: r.created_at, id: r.id, customer: r.customer, listId: r.list_id,
+            listName: r.order_lists && r.order_lists.name ? r.order_lists.name : '', total: num(r.amount),
+            kind: r.kind || '', hasAddress: !!r.address, deliveryId: r.delivery_id || '' });
+        });
+        // Parcels iShip reported delivered (delivered_at exists after 2026-10-31-iship.sql)
+        var d = await sb.from('deliveries').select('id,customer,courier,tracking,delivered_at')
+          .gt('delivered_at', from).order('delivered_at', { ascending: false }).limit(100);
+        (d.error ? [] : d.data || []).forEach(function (r) {
+          events.push({ type: 'delivered', at: r.delivered_at, id: r.id, customer: r.customer,
+            courier: r.courier || '', tracking: r.tracking || '' });
+        });
+        events.sort(function (a, b) { return new Date(b.at) - new Date(a.at); });
+        return ok({ events: events.slice(0, 60), now: new Date().toISOString() });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
+    // ── Drag-and-drop reordering ─────────────────────────────
+    // rowIndexes in the new display order (all rows shown on the page)
+    adminReorderOrderLists: async function (rowIndexes) {
+      try {
+        requireSb(); await requireAdmin();
+        return ok({ moved: await reorderRows('order_lists', (rowIndexes || []).map(function (r) { return _listRowMap[r]; })) });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
+    adminReorderProducts: async function (sheetId, rowIndexes) {
+      try {
+        requireSb(); await requireAdmin();
+        var map = _prodRowMap[sheetId] || {};
+        return ok({ moved: await reorderRows('products', (rowIndexes || []).map(function (r) { return map[r]; })) });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
+    // Moves order items into another customer's checkout in the same list:
+    // they take that order's customer, phone, checkout and date, and leave
+    // any delivery bill. Slips already sent stay with the old customer.
+    adminMoveOrderItems: async function (orderIds, targetOrderId) {
+      try {
+        requireSb(); await requireAdmin();
+        if (!orderIds || !orderIds.length) return err('ไม่พบรายการสินค้า');
+        var t = await sb.from('orders').select('id,list_id,customer,remark,checkout_id,created_at').eq('id', targetOrderId).single();
+        if (t.error) return err(t.error.message);
+        var src = await sb.from('orders').select('id,list_id,remark').in('id', orderIds);
+        if (src.error) return err(src.error.message);
+        if ((src.data || []).length !== orderIds.length) return err('ไม่พบบางรายการ');
+        if (t.data.remark === 'POS' || src.data.some(function (o) { return o.remark === 'POS'; })) return err('ย้ายรายการหน้าร้าน (POS) ไม่ได้');
+        if (src.data.some(function (o) { return o.list_id !== t.data.list_id; })) return err('ย้ายได้เฉพาะภายในรายการสั่งซื้อเดียวกัน');
+        var patch = { customer: t.data.customer, remark: t.data.remark, checkout_id: t.data.checkout_id, created_at: t.data.created_at };
+        var r = await sb.from('orders').update(Object.assign({ delivery_id: null }, patch)).in('id', orderIds).select('id');
+        // Before the delivery-bills migration there is no delivery_id column
+        if (r.error && /delivery_id/.test(String(r.error.message || ''))) r = await sb.from('orders').update(patch).in('id', orderIds).select('id');
+        if (r.error) return err(r.error.message);
+        return ok({ moved: (r.data || []).length, customer: patch.customer, remark: patch.remark || '',
+          checkoutId: patch.checkout_id || '', timestamp: patch.created_at });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
+    // Re-files a slip under another order list or delivery bill (and that
+    // order's customer). kind follows: balance for a bill, else deposit /
+    // full from the customer's items in the list.
+    adminLinkPayment: async function (paymentId, listId, deliveryId, customer) {
+      try {
+        requireSb(); await requireAdmin();
+        var patch = { customer: String(customer || '').trim(), delivery_id: deliveryId || null };
+        if (!patch.customer) return err('ไม่พบชื่อลูกค้า');
+        if (deliveryId) {
+          var b = await sb.from('orders').select('list_id').eq('delivery_id', deliveryId).limit(1);
+          if (b.error) return err(b.error.message);
+          if (!b.data || !b.data.length) return err('บิลนี้ไม่มีสินค้า');
+          patch.list_id = b.data[0].list_id; patch.kind = 'balance';
+        } else {
+          var d = await sb.from('orders').select('pay_type,customer').eq('list_id', listId);
+          if (d.error) return err(d.error.message);
+          var mine = (d.data || []).filter(function (o) { return normName(o.customer) === normName(patch.customer); });
+          if (!mine.length) return err('ลูกค้าคนนี้ไม่มีคำสั่งซื้อในรายการนี้');
+          patch.list_id = listId;
+          patch.kind = mine.some(function (o) { return o.pay_type === 'Deposit'; }) ? 'deposit' : 'full';
+        }
+        var r = await sb.from('payments').update(patch).eq('id', paymentId).select('id');
+        if (r.error) {
+          if (/delivery_id|kind/.test(String(r.error.message || ''))) return err('รันไฟล์ supabase/migrations/2026-10-29c-delivery-bills.sql ใน SQL Editor ก่อน');
+          return err(r.error.message);
+        }
+        if (!r.data || !r.data.length) return err('ไม่พบสลิปนี้');
+        return ok({ listId: patch.list_id, deliveryId: patch.delivery_id || '', kind: patch.kind, customer: patch.customer });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
     // ── Delivery bills: arrived items grouped for one delivery fee ──
     adminGetDeliveries: async function () {
       try {
         requireSb(); await requireAdmin();
-        var r = await sb.from('deliveries').select('id,customer,fee,created_at,sent_at').order('created_at', { ascending: true });
+        // '*': the iShip columns exist only after 2026-10-31-iship.sql
+        var r = await sb.from('deliveries').select('*').order('created_at', { ascending: true });
         if (r.error) {
           if (/deliveries/.test(r.error.message || '')) return ok({ deliveries: [], missing: true });
           return err(r.error.message);
         }
         return ok({ deliveries: (r.data || []).map(function (d) {
-          return { id: d.id, customer: d.customer, fee: d.fee === null ? null : num(d.fee), createdAt: d.created_at, sentAt: d.sent_at || '' };
+          return { id: d.id, customer: d.customer, fee: d.fee === null ? null : num(d.fee), createdAt: d.created_at, sentAt: d.sent_at || '',
+            courier: d.courier || '', tracking: d.tracking || '', ishipStatus: d.iship_status_text || '', ishipStatusAt: d.iship_status_at || '',
+            ishipCode: d.iship_status || '', deliveredAt: d.delivered_at || '' };
         }) });
       } catch (e) { return e.__json || err(e.message || e); }
     },
@@ -1648,16 +1831,30 @@
     adminUploadImage: async function (base64Image) {
       try {
         requireSb(); await requireAdmin();
-        var fd = new FormData();
-        fd.append('file', base64Image);
-        fd.append('upload_preset', window.CLOUDINARY_UPLOAD_PRESET);
-        var resp = await fetch(
-          'https://api.cloudinary.com/v1_1/' + window.CLOUDINARY_CLOUD_NAME + '/image/upload',
-          { method: 'POST', body: fd }
-        );
-        var json = await resp.json();
-        if (!json.secure_url) return err(json.error ? json.error.message : 'Upload failed');
-        return ok({ url: json.secure_url });
+        var accounts = window.CLOUDINARY_ACCOUNTS ||
+          [{ cloud: window.CLOUDINARY_CLOUD_NAME, preset: window.CLOUDINARY_UPLOAD_PRESET }];
+        var first = '';
+        // An account that refuses (full storage, disabled, …) hands over to the next one.
+        // A network error throws out of the loop instead: the next account would fail the same way.
+        for (var i = 0; i < accounts.length; i++) {
+          var fd = new FormData();
+          fd.append('file', base64Image);
+          fd.append('upload_preset', accounts[i].preset);
+          var resp = await fetch('https://api.cloudinary.com/v1_1/' + accounts[i].cloud + '/image/upload', { method: 'POST', body: fd });
+          var json = await resp.json().catch(function () { return {}; });
+          if (json.secure_url) {
+            if (i > 0) {
+              var note = 'อัปโหลดรูปไปบัญชีสำรอง ' + accounts[i].cloud + ' — บัญชีหลักไม่รับ: ' + first;
+              console.warn('[upload] ' + note);
+              if (typeof window.toast === 'function') window.toast(note, 'error');
+            }
+            return ok({ url: json.secure_url, cloud: accounts[i].cloud });
+          }
+          var why = json.error && json.error.message ? json.error.message : 'HTTP ' + resp.status;
+          console.warn('[upload] ' + accounts[i].cloud + ' refused: ' + why);
+          if (!first) first = why;
+        }
+        return err('อัปโหลดรูปไม่สำเร็จ: ' + (first || 'Upload failed'));
       } catch (e) { return e.__json || err(e.message || e); }
     },
 
@@ -1680,6 +1877,74 @@
         var d = r.data || {};
         if (d.error) return err(d.error);
         return ok({ name: String(d.name || ''), imageUrl: String(d.imageUrl || ''), imageData: String(d.imageData || ''), pageUrl: String(d.pageUrl || '') });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
+    // iShip shipping — Supabase Edge Function "iship" (holds the iShip token).
+    // action: couriers | quote | create | trace | pickup; see the function.
+    adminIship: async function (action, payload) {
+      try {
+        requireSb(); await requireAdmin();
+        var r = await sb.functions.invoke('iship', { body: Object.assign({ action: action }, payload || {}) });
+        if (r.error) {
+          var st = r.error.context && r.error.context.status;
+          if (st === 404) return err('iShip ใช้งานไม่ได้ — ยังไม่ได้ deploy ฟังก์ชัน iship');
+          return err('iShip ไม่ตอบ' + (st ? ' (' + st + ')' : '') + ' — ลองใหม่อีกครั้ง');
+        }
+        var d = r.data || {};
+        if (d.error) return err(d.error);
+        return ok(d);
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
+    // Cloudinary photo cleanup (supabase/functions/cloudinary): scan / delete
+    adminCloudinary: async function (action, payload) {
+      try {
+        requireSb(); await requireAdmin();
+        return await invokeCloudinary(action, payload);
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
+    // A6 label PDF for one or more tracking numbers (comma-separated). The
+    // function returns the PDF itself, which invoke() would read as text, so
+    // fetch it directly; the page opens the blob URL.
+    adminIshipLabel: async function (tracking) {
+      try {
+        requireSb(); await requireAdmin();
+        var s = await getSession();
+        var r = await fetch(window.SUPABASE_URL + '/functions/v1/iship', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', apikey: window.SUPABASE_ANON_KEY, Authorization: 'Bearer ' + s.access_token },
+          body: JSON.stringify({ action: 'label', tracking: tracking })
+        });
+        if (r.status === 404) return err('iShip ใช้งานไม่ได้ — ยังไม่ได้ deploy ฟังก์ชัน iship');
+        if (!/pdf/.test(r.headers.get('content-type') || '')) {
+          var j = {}; try { j = await r.json(); } catch (x) {}
+          return err(j.error || 'โหลดใบปะหน้าไม่สำเร็จ (' + r.status + ')');
+        }
+        return ok({ url: URL.createObjectURL(await r.blob()) });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
+    // Shop settings stored in app_settings (e.g. 'iship': sender address + parcel defaults)
+    adminGetSetting: async function (key) {
+      try {
+        requireSb(); await requireAdmin();
+        var r = await sb.from('app_settings').select('value').eq('key', key).maybeSingle();
+        if (r.error) {
+          if (/app_settings/.test(r.error.message || '')) return err('รันไฟล์ supabase/migrations/2026-10-31-iship.sql ใน SQL Editor ก่อน');
+          return err(r.error.message);
+        }
+        return ok({ value: (r.data && r.data.value) || {} });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
+    adminSaveSetting: async function (key, value) {
+      try {
+        requireSb(); await requireAdmin();
+        var r = await sb.from('app_settings').upsert({ key: key, value: value || {}, updated_at: new Date().toISOString() }).select('key');
+        if (r.error) return err(r.error.message);
+        return ok({});
       } catch (e) { return e.__json || err(e.message || e); }
     },
 
@@ -2054,10 +2319,11 @@
         requireSb(); await requireAdmin();
         var pid = _stockRowMap[parentRowIndex];
         if (!pid) return err('ไม่พบสินค้าในคลัง (กรุณารีเฟรช)');
+        var photos = await stockPhotos([pid]);
         // Children are removed automatically (ON DELETE CASCADE)
         var r = await sb.from('stock_items').delete().eq('id', pid);
         if (r.error) return err(r.error.message);
-        return ok({});
+        return ok({ photos: await cleanupPhotos(photos) });
       } catch (e) { return e.__json || err(e.message || e); }
     },
 
@@ -2068,6 +2334,7 @@
         requireSb(); await requireAdmin();
         var ids = (parentRowIndexes || []).map(function (ri) { return _stockRowMap[ri]; }).filter(Boolean);
         if (!ids.length) return err('ไม่พบสินค้าในคลัง (กรุณารีเฟรช)');
+        var photos = await stockPhotos(ids);
         var deleted = 0;
         // Chunked so a huge warehouse doesn't overflow the request URL
         for (var i = 0; i < ids.length; i += 100) {
@@ -2075,7 +2342,7 @@
           if (r.error) return err(r.error.message + (deleted ? ' (ลบไปแล้ว ' + deleted + ' รายการ)' : ''));
           deleted += (r.data || []).length;
         }
-        return ok({ deleted: deleted });
+        return ok({ deleted: deleted, photos: await cleanupPhotos(photos) });
       } catch (e) { return e.__json || err(e.message || e); }
     },
 

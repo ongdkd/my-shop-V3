@@ -34,14 +34,13 @@
   function day(d) { return d ? new Date(d).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' }) : ''; }
 
   // ── Status pill + tracking ────────────────────────────────
-  function trackingLine(no) {
-    var line = h('div', 'st-track', 'เลขพัสดุ ');
-    if (/TH$/.test(no)) {
-      var a = h('a', '', no);
-      a.href = 'https://track.thailandpost.co.th/?trackNumber=' + encodeURIComponent(no);
-      a.target = '_blank'; a.rel = 'noopener';
-      line.appendChild(a);
-    } else line.appendChild(document.createTextNode(no));
+  function trackingLine(no, courier, status) {
+    var line = h('div', 'st-track', 'เลขพัสดุ ' + (courier ? Couriers.name(courier) + ' ' : ''));
+    var a = h('a', '', no);
+    a.href = Couriers.trackUrl(courier, no);
+    a.target = '_blank'; a.rel = 'noopener';
+    line.appendChild(a);
+    if (status) line.appendChild(h('div', 'st-track-status', status));
     return line;
   }
   function webStatus(o) {
@@ -56,12 +55,12 @@
     if (/cancel|cancle|ยกเลิก/i.test(v)) return { text: 'ยกเลิก', cls: 'cancel' };
     return { text: v || 'รอจัดส่ง', cls: v ? 'custom' : '' };
   }
-  function itemRow(name, qty, st, tracking, note) {
+  function itemRow(name, qty, st, tracking, note, courier, trackStatus) {
     var row = h('div', 'st-item');
     var main = h('div', 'st-item-main');
     main.appendChild(h('div', 'st-item-name', name));
     main.appendChild(h('span', 'st-pill ' + st.cls, st.text));
-    if (tracking) main.appendChild(trackingLine(tracking));
+    if (tracking) main.appendChild(trackingLine(tracking, courier, trackStatus));
     if (note) main.appendChild(h('div', 'st-note-line', note));
     row.appendChild(main);
     row.appendChild(h('div', 'st-item-qty', '×' + qty));
@@ -125,8 +124,11 @@
     TABS.forEach(function (t) { groups[t.id] = { orders: [], legacy: [] }; });
     orders.forEach(function (o) { groups[webStage(o, paidList)].orders.push(o); });
     legacy.forEach(function (r) { groups[legacyStage(r.status)].legacy.push(r); });
-    var ctx = { pays: pays, bills: {} };
-    (res.deliveries || []).forEach(function (d) { ctx.bills[d.id] = d; });
+    var ctx = { pays: pays, bills: {}, trackStatus: {} };
+    (res.deliveries || []).forEach(function (d) {
+      ctx.bills[d.id] = d;
+      if (d.tracking && d.ishipStatus) ctx.trackStatus[d.tracking] = d.ishipStatus; // kept fresh by iShip
+    });
 
     // One per checkout (its rows are written in one transaction, so they
     // share created_at); in the bills tab, one per bill
@@ -220,7 +222,7 @@
       l.items.forEach(function (o) {
         var st = webStatus(o);
         if (tab.id === 'arrive' && ARRIVED.test(o.status)) st = { text: 'ถึงไทยแล้ว · รอร้านสรุปค่าส่ง', cls: 'custom' };
-        card.appendChild(itemRow(itemName(o), o.qty, st, o.shippedAt ? o.tracking : '', ''));
+        card.appendChild(itemRow(itemName(o), o.qty, st, o.shippedAt ? o.tracking : '', '', o.courier, ctx.trackStatus[o.tracking]));
       });
 
       var foot = h('div', 'st-card-foot');
@@ -306,8 +308,11 @@
     if (target.amount > 0) $('payAmount').value = Math.round(target.amount * 100) / 100;
     $('payTime').value = localNow();
     $('payAddrBox').hidden = !target.address;
-    $('payAddress').required = !!target.address;
-    $('payAddress').value = target.address ? store('stAddress') : '';
+    $('payPasteBox').hidden = true;
+    var saved = {};
+    try { saved = JSON.parse(store('stAddrParts') || '{}') || {}; } catch (e) { saved = {}; }
+    setParts(target.address ? saved : {});
+    if (target.address) ThaiAddress.load().catch(function () {});
     $('paySlipPreview').hidden = true;
     $('payDialog').showModal();
   }
@@ -404,21 +409,49 @@
 
   $('payCancel').onclick = function () { $('payDialog').close(); };
 
+  // ── Delivery address fields ───────────────────────────────
+  var ADDR = { name: 'payName', phone: 'payPhone', address: 'payLine', district: 'payDistrict', amphoe: 'payAmphoe', province: 'payProvince', zipcode: 'payZip' };
+  function getParts() { var o = {}; Object.keys(ADDR).forEach(function (k) { o[k] = $(ADDR[k]).value.trim(); }); o.phone = o.phone.replace(/[\s-]/g, ''); return o; }
+  function setParts(p) { Object.keys(ADDR).forEach(function (k) { $(ADDR[k]).value = (p && p[k]) || ''; }); }
+  function addrProblem(p) {
+    if (Object.keys(ADDR).some(function (k) { return !p[k]; })) return 'กรุณากรอกที่อยู่จัดส่งให้ครบทุกช่อง';
+    if (!/^0\d{8,9}$/.test(p.phone)) return 'เบอร์โทรไม่ถูกต้อง';
+    if (!/^\d{5}$/.test(p.zipcode)) return 'รหัสไปรษณีย์ต้องเป็นตัวเลข 5 หลัก';
+    return '';
+  }
+  ThaiAddress.attach({ district: $('payDistrict'), amphoe: $('payAmphoe'), province: $('payProvince'), zipcode: $('payZip') });
+  $('payPasteToggle').onclick = function () { $('payPasteBox').hidden = !$('payPasteBox').hidden; if (!$('payPasteBox').hidden) $('payPaste').focus(); };
+  $('payPasteGo').onclick = function () {
+    ThaiAddress.load().then(function () {
+      var p = ThaiAddress.parse($('payPaste').value);
+      Object.keys(ADDR).forEach(function (k) { if (p[k]) $(ADDR[k]).value = p[k]; });
+      $('payPasteBox').hidden = true;
+      toast(p.district ? 'แยกที่อยู่แล้ว กรุณาตรวจสอบอีกครั้ง' : 'หาตำบล/อำเภอไม่เจอ กรุณาพิมพ์แล้วเลือกจากรายการ', p.district ? 'success' : 'error');
+    }, function () { toast('โหลดข้อมูลที่อยู่ไม่สำเร็จ กรุณากรอกเอง', 'error'); });
+  };
+
   $('payForm').addEventListener('submit', function (e) {
     e.preventDefault();
     if (!current.slip) { toast('กรุณาแนบรูปสลิป', 'error'); return; }
     var amount = Number($('payAmount').value);
     if (!(amount > 0)) { toast('กรุณากรอกยอดโอน', 'error'); return; }
     var t = $('payTime').value ? new Date($('payTime').value) : null;
-    var address = $('payAddrBox').hidden ? '' : $('payAddress').value.trim();
-    if (!$('payAddrBox').hidden && !address) { toast('กรุณากรอกที่อยู่จัดส่ง', 'error'); return; }
+    var parts = $('payAddrBox').hidden ? null : getParts();
+    var bad = parts ? addrProblem(parts) : '';
+    if (bad) { toast(bad, 'error'); return; }
     var btn = $('paySend'); btn.disabled = true; btn.textContent = 'กำลังส่ง...';
-    call('customerSubmitPayment', current.name, current.listId, amount,
-      t && !isNaN(t.getTime()) ? t.toISOString() : null, current.ref, address, current.slip, current.deliveryId)
-      .then(function (res) {
+    // The courier needs a real subdistrict / district / province / postcode;
+    // if the address data can't load, don't block the payment over it
+    var checked = parts ? ThaiAddress.load().then(function () { return ThaiAddress.valid(parts); }, function () { return true; }) : Promise.resolve(true);
+    checked.then(function (ok) {
+      if (!ok) { btn.disabled = false; btn.textContent = 'ส่ง'; toast('กรุณาเลือกตำบล / อำเภอ / จังหวัด / รหัสไปรษณีย์จากรายการ', 'error'); return null; }
+      return call('customerSubmitPayment', current.name, current.listId, amount,
+        t && !isNaN(t.getTime()) ? t.toISOString() : null, current.ref, parts ? ThaiAddress.format(parts) : '', current.slip, current.deliveryId, parts);
+    }).then(function (res) {
+        if (!res) return;
         btn.disabled = false; btn.textContent = 'ส่ง';
         if (res.status !== 'Success') { toast(res.message || 'ส่งไม่สำเร็จ', 'error'); return; }
-        if (address) store('stAddress', address);
+        if (parts) store('stAddrParts', JSON.stringify(parts));
         $('payDialog').close();
         toast(res.addressUpdated ? 'แก้ที่อยู่จัดส่งเรียบร้อยค่ะ' : 'ส่งสลิปเรียบร้อย ขอบคุณค่ะ', 'success');
         lookup(current.name);

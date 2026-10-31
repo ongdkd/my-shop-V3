@@ -16,9 +16,13 @@ window.SUPABASE_ANON_KEY = 'sb_publishable_UF-JWpzyM3EWLRzR-2R12g_fxfBV10m';
 // Create the matching user in Supabase Auth, e.g. admin@orderhub.local
 window.ADMIN_USERNAME_DOMAIN = '@kagashop.admin';
 
-// Cloudinary unsigned upload (same values as the old Apps Script version)
-window.CLOUDINARY_CLOUD_NAME    = 'dk5f1v2ro';
-window.CLOUDINARY_UPLOAD_PRESET = 'gas_cover_img';
+// Cloudinary unsigned uploads, tried in order: when an account refuses an
+// upload (e.g. its storage is full) the next one is used. Each needs an
+// unsigned upload preset (Cloudinary → Settings → Upload → Upload presets).
+window.CLOUDINARY_ACCOUNTS = [
+  { cloud: 'dk5f1v2ro', preset: 'gas_cover_img' },  // main (same as the old Apps Script version)
+  { cloud: 'dkjqjkc6',  preset: 'gas_cover_img' }   // spare
+];
 
 // Google Sheets API v4 browser key — used by the legacy spreadsheet importer.
 // Enable "Google Sheets API" in Google Cloud, then restrict this key to:

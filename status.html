@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/index.css?v=20261029b">
-<link rel="stylesheet" href="css/status.css?v=20261029f">
+<link rel="stylesheet" href="css/status.css?v=20261031a">
 </head>
 <body>
 <main class="st-page">
@@ -49,10 +49,24 @@
     </div>
 
     <div id="payAddrBox" hidden>
-      <label class="st-field">
-        <span>ที่อยู่จัดส่ง (ชื่อ เบอร์โทร ที่อยู่) <b class="st-fix-mark">*</b></span>
-        <textarea id="payAddress" rows="4" maxlength="1000" placeholder="ชื่อผู้รับ&#10;เบอร์โทร&#10;ที่อยู่ + รหัสไปรษณีย์"></textarea>
-      </label>
+      <div class="st-addr-head">
+        <span>ที่อยู่จัดส่ง <b class="st-fix-mark">*</b></span>
+        <button type="button" class="st-link" id="payPasteToggle">วางที่อยู่ทั้งหมด</button>
+      </div>
+      <div class="st-paste" id="payPasteBox" hidden>
+        <textarea id="payPaste" rows="3" maxlength="1000" aria-label="วางที่อยู่ทั้งหมด" placeholder="เช่น สมศรี 0812345678 99/1 ถ.สายไหม แขวงสายไหม เขตสายไหม กรุงเทพฯ 10220"></textarea>
+        <button type="button" class="st-btn ghost sm" id="payPasteGo">แยกที่อยู่ให้</button>
+      </div>
+      <div class="st-addr-grid">
+        <label class="st-field full"><span>ชื่อผู้รับ</span><input id="payName" maxlength="100" autocomplete="name"></label>
+        <label class="st-field"><span>เบอร์โทร</span><input id="payPhone" inputmode="tel" maxlength="12" autocomplete="tel"></label>
+        <label class="st-field"><span>รหัสไปรษณีย์</span><input id="payZip" inputmode="numeric" maxlength="5"></label>
+        <label class="st-field full"><span>บ้านเลขที่ / หมู่ / ซอย / ถนน</span><input id="payLine" maxlength="300" autocomplete="address-line1"></label>
+        <label class="st-field"><span>ตำบล / แขวง</span><input id="payDistrict" maxlength="80"></label>
+        <label class="st-field"><span>อำเภอ / เขต</span><input id="payAmphoe" maxlength="80"></label>
+        <label class="st-field full"><span>จังหวัด</span><input id="payProvince" maxlength="80"></label>
+      </div>
+      <p class="st-note">พิมพ์ตำบล อำเภอ หรือรหัสไปรษณีย์ แล้วเลือกจากรายการ ระบบจะเติมให้ครบ</p>
       <p class="st-note st-note-fix">* กรอกที่อยู่ผิด? ส่งสลิปเดิมอีกครั้งพร้อมที่อยู่ใหม่ได้เลย ระบบจะแก้ที่อยู่ให้ (ไม่นับเป็นยอดโอนใหม่)</p>
     </div>
 
@@ -66,8 +80,10 @@
 <div id="stToast" role="status" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.7/dist/umd/supabase.min.js" integrity="sha384-BmlQlKlDvXvKoxkn5OQuUo/aJQCTXeB+Kls6EccBmG4Kf8AXvp89RtO9MtPxP/r5" crossorigin="anonymous"></script>
-<script src="js/config.js?v=20261029b"></script>
-<script src="js/api.js?v=20261029i"></script>
-<script src="js/status.js?v=20261029f"></script>
+<script src="js/config.js?v=20261031u"></script>
+<script src="js/api.js?v=20261031u"></script>
+<script src="js/couriers.js?v=20261031a"></script>
+<script src="js/thai-address.js?v=20261031c"></script>
+<script src="js/status.js?v=20261031a"></script>
 </body>
 </html>

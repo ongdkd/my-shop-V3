@@ -5,3 +5,6 @@ Desktop.ini
 
 # Node (if ever added)
 node_modules/
+
+# Supabase CLI cache
+supabase/.temp/

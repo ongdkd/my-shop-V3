@@ -78,7 +78,7 @@ document.addEventListener('keydown', function(e) {
 });
 // ── Hash routing — the URL mirrors the open panel (#/products, #/orders …)
 // so a refresh keeps your place and the back button navigates panels ──
-var VALID_PANELS = ['orderlists', 'orders', 'products', 'summary', 'status', 'slips', 'restock', 'stock'];
+var VALID_PANELS = ['orderlists', 'orders', 'products', 'status', 'slips', 'restock', 'stock', 'history'];
 function panelFromHash() {
   var h = (location.hash || '').replace(/^#\/?/, '');
   return VALID_PANELS.indexOf(h) !== -1 ? h : 'orderlists';
@@ -758,9 +758,9 @@ function switchPanel(panel) {
   else if (panel === 'slips')      renderSlipsPanel();
   else if (panel === 'status')     renderStatusPanel();
   else if (panel === 'products')   renderProductsPanel();
-  else if (panel === 'summary')    renderSummaryPanel();
   else if (panel === 'restock')    renderRestockPanel();
   else if (panel === 'stock')      renderStockPanel();
+  else if (panel === 'history')    renderHistoryPanel();
 }
 function loadAllLists(cb) {
   google.script.run.withSuccessHandler(function(r) {
@@ -781,6 +781,24 @@ function makeBtn(cls, label, onclick) {
   b.className = cls; b.innerHTML = label;
   if (onclick) b.onclick = onclick;
   return b;
+}
+// In-page yes/no box, resolving true/false. Used instead of the browser's confirm(),
+// which some embedded browsers block (it answers "no" at once, so buttons silently did nothing)
+function askConfirm(msg, okLabel) {
+  return new Promise(function(resolve) {
+    var ov = div('ask-overlay'); ov.setAttribute('role', 'alertdialog'); ov.setAttribute('aria-modal', 'true');
+    var box = div('ask-box');
+    var p = div('ask-msg'); p.textContent = msg; box.appendChild(p);
+    var row = div('ask-actions');
+    function done(v) { document.removeEventListener('keydown', key, true); ov.remove(); resolve(v); }
+    function key(e) { if (e.key === 'Escape') { e.stopPropagation(); done(false); } }
+    var no = makeBtn('btn btn-ghost', 'ยกเลิก', function() { done(false); }); no.type = 'button';
+    var yes = makeBtn('btn btn-primary', escapeHtml(okLabel || 'ยืนยัน'), function() { done(true); }); yes.type = 'button';
+    row.appendChild(no); row.appendChild(yes); box.appendChild(row); ov.appendChild(box);
+    ov.onclick = function(e) { if (e.target === ov) done(false); };
+    document.addEventListener('keydown', key, true);
+    document.body.appendChild(ov); yes.focus();
+  });
 }
 function makeSpinner() {
   var w = document.createElement('div'); w.className = 'state-loading';
@@ -1071,7 +1089,17 @@ function renderOrderLists() {
  
   wrap.appendChild(grid);
   el('content').innerHTML = ''; el('content').appendChild(wrap);
- 
+
+  // Order of the cards = order customers see on the shop page
+  enableReorder(grid.children, sortedLists.map(function(l) { return l.rowIndex; }), function(order) {
+    grid.classList.add('busy');
+    apiCall('adminReorderOrderLists', order).then(function(res) {
+      grid.classList.remove('busy');
+      if (res.status !== 'Success') { toast(res.message || 'จัดลำดับไม่สำเร็จ', 'error'); return; }
+      toast('บันทึกลำดับแล้ว', 'success'); loadAllLists(renderOrderLists);
+    });
+  }, function(card) { var bar = div('reorder-bar'); card.appendChild(bar); return bar; });
+
   grid.onchange = function(e) {
     var tog = e.target.closest('.ol-tog'); if (!tog) return;
     var row = parseInt(tog.getAttribute('data-row'), 10);
@@ -1348,7 +1376,7 @@ function renderOrdersPanel() {
 
   // The view + date-range section sits at the top of the page (where the old
   // "ตารางคำสั่งซื้อ / สร้างสรุปยอด" button was); the per-customer summary
-  // lives in the side menu as "สรุปยอดลูกค้า"
+  // message is made from each bill in จัดการสถานะ → ถึงไทย / ส่งบิล
   el('topbarActions').innerHTML = '';
 
   var wrap = document.createElement('div');
@@ -1687,6 +1715,60 @@ function renderOrdersTable(orders, holder, isAllView) {
     byKey[key].items.push(o);
   });
 
+  // Move items into another customer's checkout of the same list
+  function canMove(items, tg) {
+    var o0 = tg.items[0];
+    if (o0.remark === 'POS' || items.some(function(o) { return o.remark === 'POS'; })) { toast('ย้ายรายการหน้าร้าน (POS) ไม่ได้', 'error'); return false; }
+    if (items.some(function(o) { return o.listId !== o0.listId; })) { toast('ย้ายได้เฉพาะภายในรายการสั่งซื้อเดียวกัน', 'error'); return false; }
+    return true;
+  }
+  function moveItems(items, tg) {
+    if (!canMove(items, tg)) return;
+    var to = tg.items[0];
+    askConfirm('ย้าย ' + items.length + ' รายการไปเป็นของ ' + to.customer + '?\n(สลิปที่ส่งมาแล้วยังอยู่กับลูกค้าเดิม)', 'ย้าย').then(function(ok) {
+      if (ok) moveNow(items, to);
+    });
+  }
+  function moveNow(items, to) {
+    apiCall('adminMoveOrderItems', items.map(function(o) { return o.id; }), to.id).then(function(res) {
+      if (res.status !== 'Success') { toast(res.message || 'ย้ายไม่สำเร็จ', 'error'); return; }
+      items.forEach(function(o) {
+        o.customer = res.customer; o.remark = res.remark; o.checkoutId = res.checkoutId; o.timestamp = res.timestamp; o.deliveryId = '';
+      });
+      toast('ย้ายแล้ว ' + res.moved + ' รายการ', 'success');
+      renderOrdersTable(_ordLast.orders, _ordLast.holder, _ordLast.isAllView);
+    });
+  }
+  // Tap version: pick items and the order to move them to
+  function openMoveModal(g) {
+    var targets = groups.filter(function(x) {
+      return x !== g && x.first.listId === g.first.listId && x.first.remark !== 'POS';
+    });
+    if (!targets.length) { toast('ไม่มีออเดอร์อื่นในรายการนี้', 'error'); return; }
+    el('modalBody').innerHTML = '';
+    var pf = div('modal-field'); var pl = document.createElement('label'); pl.textContent = 'สินค้าที่จะย้าย'; pf.appendChild(pl);
+    var boxes = g.items.map(function(o) {
+      var row = document.createElement('label'); row.className = 'ship-pick';
+      var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = true; row.appendChild(cb);
+      var t = document.createElement('span'); t.textContent = o.product + ' ×' + o.qty; row.appendChild(t);
+      pf.appendChild(row); return cb;
+    });
+    el('modalBody').appendChild(pf);
+    var tf = div('modal-field'); var tl = document.createElement('label'); tl.htmlFor = 'moveTarget'; tl.textContent = 'ย้ายไปออเดอร์ของ'; tf.appendChild(tl);
+    var sel = document.createElement('select'); sel.id = 'moveTarget';
+    targets.forEach(function(x, i) {
+      var e = document.createElement('option'); e.value = i;
+      e.textContent = x.first.customer + ' · ' + new Date(x.first.timestamp).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' }) + ' · ' + x.items.length + ' รายการ';
+      sel.appendChild(e);
+    });
+    tf.appendChild(sel); el('modalBody').appendChild(tf);
+    openModal('&#x21C4; ย้ายสินค้า · ' + escapeHtml(g.first.customer), '', function() {
+      var chosen = g.items.filter(function(o, i) { return boxes[i].checked; });
+      if (!chosen.length) { toast('กรุณาเลือกอย่างน้อย 1 รายการ', 'error'); return; }
+      closeModal(); moveItems(chosen, targets[Number(sel.value)]);
+    }, 'ย้าย');
+  }
+
   var list = div('olist'); list.id = 'ordersDataTable';
   groups.forEach(function(g) {
     var o0 = g.first, sum = 0, pcs = 0, owed = 0, search = [o0.customer, o0.remark, o0.shopName || ''];
@@ -1746,9 +1828,14 @@ function renderOrdersTable(orders, holder, isAllView) {
       it.appendChild(info);
       var qty = div('oitem-qty'); qty.textContent = '×' + o.qty; it.appendChild(qty);
       var pr = div('oitem-price'); pr.textContent = baht(o.total); it.appendChild(pr);
+      if (o.remark !== 'POS') dragSource(it, function() { return { move: [o], from: g }; });
       items.appendChild(it);
     });
     gc.appendChild(items);
+    if (o0.remark !== 'POS') {
+      dragSource(gc, function() { return { move: g.items, from: g }; });
+      dropZone(gc, function(d) { if (d.move && d.from !== g) moveItems(d.move, g); });
+    }
 
     var foot = div('ocard-foot');
     var cnt = div('ocard-count'); cnt.textContent = g.items.length + ' รายการ · ' + pcs + ' ชิ้น'; foot.appendChild(cnt);
@@ -1767,6 +1854,11 @@ function renderOrdersTable(orders, holder, isAllView) {
     if (pays.length) {
       ship.appendChild(makeBtn('btn btn-ghost btn-sm', '&#x1F9FE; สลิป (' + pays.length + ')',
         (function(ps, who) { return function() { openPaymentsModal(ps, who); }; })(pays, o0.customer)));
+    }
+    if (o0.remark !== 'POS') {
+      var mvBtn = makeBtn('btn btn-ghost btn-sm touch-only', '&#x21C4; ย้าย', (function(gr) { return function() { openMoveModal(gr); }; })(g));
+      mvBtn.title = 'ย้ายสินค้าไปออเดอร์ของลูกค้าคนอื่น (หรือลากสินค้าไปวางบนการ์ดอื่น)';
+      ship.appendChild(mvBtn);
     }
     ship.appendChild(makeBtn('btn btn-sm ' + (waiting ? 'btn-primary' : 'btn-ghost'), waiting ? '&#x1F4E6; อัปเดตสถานะ' : 'แก้ไข',
       (function(items) { return function() { openStatusModal(items); }; })(g.items)));
@@ -1871,6 +1963,7 @@ function openStatusModal(items, opts) {
   var p0 = picked[0];
   var same = picked.every(function(o) { return !!o.shippedAt === !!p0.shippedAt && o.status === p0.status; });
   sel.value = pending.length && !p0.status ? 'shipped' : same ? (p0.shippedAt ? 'shipped' : p0.status) : 'shipped';
+  if (opts.preset !== undefined) sel.value = opts.preset; // e.g. the 📦 ship buttons
   sf.appendChild(sel);
   var newInp = document.createElement('input'); newInp.placeholder = 'เช่น ถึงไทย'; newInp.maxLength = 40;
   newInp.style.marginTop = '8px'; newInp.setAttribute('aria-label', 'ชื่อสถานะใหม่');
@@ -1885,7 +1978,22 @@ function openStatusModal(items, opts) {
   var trk = picked.map(function(o) { return o.tracking || ''; });
   inp.value = trk.every(function(t) { return t === trk[0]; }) ? trk[0] : '';
   inp.onkeydown = function(e) { if (e.key === 'Enter') save(); };
-  tf.appendChild(lbl); tf.appendChild(inp); el('modalBody').appendChild(tf);
+  tf.appendChild(lbl); tf.appendChild(inp);
+  // Courier → the customer gets the right tracking link
+  var cs = document.createElement('select'); cs.id = 'shipCourier'; cs.setAttribute('aria-label', 'ขนส่ง');
+  cs.style.marginTop = '8px';
+  [['', 'ขนส่ง (ไม่ระบุ — เดาจากเลขพัสดุ)']].concat(Couriers.list.map(function(c) { return [c.code, c.name]; }))
+    .forEach(function(op) { var e = document.createElement('option'); e.value = op[0]; e.textContent = op[1]; cs.appendChild(e); });
+  var cur = picked.map(function(o) { return o.courier || ''; });
+  if (cur[0] && cur.every(function(c) { return c === cur[0]; })) {
+    if (![].some.call(cs.options, function(o) { return o.value === cur[0]; })) {
+      var extra = document.createElement('option'); extra.value = cur[0]; extra.textContent = Couriers.name(cur[0]); cs.appendChild(extra);
+    }
+    cs.value = cur[0];
+  }
+  if (opts.api === 'adminSetLegacyStatus') cs.hidden = true; // old sheet rows have no courier
+  tf.appendChild(cs);
+  el('modalBody').appendChild(tf);
 
   function sync() { tf.hidden = sel.value !== 'shipped'; newInp.hidden = sel.value !== '__new'; }
   sel.onchange = function() { sync(); (sel.value === '__new' ? newInp : inp).focus(); };
@@ -1902,14 +2010,14 @@ function openStatusModal(items, opts) {
       var res; try { res = JSON.parse(r); } catch (e) { toast('เกิดข้อผิดพลาด', 'error'); return; }
       if (res.status !== 'Success') { toast(res.message || 'เกิดข้อผิดพลาด', 'error'); return; }
       // Update the loaded orders in place and redraw — no reload needed
-      chosen.forEach(function(o) { o.shippedAt = res.shippedAt || ''; o.tracking = res.tracking || ''; o.status = res.orderStatus || ''; });
+      chosen.forEach(function(o) { o.shippedAt = res.shippedAt || ''; o.tracking = res.tracking || ''; o.status = res.orderStatus || ''; o.courier = res.courier || ''; });
       closeModal();
       toast('อัปเดตสถานะแล้ว ' + chosen.length + ' รายการ', 'success');
       if (opts.after) opts.after();
       else if (_ordLast && document.body.contains(_ordLast.holder)) renderOrdersTable(_ordLast.orders, _ordLast.holder, _ordLast.isAllView);
     }).withFailureHandler(function() {
       saveBtn.disabled = false; toast('บันทึกไม่สำเร็จ', 'error');
-    })[opts.api || 'adminSetOrderStatus'](chosen.map(function(o) { return o.id; }).filter(Boolean), status, inp.value);
+    })[opts.api || 'adminSetOrderStatus'](chosen.map(function(o) { return o.id; }).filter(Boolean), status, inp.value, cs.value);
   }
 
   openModal('&#x1F4E6; ' + (opts.noPick ? 'เปลี่ยนสถานะ' : escapeHtml(items[0].customer || 'สถานะ')), '', save, 'บันทึก');
@@ -1929,9 +2037,12 @@ function openPaymentsModal(pays, who) {
     var at = document.createElement('span'); at.textContent = 'โอน ' + when(p.paidAt); top.appendChild(at);
     box.appendChild(top);
     if (p.bankRef) { var ref = div('pay-line'); ref.textContent = 'เลขอ้างอิง ' + p.bankRef; box.appendChild(ref); }
-    var addr = div('pay-addr' + (p.address ? '' : ' muted'));
-    addr.textContent = p.address || 'ไม่ได้แนบที่อยู่';
-    box.appendChild(addr);
+    // Order slips don't carry an address any more; only flag a missing one on bill slips
+    if (p.address || p.deliveryId) {
+      var addr = div('pay-addr' + (p.address ? '' : ' muted'));
+      addr.textContent = p.address || 'ไม่ได้แนบที่อยู่';
+      box.appendChild(addr);
+    }
     if (p.address) {
       box.appendChild(makeBtn('btn btn-ghost btn-sm', 'คัดลอกที่อยู่', function() {
         (navigator.clipboard ? navigator.clipboard.writeText(p.address) : Promise.reject())
@@ -1970,7 +2081,9 @@ function payKindTag(kind) {
 // ════════════════════════════════
 // SLIPS / ADDRESSES — every slip customers sent, across all lists
 // ════════════════════════════════
-var _slipView = { list: '', filter: 'all', q: '' };
+// cat: 'order' = slips for goods (step 1, รอชำระเงิน) · 'bill' = slips for delivery bills (step 3)
+var _slipView = { cat: 'order', list: '', filter: 'all', q: '' };
+function slipCat(p) { return p.deliveryId ? 'bill' : 'order'; }
 function renderSlipsPanel() {
   setTopbar('สลิป / ที่อยู่', 'หลักฐานการโอนและที่อยู่จากลูกค้า');
   el('topbarActions').innerHTML = '';
@@ -1991,8 +2104,22 @@ function drawSlips(pays) {
   allLists.forEach(function(l) { names[l.sheetId] = l.name; });
   var wrap = document.createElement('div');
 
-  // Controls: list, filter chips, search
+  // Controls: category tabs, list, filter chips, search
   var ctl = div('section-card slip-ctl');
+  var n = { order: 0, bill: 0 }; pays.forEach(function(p) { n[slipCat(p)]++; });
+  var tabs = div('stg-tabs slip-cats'); tabs.setAttribute('role', 'tablist');
+  // The step-3 bill holds what's left of the price plus the delivery fee, and is where the address comes in
+  [['order', '🛒 ตอนสั่งซื้อ', 'สลิปตอนสั่งซื้อ (มัดจำ / จ่ายเต็ม)'],
+   ['bill', '🧾 ส่วนที่เหลือ + ค่าส่ง', 'สลิปที่ลูกค้าโอนตามบิล (ส่วนที่เหลือ + ค่าส่ง) พร้อมที่อยู่']].forEach(function(c) {
+    var t = makeBtn('stg-tab' + (_slipView.cat === c[0] ? ' on' : ''), escapeHtml(c[1]) + '<span class="stg-count">' + n[c[0]] + '</span>', function() {
+      _slipView.cat = c[0];
+      tabs.querySelectorAll('.stg-tab').forEach(function(x) { x.classList.toggle('on', x === t); x.setAttribute('aria-selected', x === t); });
+      syncChips(); closeMove(); draw();
+    });
+    t.type = 'button'; t.title = c[2]; t.setAttribute('role', 'tab'); t.setAttribute('aria-selected', _slipView.cat === c[0]);
+    tabs.appendChild(t);
+  });
+  ctl.appendChild(tabs);
   var sel = document.createElement('select'); sel.className = 'slip-list'; sel.setAttribute('aria-label', 'รายการสั่งซื้อ');
   var used = {}; pays.forEach(function(p) { used[p.listId] = true; });
   [['', 'ทุกรายการ']].concat(Object.keys(used).map(function(id) { return [id, names[id] || '(รายการที่ลบแล้ว)']; }))
@@ -2002,14 +2129,21 @@ function drawSlips(pays) {
   ctl.appendChild(sel);
   var chips = div('ord-chips');
   [['all', 'ทั้งหมด'], ['addr', 'มีที่อยู่'], ['noaddr', 'ไม่มีที่อยู่'], ['photo', 'ยังมีรูปสลิป']].forEach(function(c) {
-    var b = makeBtn('price-chip' + (_slipView.filter === c[0] ? ' active' : ''), c[1], function() {
-      _slipView.filter = c[0];
-      chips.querySelectorAll('.price-chip').forEach(function(x) { x.classList.toggle('active', x === b); });
-      draw();
+    var b = makeBtn('price-chip' + (/addr/.test(c[0]) ? ' addr-chip' : ''), c[1], function() {
+      _slipView.filter = c[0]; syncChips(); draw();
     });
-    b.type = 'button'; chips.appendChild(b);
+    b.type = 'button'; b.dataset.f = c[0]; chips.appendChild(b);
   });
   ctl.appendChild(chips);
+  // Order slips no longer carry an address, so the address chips belong to the bill tab only
+  function syncChips() {
+    if (_slipView.cat === 'order' && /addr/.test(_slipView.filter)) _slipView.filter = 'all';
+    chips.querySelectorAll('.price-chip').forEach(function(x) {
+      x.classList.toggle('active', x.dataset.f === _slipView.filter);
+      if (x.classList.contains('addr-chip')) x.hidden = _slipView.cat === 'order';
+    });
+  }
+  syncChips();
   var sw = div('search-row'); sw.innerHTML = SVG_SEARCH;
   var si = document.createElement('input'); si.placeholder = 'ค้นหาชื่อ / ที่อยู่ / เลขอ้างอิง'; si.value = _slipView.q;
   si.oninput = function() { _slipView.q = si.value; draw(); };
@@ -2017,13 +2151,28 @@ function drawSlips(pays) {
   wrap.appendChild(ctl);
 
   var stats = div('stat-row'); wrap.appendChild(stats);
-  var listBox = div('section-card'); wrap.appendChild(listBox);
+  // The "move slip" panel is a repair tool: hidden until a slip's "ย้าย" is pressed (or a slip is dragged)
+  var lay = div('slip-layout');
+  var listBox = div('section-card'); lay.appendChild(listBox);
+  var panel = div('section-card slip-targets'); panel.hidden = true; lay.appendChild(panel);
+  wrap.appendChild(lay);
   el('content').appendChild(wrap);
+  var ctx = { picked: null, who: '', onChange: function() { draw(); drawSlipTargets(panel, ctx); }, close: closeMove };
+  function pick(p) {
+    ctx.picked = p; ctx.who = p.customer;
+    panel.hidden = false; lay.classList.add('moving');
+    drawSlipTargets(panel, ctx);
+  }
+  function closeMove() {
+    ctx.picked = null; panel.hidden = true; lay.classList.remove('moving');
+    listBox.querySelectorAll('.slip-row.picked').forEach(function(x) { x.classList.remove('picked'); });
+  }
 
   function when(d) { return d ? new Date(d).toLocaleString('th-TH', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'; }
   function draw() {
     var q = _slipView.q.trim().toLowerCase();
     var shown = pays.filter(function(p) {
+      if (slipCat(p) !== _slipView.cat) return false;
       if (_slipView.list && p.listId !== _slipView.list) return false;
       if (_slipView.filter === 'addr' && !p.address) return false;
       if (_slipView.filter === 'noaddr' && p.address) return false;
@@ -2038,9 +2187,16 @@ function drawSlips(pays) {
     stats.appendChild(makeStat('ยอดโอนรวม', fmt(total), 'success'));
 
     listBox.innerHTML = '';
-    if (!shown.length) { listBox.appendChild(div('state-empty', pays.length ? 'ไม่พบสลิปตามที่ค้นหา' : '&#x1F4ED; ยังไม่มีลูกค้าส่งสลิป')); return; }
+    if (!shown.length) {
+      var any = pays.some(function(p) { return slipCat(p) === _slipView.cat; });
+      listBox.appendChild(div('state-empty', any ? 'ไม่พบสลิปตามที่ค้นหา'
+        : _slipView.cat === 'bill' ? '&#x1F4ED; ยังไม่มีลูกค้าโอนบิลส่วนที่เหลือ + ค่าส่ง' : '&#x1F4ED; ยังไม่มีลูกค้าส่งสลิป'));
+      return;
+    }
     shown.forEach(function(p) {
-      var row = document.createElement('button'); row.type = 'button'; row.className = 'slip-row';
+      // Not a <button>: it holds the "ย้าย" button, and buttons can't nest
+      var row = div('slip-row' + (ctx.picked === p ? ' picked' : ''));
+      row.setAttribute('role', 'button'); row.tabIndex = 0;
       row.setAttribute('aria-label', 'ดูสลิปของ ' + p.customer);
       var main = div('slip-main');
       var top = div('slip-top');
@@ -2048,15 +2204,28 @@ function drawSlips(pays) {
       if (PAY_KIND[p.kind]) top.appendChild(payKindTag(p.kind));
       var ln = document.createElement('span'); ln.className = 'slip-listname'; ln.textContent = names[p.listId] || ''; top.appendChild(ln);
       main.appendChild(top);
-      var addr = div('slip-addr' + (p.address ? '' : ' muted'));
-      addr.textContent = p.address ? p.address.replace(/\s*\n\s*/g, ' · ') : 'ไม่ได้แนบที่อยู่';
-      main.appendChild(addr);
+      // Only bill slips are expected to carry the address
+      if (p.address || p.deliveryId) {
+        var addr = div('slip-addr' + (p.address ? '' : ' muted'));
+        addr.textContent = p.address ? p.address.replace(/\s*\n\s*/g, ' · ') : 'ไม่ได้แนบที่อยู่';
+        main.appendChild(addr);
+      }
       var meta = div('slip-meta');
       meta.textContent = 'โอน ' + when(p.paidAt) + (p.bankRef ? ' · อ้างอิง ' + p.bankRef : '') + (p.hasSlip ? ' · 🖼 มีรูป' : '');
       main.appendChild(meta);
       row.appendChild(main);
-      var amt = div('slip-amt'); amt.textContent = baht(p.amount); row.appendChild(amt);
+      var side = div('slip-side');
+      var amt = div('slip-amt'); amt.textContent = baht(p.amount); side.appendChild(amt);
+      var mv = makeBtn('btn btn-ghost btn-sm', 'ย้าย', function(e) {
+        e.stopPropagation(); pick(p);
+        listBox.querySelectorAll('.slip-row.picked').forEach(function(x) { x.classList.remove('picked'); });
+        row.classList.add('picked');
+      });
+      mv.type = 'button'; mv.title = 'ย้ายสลิปไปรายการ/บิลอื่น'; side.appendChild(mv);
+      row.appendChild(side);
       row.onclick = function() { openPaymentsModal([p], p.customer); };
+      row.onkeydown = function(e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); row.onclick(); } };
+      dragSource(row, function() { pick(p); return { slip: p }; });
       listBox.appendChild(row);
     });
   }
@@ -2066,61 +2235,41 @@ function drawSlips(pays) {
 // ════════════════════════════════
 // STATUS MANAGER — bulk status for web orders and imported old-sheet rows
 // ════════════════════════════════
-var _stm = { src: 'web', round: '', cat: '', q: '', web: null, legacy: null };
+var _stm = { stage: 'pay', round: '', cat: '', q: '', legacy: null, bills: null };
 var STM_CAP = 400; // rows drawn at once; filters narrow the rest
 
-// Shipped / waiting / cancelled / custom label, for both sources
+// Shipped / waiting / cancelled / custom label
 function stmCat(o) {
   if (o.shippedAt || /^จัดส่งแล้ว/.test(o.status || '')) return 'จัดส่งแล้ว';
   return o.status || 'รอจัดส่ง';
 }
 
-function renderStatusPanel() {
-  setTopbar('จัดการสถานะ', 'อัปเดตสถานะหลายรายการพร้อมกัน');
+// Old orders imported from the status sheet, with bulk status changes
+function renderHistoryPanel() {
+  setTopbar('ประวัติจากชีต', 'สถานะออเดอร์เก่าที่นำเข้าจาก Google Sheet');
   el('topbarActions').innerHTML = '';
   el('topbarActions').appendChild(makeBtn('btn btn-ghost btn-sm', '&#x1F4E5; นำเข้าจากชีต', openImportStatusSheet));
   el('content').innerHTML = ''; el('content').appendChild(makeSpinner());
-  var key = _stm.src;
-  if (key === 'bills') { loadBills(); return; } // always fresh: statuses change elsewhere
-  if (_stm[key]) { drawStatusManager(); return; }
-  var run = google.script.run.withSuccessHandler(function(r) {
-    var res; try { res = JSON.parse(r); } catch (e) { res = { message: 'เกิดข้อผิดพลาด' }; }
+  if (_stm.legacy) { drawStatusManager(); return; }
+  apiCall('adminGetLegacy').then(function(res) {
+    if (currentPanel !== 'history') return;
     if (res.status !== 'Success') { el('content').innerHTML = ''; el('content').appendChild(div('state-empty', '&#x26A0;&#xFE0F; ' + escapeHtml(res.message || 'โหลดไม่สำเร็จ'))); return; }
-    _stm[key] = key === 'web'
-      // POS sales are handed over at the counter: nothing to ship or track
-      ? (res.orders || []).filter(function(o) { return o.remark !== 'POS'; }).map(function(o) { o.round = o.shopName || ''; return o; })
-      : (res.rows || []).map(function(o) { o.shippedAt = ''; return o; });
-    if (key === 'legacy' && res.missing) _stm.legacyMissing = true;
-    if (_stm.src === key) drawStatusManager();
-  }).withFailureHandler(function() { el('content').innerHTML = ''; el('content').appendChild(div('state-empty', 'โหลดไม่สำเร็จ')); });
-  if (key === 'web') run.adminGetAllOrders(); else run.adminGetLegacy();
-}
-
-function stmSeg() {
-  var seg = div('ord-seg ord-seg-3'); seg.setAttribute('role', 'group'); seg.setAttribute('aria-label', 'แหล่งข้อมูล');
-  [['web', 'ออเดอร์เว็บ'], ['legacy', 'ประวัติจากชีต'], ['bills', '🇹🇭 ถึงไทย / บิลค่าส่ง']].forEach(function(v) {
-    var b = makeBtn('ord-seg-btn' + (_stm.src === v[0] ? ' on' : ''), v[1], function() {
-      if (_stm.src === v[0]) return;
-      _stm.src = v[0]; _stm.round = ''; _stm.cat = ''; renderStatusPanel();
-    });
-    b.type = 'button'; b.setAttribute('aria-pressed', _stm.src === v[0] ? 'true' : 'false'); seg.appendChild(b);
+    _stm.legacy = (res.rows || []).map(function(o) { o.shippedAt = ''; return o; });
+    _stm.legacyMissing = !!res.missing;
+    drawStatusManager();
   });
-  return seg;
 }
 
 function drawStatusManager() {
-  var items = _stm[_stm.src] || [];
+  var items = _stm.legacy || [];
   el('content').innerHTML = '';
   var wrap = document.createElement('div');
 
   var ctl = div('section-card slip-ctl');
-  ctl.appendChild(stmSeg());
 
   if (!items.length) {
     wrap.appendChild(ctl);
-    var empty = _stm.src === 'legacy'
-      ? 'ยังไม่ได้นำเข้าชีตสถานะ — กด "📥 นำเข้าจากชีต" ด้านบน' + (_stm.legacyMissing ? '<br><small>(ต้องรัน supabase/migrations/2026-10-29b-legacy-status.sql ก่อน)</small>' : '')
-      : '&#x1F4ED; ยังไม่มีคำสั่งซื้อ';
+    var empty = 'ยังไม่ได้นำเข้าชีตสถานะ — กด "📥 นำเข้าจากชีต" ด้านบน' + (_stm.legacyMissing ? '<br><small>(ต้องรัน supabase/migrations/2026-10-29b-legacy-status.sql ก่อน)</small>' : '');
     wrap.appendChild(div('state-empty', empty));
     el('content').appendChild(wrap); return;
   }
@@ -2168,7 +2317,7 @@ function drawStatusManager() {
     if (!chosen.length) return;
     openStatusModal(chosen, {
       noPick: true,
-      api: _stm.src === 'web' ? 'adminSetOrderStatus' : 'adminSetLegacyStatus',
+      api: 'adminSetLegacyStatus',
       labels: Object.keys(cats).filter(function(c) { return order.indexOf(c) === -1; }),
       after: function() { picked = {}; drawStatusManager(); }
     });
@@ -2199,75 +2348,6 @@ function drawStatusManager() {
     return st;
   }
 
-  // Web orders: one card per checkout, like the orders page
-  function drawCards(rows) {
-    var groups = [], byKey = {};
-    rows.forEach(function(o) {
-      var key = o.checkoutId ? 'c:' + o.checkoutId : 't:' + o.listId + '|' + o.customer + '|' + String(o.timestamp || '').slice(0, 16);
-      if (!byKey[key]) { byKey[key] = []; groups.push(byKey[key]); }
-      byKey[key].push(o);
-    });
-    var cards = div('olist');
-    groups.forEach(function(g) {
-      var o0 = g[0], sum = 0, pcs = 0;
-      var gc = div('ocard');
-      var head = div('ocard-head');
-      var gSel = document.createElement('input'); gSel.type = 'checkbox'; gSel.className = 'ocard-sel';
-      gSel.setAttribute('aria-label', 'เลือกคำสั่งซื้อทั้งหมดของ ' + o0.customer);
-      head.appendChild(gSel);
-      var who = div('ocard-who');
-      var nm = document.createElement('span'); nm.className = 'ocard-name'; nm.textContent = o0.customer || '—'; who.appendChild(nm);
-      var sub = div('ocard-sub');
-      if (o0.round) { var shop = document.createElement('span'); shop.className = 'ocard-shop'; shop.textContent = o0.round; sub.appendChild(shop); }
-      if (o0.remark) { var ph = document.createElement('span'); ph.className = 'ocard-phone'; ph.textContent = o0.remark; sub.appendChild(ph); }
-      if (sub.childNodes.length) who.appendChild(sub);
-      head.appendChild(who);
-      var time = div('ocard-time');
-      time.textContent = o0.timestamp ? new Date(o0.timestamp).toLocaleDateString('th-TH', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
-      head.appendChild(time);
-      gc.appendChild(head);
-
-      var boxes = [];
-      function syncCard() {
-        var on = g.filter(function(o) { return picked[o.id]; }).length;
-        gSel.checked = on === g.length; gSel.indeterminate = on > 0 && on < g.length;
-      }
-      gSel.onchange = function() {
-        g.forEach(function(o) { picked[o.id] = gSel.checked; });
-        boxes.forEach(function(cb) { cb.checked = gSel.checked; });
-        refreshBar();
-      };
-      var itemsBox = div('ocard-items');
-      g.forEach(function(o) {
-        sum += Number(o.total) || 0; if (o.payType !== 'Gift') pcs += Number(o.qty) || 0;
-        var it = document.createElement('label'); it.className = 'oitem';
-        var cb = document.createElement('input'); cb.type = 'checkbox'; cb.className = 'order-sel'; cb.checked = !!picked[o.id];
-        cb.onchange = function() { picked[o.id] = cb.checked; syncCard(); refreshBar(); };
-        boxes.push(cb); it.appendChild(cb);
-        var info = div('oitem-info');
-        var pn = div('oitem-name'); pn.textContent = o.product; info.appendChild(pn);
-        info.appendChild(o.payType === 'Deposit'
-          ? div('oitem-sub', '<span class="badge badge-deposit">มัดจำ</span> ราคาเต็ม ' + escapeHtml(baht(o.totalFull || o.fullPrice * o.qty)))
-          : o.payType === 'Gift'
-            ? div('oitem-sub', '<span class="badge badge-gift">ของแถม</span>')
-            : div('oitem-sub', '<span class="badge badge-full">จ่ายเต็ม</span>'));
-        info.appendChild(stmStatus(o));
-        it.appendChild(info);
-        var qty = div('oitem-qty'); qty.textContent = '×' + o.qty; it.appendChild(qty);
-        var pr = div('oitem-price'); pr.textContent = baht(o.total); it.appendChild(pr);
-        itemsBox.appendChild(it);
-      });
-      syncCard();
-      gc.appendChild(itemsBox);
-      var foot = div('ocard-foot');
-      var cnt = div('ocard-count'); cnt.textContent = g.length + ' รายการ · ' + pcs + ' ชิ้น'; foot.appendChild(cnt);
-      var tot = div('ocard-total'); tot.innerHTML = 'รวม <strong>' + escapeHtml(baht(sum)) + '</strong>'; foot.appendChild(tot);
-      gc.appendChild(foot);
-      cards.appendChild(gc);
-    });
-    list.appendChild(cards);
-  }
-
   function draw() {
     var q = _stm.q.trim().toLowerCase();
     shown = items.filter(function(o) {
@@ -2285,8 +2365,7 @@ function drawStatusManager() {
     list.innerHTML = '';
     if (!shown.length) { list.appendChild(div('state-empty', 'ไม่พบรายการตามที่กรอง')); refreshBar(); return; }
     var rows = shown.slice(0, STM_CAP);
-    if (_stm.src === 'web') drawCards(rows);
-    else rows.forEach(function(o) {
+    rows.forEach(function(o) {
       var row = document.createElement('label'); row.className = 'stm-row';
       var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!picked[o.id];
       cb.onchange = function() { picked[o.id] = cb.checked; refreshBar(); };
@@ -2308,216 +2387,398 @@ function drawStatusManager() {
 }
 
 // ════════════════════════════════
-// DELIVERY BILLS — items that arrived in Thailand, grouped into bills with
-// one delivery fee each. Drag a whole order or one item to the right for a
-// new bill, onto a bill to add to it, or onto another order to bill both
-// together; drag out of a bill back to the left to take it out.
+// STATUS STAGES — the same steps the customer sees on the status page:
+// waiting for payment → arrived / send the bill → waiting to ship (iShip
+// books the parcel) → tracking → complete. POS sales never show here.
 // ════════════════════════════════
 var ARRIVED_LABEL = 'ถึงไทยแล้ว';
 var ARRIVED_RE = /ถึงไทย/;
-var _billDrag = null; // { ids, cust, from: 'left' | 'bill', key, bill }
+var _billDrag = null; // { ids, cust, from: 'left' | 'wait' | 'bill', key, bill }
+var STAGES = [
+  { id: 'pay', label: 'รอชำระเงิน', empty: 'ไม่มีออเดอร์ที่รอชำระเงิน' },
+  { id: 'arrive', label: 'ถึงไทย / ส่งบิล', empty: '' },
+  { id: 'ship', label: 'รอจัดส่ง', empty: 'ไม่มีบิลที่รอจัดส่ง — บิลจะย้ายมาที่นี่เมื่อลูกค้าโอนค่าบิลแล้ว' },
+  { id: 'track', label: 'ติดตามพัสดุ', empty: 'ไม่มีพัสดุที่กำลังจัดส่ง' },
+  { id: 'done', label: 'สำเร็จแล้ว', empty: 'ยังไม่มีรายการที่สำเร็จ' }
+];
+var STAGE_CAP = 60; // cards drawn at once; search narrows the rest
 
-function loadBills() {
-  var got = {}, failed = false;
-  function fail(msg) {
-    if (failed) return; failed = true;
-    el('content').innerHTML = ''; el('content').appendChild(div('state-empty', '&#x26A0;&#xFE0F; ' + escapeHtml(msg || 'โหลดไม่สำเร็จ')));
-  }
-  function done() {
-    if (failed || !got.o || !got.d) return;
-    _stm.bills = { orders: got.o.orders || [], payments: got.o.payments || [], deliveries: got.d.deliveries || [], missing: !!got.d.missing };
-    if (_stm.src === 'bills' && currentPanel === 'status') drawBillsBoard();
-  }
-  function handler(k) {
-    return function(r) {
-      var res; try { res = JSON.parse(r); } catch (e) { res = {}; }
-      if (res.status !== 'Success') { fail(res.message); return; }
-      got[k] = res; done();
-    };
-  }
-  google.script.run.withSuccessHandler(handler('o')).withFailureHandler(function() { fail(); }).adminGetAllOrders();
-  google.script.run.withSuccessHandler(handler('d')).withFailureHandler(function() { fail(); }).adminGetDeliveries();
+// iShip's last step says the parcel reached the customer
+function isDelivered(b) {
+  return !!b.deliveredAt || /^(delivered|complete|completed|signed|success_delivery)$/i.test(b.ishipCode || '') ||
+    /นำจ่ายสำเร็จ|จัดส่งสำเร็จ|ส่งสำเร็จ|ผู้รับได้รับ|เซ็นรับ/.test(b.ishipStatus || '');
 }
 
-function drawBillsBoard() {
+function stageOf(o, B) {
+  if (o.status === 'ยกเลิก') return 'done';
+  var b = o.deliveryId ? B.billById[o.deliveryId] : null;
+  // Parcels booked with iShip stay in tracking until iShip says delivered
+  if (o.shippedAt) return b && b.tracking && !isDelivered(b) ? 'track' : 'done';
+  // A sent bill waits in step 2 until the customer pays it
+  if (b) return b.sentAt && B.billPaid[b.id] ? 'ship' : 'arrive';
+  return B.paid[o.listId + '|' + normCust(o.customer)] ? 'arrive' : 'pay';
+}
+
+function renderStatusPanel() {
+  setTopbar('จัดการสถานะ', 'ขั้นตอนเดียวกับหน้าสถานะของลูกค้า');
+  el('topbarActions').innerHTML = '';
+  el('content').innerHTML = ''; el('content').appendChild(makeSpinner());
+  // Bill settings are optional: a failed load just means the built-in message and no default fee
+  Promise.all([apiCall('adminGetAllOrders'), apiCall('adminGetDeliveries'), loadBillSettings()]).then(function(r) {
+    if (currentPanel !== 'status') return;
+    var bad = r[0].status !== 'Success' ? r[0] : r[1].status !== 'Success' ? r[1] : null;
+    if (bad) { el('content').innerHTML = ''; el('content').appendChild(div('state-empty', '&#x26A0;&#xFE0F; ' + escapeHtml(bad.message || 'โหลดไม่สำเร็จ'))); return; }
+    _stm.bills = {
+      // POS sales are handed over at the counter: nothing to ship or track
+      orders: (r[0].orders || []).filter(function(o) { return o.remark !== 'POS'; }),
+      payments: r[0].payments || [], deliveries: r[1].deliveries || [], missing: !!r[1].missing
+    };
+    _slipTargets = null;
+    drawStages();
+  });
+}
+
+function drawStages() {
   var B = _stm.bills;
   el('content').innerHTML = '';
   var wrap = document.createElement('div');
-  var ctl = div('section-card slip-ctl');
-  ctl.appendChild(stmSeg());
-  var sw = div('search-row'); sw.innerHTML = SVG_SEARCH;
-  var si = document.createElement('input'); si.placeholder = 'ค้นหาชื่อลูกค้า / สินค้า'; si.value = _stm.q;
-  sw.appendChild(si); ctl.appendChild(sw);
-  wrap.appendChild(ctl);
   el('content').appendChild(wrap);
   if (B.missing) {
     wrap.appendChild(div('state-empty', 'ต้องรันไฟล์ supabase/migrations/2026-10-29c-delivery-bills.sql ใน SQL Editor ก่อน'));
     return;
   }
-  wrap.appendChild(div('slip-meta bill-help',
-    'ลากออเดอร์ทั้งก้อน หรือสินค้าทีละชิ้น ไปทางขวาเพื่อสร้างบิลค่าส่ง · วางบนบิลที่มีอยู่เพื่อรวม · ' +
-    'วางออเดอร์ทับอีกออเดอร์เพื่อรวมเป็นบิลเดียว · ลากออกจากบิลกลับมาทางซ้ายเพื่อนำออก ' +
-    '(ตั้งสถานะสินค้าเป็น "' + ARRIVED_LABEL + '" ในแท็บออเดอร์เว็บก่อน)'));
-  var board = div('bill-board');
-  var left = div('bill-col'), right = div('bill-col bill-col-right');
-  board.appendChild(left); board.appendChild(right);
-  wrap.appendChild(board);
-
+  B.billById = {}; B.deliveries.forEach(function(b) { B.billById[b.id] = b; });
+  B.paid = {}; B.billPaid = {};
+  B.payments.forEach(function(p) {
+    if (p.deliveryId) B.billPaid[p.deliveryId] = true;
+    else B.paid[p.listId + '|' + normCust(p.customer)] = true;
+  });
+  var S = {};
+  STAGES.forEach(function(s) { S[s.id] = []; });
+  B.orders.forEach(function(o) { S[stageOf(o, B)].push(o); });
   var listName = {};
   B.orders.forEach(function(o) { listName[o.listId] = o.shopName; });
-  function itemLine(o) {
-    var row = div('bill-item');
-    var t = div('bill-item-name'); t.textContent = o.product + ' ×' + o.qty; row.appendChild(t);
-    var m = div('bill-item-meta');
-    m.textContent = o.payType === 'Deposit' ? 'มัดจำ · เหลือ ' + baht(Math.max(0, o.totalFull - o.total))
-      : o.payType === 'Gift' ? 'ของแถม' : 'จ่ายเต็มแล้ว';
-    row.appendChild(m);
-    return row;
+
+  function ckKey(o) { return o.checkoutId ? 'c:' + o.checkoutId : 't:' + o.listId + '|' + o.customer + '|' + String(o.timestamp || '').slice(0, 16); }
+  function checkouts(rows) {
+    var out = [], by = {};
+    rows.forEach(function(o) { var k = ckKey(o); if (!by[k]) { by[k] = []; out.push(by[k]); } by[k].push(o); });
+    return out.sort(function(a, b) { return String(b[0].shippedAt || b[0].timestamp).localeCompare(String(a[0].shippedAt || a[0].timestamp)); });
+  }
+  function billsOf(rows) {
+    var seen = {}, out = [];
+    rows.forEach(function(o) { if (!seen[o.deliveryId]) { seen[o.deliveryId] = true; out.push(B.billById[o.deliveryId]); } });
+    return out.map(billCtx);
+  }
+  function billCtx(b) {
+    return { b: b, items: B.orders.filter(function(o) { return o.deliveryId === b.id; }),
+             pays: B.payments.filter(function(p) { return p.deliveryId === b.id; }) };
+  }
+  function drafts() { return B.deliveries.filter(function(b) { return !b.sentAt && !b.tracking; }).map(billCtx); }
+  // Sent, not paid yet, still something to ship
+  function unpaid() { return billsOf(S.arrive.filter(function(o) { return o.deliveryId && B.billById[o.deliveryId].sentAt; })); }
+  function count(id) {
+    if (id === 'ship' || id === 'track') return billsOf(S[id]).length;
+    if (id === 'arrive') return checkouts(S.arrive.filter(function(o) { return !o.deliveryId; })).length + drafts().length + unpaid().length;
+    return checkouts(S[id]).length;
+  }
+
+  // Step tabs, with how many checkouts / bills sit in each
+  var ctl = div('section-card slip-ctl');
+  var tabs = div('stg-tabs'); tabs.setAttribute('role', 'tablist');
+  STAGES.forEach(function(s, i) {
+    var b = makeBtn('stg-tab' + (s.id === _stm.stage ? ' on' : ''),
+      '<span class="stg-num">' + (i + 1) + '</span><span>' + escapeHtml(s.label) + '</span><span class="stg-count">' + count(s.id) + '</span>',
+      function() { if (_stm.stage !== s.id) { _stm.stage = s.id; drawStages(); } });
+    b.type = 'button'; b.setAttribute('role', 'tab'); b.setAttribute('aria-selected', s.id === _stm.stage ? 'true' : 'false');
+    tabs.appendChild(b);
+  });
+  ctl.appendChild(tabs);
+  var sw = div('search-row'); sw.innerHTML = SVG_SEARCH;
+  var si = document.createElement('input'); si.placeholder = 'ค้นหาชื่อลูกค้า / สินค้า / เลขพัสดุ'; si.value = _stm.q;
+  si.oninput = function() { _stm.q = si.value; draw(); };
+  sw.appendChild(si); ctl.appendChild(sw);
+  wrap.appendChild(ctl);
+  var body = div('stg-body'); wrap.appendChild(body);
+
+  function q() { return _stm.q.trim().toLowerCase(); }
+  function hit(o) {
+    var t = q();
+    return !t || (o.customer + ' ' + o.product + ' ' + (o.tracking || '') + ' ' + (listName[o.listId] || '')).toLowerCase().indexOf(t) !== -1;
   }
   function custName(items) { return items[0].customer.replace(/\s*\n\s*/g, ' '); }
   function ids(items) { return items.map(function(o) { return o.id; }); }
   function unique(a) { return a.filter(function(v, i) { return a.indexOf(v) === i; }); }
+  function when(d) { return d ? new Date(d).toLocaleDateString('th-TH', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''; }
+  function more(n) { if (n > STAGE_CAP) body.appendChild(div('slip-meta', 'แสดง ' + STAGE_CAP + ' จาก ' + n + ' — ค้นหาให้แคบลง')); }
+  function empty(text) { body.appendChild(div('state-empty', q() ? 'ไม่พบรายการตามที่ค้นหา' : text)); }
 
-  function draw() {
-    var q = _stm.q.trim().toLowerCase();
-    function hit(o) { return !q || (o.customer + ' ' + o.product).toLowerCase().indexOf(q) !== -1; }
-    left.innerHTML = ''; right.innerHTML = '';
-    left.appendChild(div('bill-col-title', '🇹🇭 ถึงไทยแล้ว · ยังไม่มีบิล'));
-    right.appendChild(div('bill-col-title', '🧾 บิลค่าส่ง · ลูกค้าเห็นบิลเมื่อกด "ส่งบิลให้ลูกค้า"'));
-
-    // Left: arrived, not shipped, not POS, not in a bill — per customer, per checkout
-    var custs = [], byCust = {};
-    B.orders.forEach(function(o) {
-      if (o.deliveryId || o.shippedAt || o.remark === 'POS' || !ARRIVED_RE.test(o.status || '') || !hit(o)) return;
-      var c = normCust(o.customer);
-      if (!byCust[c]) { byCust[c] = { keys: [], byKey: {} }; custs.push(c); }
-      var key = o.checkoutId || o.listId + '|' + o.timestamp;
-      if (!byCust[c].byKey[key]) { byCust[c].byKey[key] = []; byCust[c].keys.push(key); }
-      byCust[c].byKey[key].push(o);
+  function itemStatus(o) {
+    var b = o.deliveryId ? B.billById[o.deliveryId] : null;
+    if (o.status === 'ยกเลิก') return div('oitem-ship cancel', 'ยกเลิก');
+    if (o.shippedAt) {
+      var t = (b && b.tracking && isDelivered(b) ? '✓ ส่งถึงแล้ว' : '📦 ส่งแล้ว') + (o.tracking ? ' · ' + (o.courier ? Couriers.name(o.courier) + ' ' : '') + o.tracking : '');
+      var s = div('oitem-ship'); s.textContent = t; return s;
+    }
+    var w = div('oitem-ship ' + (o.status ? 'custom' : 'waiting')); w.textContent = o.status || 'รอสินค้า'; return w;
+  }
+  function payTag(o) {
+    return o.payType === 'Deposit'
+      ? '<span class="badge badge-deposit">มัดจำ</span> ราคาเต็ม ' + escapeHtml(baht(o.totalFull || o.fullPrice * o.qty))
+      : o.payType === 'Gift' ? '<span class="badge badge-gift">ของแถม</span>' : '<span class="badge badge-full">จ่ายเต็ม</span>';
+  }
+  // One checkout as a card, like the orders page
+  function orderCard(g) {
+    var o0 = g[0], sum = 0, pcs = 0;
+    var c = div('ocard');
+    var head = div('ocard-head');
+    var who = div('ocard-who');
+    var nm = document.createElement('span'); nm.className = 'ocard-name'; nm.textContent = custName(g); who.appendChild(nm);
+    var sub = div('ocard-sub');
+    var shop = document.createElement('span'); shop.className = 'ocard-shop'; shop.textContent = listName[o0.listId] || ''; sub.appendChild(shop);
+    who.appendChild(sub); head.appendChild(who);
+    head.appendChild(div('ocard-time', escapeHtml(when(o0.timestamp))));
+    c.appendChild(head);
+    var box = div('ocard-items');
+    g.forEach(function(o) {
+      sum += Number(o.total) || 0; if (o.payType !== 'Gift') pcs += Number(o.qty) || 0;
+      var it = div('oitem');
+      var info = div('oitem-info');
+      var pn = div('oitem-name'); pn.textContent = o.product; info.appendChild(pn);
+      info.appendChild(div('oitem-sub', payTag(o)));
+      info.appendChild(itemStatus(o));
+      it.appendChild(info);
+      it.appendChild(div('oitem-qty', '×' + escapeHtml(String(o.qty))));
+      it.appendChild(div('oitem-price', escapeHtml(baht(o.total))));
+      box.appendChild(it);
     });
-    if (!custs.length) left.appendChild(div('state-empty', q ? 'ไม่พบรายการตามที่ค้นหา' : 'ไม่มีสินค้าที่ถึงไทยแล้วและรอทำบิล'));
-    custs.sort().forEach(function(c) {
-      var g = byCust[c];
-      var box = div('bill-cust');
-      var h = div('bill-cust-name'); h.textContent = custName(g.byKey[g.keys[0]]); box.appendChild(h);
-      g.keys.forEach(function(key) {
-        var items = g.byKey[key];
-        var card = div('bill-order');
-        var top = div('bill-order-top');
-        var nm = document.createElement('strong');
-        nm.textContent = (listName[items[0].listId] || 'ออเดอร์') + ' · ' +
-          new Date(items[0].timestamp).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' });
-        top.appendChild(nm);
-        // Tap fallback for touch screens, where drag and drop doesn't work
-        var go = makeBtn('btn btn-ghost btn-sm', 'สร้างบิล &#x2192;', function() { setBill(ids(items), null, true, c); });
-        go.type = 'button'; go.title = 'ย้ายทั้งออเดอร์ไปเป็นบิลใหม่'; top.appendChild(go);
-        card.appendChild(top);
-        items.forEach(function(o) {
-          var line = itemLine(o);
-          dragSource(line, function() { return { ids: [o.id], cust: c, from: 'left', key: key + '#' + o.id }; });
-          card.appendChild(line);
-        });
-        dragSource(card, function() { return { ids: ids(items), cust: c, from: 'left', key: key }; });
-        // Another order dropped on this one → both become one bill
-        dropZone(card, function(d) {
-          if (d.from === 'bill') { setBill(d.ids, null, false, d.cust); return; }
-          if (d.key === key || d.key.indexOf(key + '#') === 0) return;
-          if (d.cust !== c) { toast('รวมบิลได้เฉพาะสินค้าของลูกค้าคนเดียวกัน', 'error'); return; }
-          setBill(unique(d.ids.concat(ids(items))), null, true, c);
-        });
-        box.appendChild(card);
-      });
-      left.appendChild(box);
+    c.appendChild(box);
+    var foot = div('ocard-foot');
+    foot.appendChild(div('ocard-count', g.length + ' รายการ · ' + pcs + ' ชิ้น'));
+    foot.appendChild(div('ocard-total', 'รวม <strong>' + escapeHtml(baht(sum)) + '</strong>'));
+    c.appendChild(foot);
+    return c;
+  }
+  // One compact row: product (without the list name the card already shows), qty, and a tag
+  // only when something is still owed or it's a gift — "paid in full" is the norm
+  function itemLine(o) {
+    var row = div('bill-item');
+    var name = String(o.product || ''), ln = listName[o.listId] || '';
+    if (ln && name.indexOf(ln) === 0 && name.length > ln.length) name = name.slice(ln.length).replace(/^[\s\-–·:|]+/, '');
+    var t = div('bill-item-name'); t.textContent = name; t.title = o.product; row.appendChild(t);
+    var qn = document.createElement('span'); qn.className = 'bill-item-qty'; qn.textContent = '×' + o.qty; row.appendChild(qn);
+    if (o.payType === 'Deposit' || o.payType === 'Gift') {
+      var m = document.createElement('span'); m.className = 'bill-item-tag ' + o.payType.toLowerCase();
+      m.textContent = o.payType === 'Gift' ? 'ของแถม' : 'มัดจำ · เหลือ ' + baht(Math.max(0, o.totalFull - o.total));
+      row.appendChild(m);
+    }
+    return row;
+  }
+  // Long bills show the first few items; the rest open on tap
+  var ITEMS_SHOWN = 4;
+  function itemList(card, items, drag) {
+    var box = div('bill-items');
+    items.forEach(function(o, i) {
+      var line = itemLine(o);
+      if (drag) drag(line, o);
+      if (i >= ITEMS_SHOWN && items.length > ITEMS_SHOWN + 1) line.hidden = true;
+      box.appendChild(line);
     });
-
-    // Right: open bills (something still to ship), per customer
-    var bills = B.deliveries.map(function(b) {
-      return { b: b, items: B.orders.filter(function(o) { return o.deliveryId === b.id; }),
-               pays: B.payments.filter(function(p) { return p.deliveryId === b.id; }) };
-    }).filter(function(x) {
-      var open = x.items.some(isWaiting) || (!x.items.length && x.pays.length);
-      return open && (!q || x.items.some(hit) || x.b.customer.indexOf(q) !== -1);
+    card.appendChild(box);
+    var hidden = box.querySelectorAll('.bill-item[hidden]');
+    if (!hidden.length) return;
+    var more = makeBtn('bill-more', '+ อีก ' + hidden.length + ' รายการ', function() {
+      hidden.forEach(function(l) { l.hidden = false; }); more.remove();
     });
-    if (!bills.length) right.appendChild(div('state-empty', 'ลากออเดอร์จากทางซ้ายมาวางที่นี่เพื่อสร้างบิล'));
-    var n = {};
-    bills.sort(function(a, b) { return a.b.customer < b.b.customer ? -1 : a.b.customer > b.b.customer ? 1 : 0; }).forEach(function(x) {
-      var b = x.b; n[b.customer] = (n[b.customer] || 0) + 1;
-      var card = div('bill-card' + (b.sentAt ? '' : ' draft'));
-      var top = div('bill-order-top');
-      var nm = document.createElement('strong');
-      nm.textContent = (x.items.length ? custName(x.items) : '@' + b.customer) + ' · บิล ' + n[b.customer];
-      top.appendChild(nm);
-      var ship = makeBtn('btn btn-ghost btn-sm', '&#x1F4E6; จัดส่ง', function() {
-        var waiting = x.items.filter(isWaiting);
-        if (!waiting.length) { toast('ไม่มีสินค้าที่รอจัดส่งในบิลนี้', 'error'); return; }
-        openStatusModal(waiting, { after: function() { _stm.web = null; draw(); } });
-      });
-      ship.type = 'button'; top.appendChild(ship);
-      card.appendChild(top);
-      if (!x.items.length) card.appendChild(div('slip-meta', '⚠️ บิลนี้ไม่มีสินค้าแล้ว แต่ลูกค้าโอนเข้ามาแล้ว — ลากสินค้ากลับเข้ามา'));
-      var rest = 0, pcs = 0;
-      x.items.forEach(function(o) {
-        if (o.payType === 'Deposit') rest += Math.max(0, o.totalFull - o.total);
-        if (o.payType !== 'Gift') pcs += Number(o.qty) || 0;
-        var line = itemLine(o);
-        if (o.shippedAt) line.classList.add('shipped');
-        dragSource(line, function() { return { ids: [o.id], cust: b.customer, from: 'bill', bill: b.id }; });
-        card.appendChild(line);
-      });
-      dragSource(card, function() { return { ids: ids(x.items), cust: b.customer, from: 'bill', bill: b.id }; });
-
-      var sum = div('bill-sum');
-      var r1 = div('bill-sum-row');
-      var rl = document.createElement('span'); rl.textContent = pcs + ' ชิ้น · ส่วนที่เหลือ'; r1.appendChild(rl);
-      var rv = document.createElement('span'); rv.textContent = baht(rest); r1.appendChild(rv);
-      sum.appendChild(r1);
-      var r2 = div('bill-sum-row');
-      var fl = document.createElement('label'); fl.textContent = 'ค่าส่ง'; fl.htmlFor = 'fee-' + b.id; r2.appendChild(fl);
+    more.type = 'button'; card.appendChild(more);
+  }
+  // Items, rest of the price + fee; the fee is editable only while the bill is a draft
+  function billSum(x) {
+    var b = x.b, rest = 0, pcs = 0;
+    x.items.forEach(function(o) {
+      if (o.payType === 'Deposit') rest += Math.max(0, o.totalFull - o.total);
+      if (o.payType !== 'Gift') pcs += Number(o.qty) || 0;
+    });
+    var sum = div('bill-sum');
+    var r1 = div('bill-sum-row');
+    r1.appendChild(document.createTextNode(pcs + ' ชิ้น · ส่วนที่เหลือ'));
+    var rv = document.createElement('span'); rv.textContent = baht(rest); r1.appendChild(rv);
+    sum.appendChild(r1);
+    var r2 = div('bill-sum-row');
+    var fl = document.createElement('label'); fl.textContent = 'ค่าส่ง'; fl.htmlFor = 'fee-' + b.id; r2.appendChild(fl);
+    if (!b.sentAt) {
       var fee = document.createElement('input'); fee.type = 'number'; fee.min = '0'; fee.step = '1'; fee.inputMode = 'decimal';
       fee.id = 'fee-' + b.id; fee.className = 'bill-fee'; fee.placeholder = 'ยังไม่ระบุ';
       fee.value = b.fee === null ? '' : b.fee;
       fee.onchange = function() {
         var v = fee.value.trim() === '' ? null : Number(fee.value);
-        if (v === null && b.sentAt) { toast('ถอนบิลก่อนลบค่าส่ง', 'error'); fee.value = b.fee; return; }
-        google.script.run.withSuccessHandler(function(r) {
-          var res; try { res = JSON.parse(r); } catch (e) { res = {}; }
+        apiCall('adminSetDeliveryFee', b.id, v).then(function(res) {
           if (res.status !== 'Success') { toast(res.message || 'บันทึกค่าส่งไม่สำเร็จ', 'error'); fee.value = b.fee === null ? '' : b.fee; return; }
           b.fee = res.fee; toast('บันทึกค่าส่งแล้ว', 'success'); draw();
-        }).withFailureHandler(function() { toast('บันทึกค่าส่งไม่สำเร็จ', 'error'); }).adminSetDeliveryFee(b.id, v);
+        });
       };
-      r2.appendChild(fee); sum.appendChild(r2);
-      var r3 = div('bill-sum-row total');
-      r3.appendChild(document.createTextNode('ลูกค้าต้องโอน'));
-      var tv = document.createElement('strong'); tv.textContent = b.fee === null ? 'รอใส่ค่าส่ง' : baht(rest + b.fee); r3.appendChild(tv);
-      sum.appendChild(r3);
-      card.appendChild(sum);
+      r2.appendChild(fee);
+    } else {
+      var fv = document.createElement('span'); fv.textContent = baht(b.fee); r2.appendChild(fv);
+    }
+    sum.appendChild(r2);
+    var r3 = div('bill-sum-row total');
+    r3.appendChild(document.createTextNode('ลูกค้าต้องโอน'));
+    var tv = document.createElement('strong'); tv.textContent = b.fee === null ? 'รอใส่ค่าส่ง' : baht(rest + b.fee); r3.appendChild(tv);
+    sum.appendChild(r3);
+    return sum;
+  }
+  function paidButton(x) {
+    var paid = 0; x.pays.forEach(function(p) { paid += Number(p.amount) || 0; });
+    var ps = makeBtn('bill-paid' + (x.pays.length ? ' ok' : ''), x.pays.length ? '✓ โอนแล้ว ' + baht(paid) + ' · ดูสลิป' : 'รอลูกค้าโอน', null);
+    ps.type = 'button';
+    if (x.pays.length) ps.onclick = function() { openPaymentsModal(x.pays, x.items.length ? custName(x.items) : x.b.customer); };
+    else ps.disabled = true;
+    return ps;
+  }
+  // Chat message for the bill: items, rest + fee, how to pay, delivery rounds
+  function summaryBtn(x, cls) {
+    var s = makeBtn(cls, '&#x1F4AC; ข้อความสรุปยอด', function() {
+      openBillSummary(x.items, x.b.fee, x.items.length ? custName(x.items) : '@' + x.b.customer);
+    });
+    s.type = 'button';
+    if (x.b.fee === null) { s.disabled = true; s.title = 'ใส่ค่าส่งก่อน'; }
+    return s;
+  }
+  function billTitle(x) {
+    var names = unique(x.items.map(function(o) { return listName[o.listId] || ''; })).filter(Boolean);
+    return (x.items.length ? custName(x.items) : '@' + x.b.customer) + (names.length ? ' · ' + names.join(', ') : '');
+  }
+  function tools() {
+    var t = div('bill-tools');
+    [['&#x2699;&#xFE0F; ตั้งค่าผู้ส่ง iShip', openIshipSettings], ['&#x1F69A; เรียกรถเข้ารับ', openPickupModal]].forEach(function(a) {
+      var b = makeBtn('btn btn-ghost btn-sm', a[0], a[1]); b.type = 'button'; t.appendChild(b);
+    });
+    return t;
+  }
 
-      // Draft until sent: the customer keeps seeing these items as "waiting to arrive"
-      if (!b.sentAt) {
-        card.appendChild(div('slip-meta bill-state', 'ร่าง · ลูกค้ายังไม่เห็นบิลนี้'));
-        var send = makeBtn('btn btn-primary btn-sm bill-send', '&#x1F4E8; ส่งบิลให้ลูกค้า', function() { sendBill(b, true); });
-        send.type = 'button';
-        if (b.fee === null) { send.disabled = true; send.title = 'ใส่ค่าส่งก่อน'; }
-        card.appendChild(send);
+  // ── 1. Waiting for payment: no slip for the list yet ──
+  function drawPay() {
+    var gs = checkouts(S.pay.filter(hit));
+    if (!gs.length) return empty(STAGES[0].empty);
+    var grid = div('stg-grid');
+    gs.slice(0, STAGE_CAP).forEach(function(g) {
+      var c = orderCard(g);
+      var act = div('ocard-ship');
+      act.appendChild(div('ocard-ship-info stg-wait', 'ยังไม่ได้รับสลิป'));
+      var ed = makeBtn('btn btn-ghost btn-sm', 'แก้ไขสถานะ', function() { openStatusModal(g, { after: renderStatusPanel }); });
+      ed.type = 'button'; act.appendChild(ed);
+      c.appendChild(act);
+      grid.appendChild(c);
+    });
+    body.appendChild(grid); more(gs.length);
+  }
+
+  // ── 2. Paid: mark arrival, build bills by drag and drop, send them ──
+  function drawArrive() {
+    var bar = div('bill-tools stg-arrive-bar');
+    bar.appendChild(div('slip-meta bill-help mouse-only',
+      'ลากออเดอร์ (หรือทีละชิ้น) ไปทางขวาเพื่อทำบิล · วางบนบิลเพื่อรวม · ลากกลับมาทางซ้ายเพื่อนำออก'));
+    var set = makeBtn('btn btn-ghost btn-sm', '&#x2699;&#xFE0F; ตั้งค่าบิล' + (_billSet.fee !== null ? ' · ค่าส่ง ' + escapeHtml(baht(_billSet.fee)) : ''),
+      function() { openBillSettings(drawStages); });
+    set.type = 'button'; set.title = 'ค่าส่งเริ่มต้น และข้อความสรุปยอด'; bar.appendChild(set);
+    body.appendChild(bar);
+    var board = div('bill-board');
+    var left = div('bill-col'), right = div('bill-col bill-col-right');
+    board.appendChild(left); board.appendChild(right);
+    body.appendChild(board);
+
+    function byCustomer(rows) {
+      var custs = [], by = {};
+      rows.forEach(function(o) {
+        var c = normCust(o.customer);
+        if (!by[c]) { by[c] = { keys: [], byKey: {} }; custs.push(c); }
+        var key = o.checkoutId || o.listId + '|' + o.timestamp;
+        if (!by[c].byKey[key]) { by[c].byKey[key] = []; by[c].keys.push(key); }
+        by[c].byKey[key].push(o);
+      });
+      return custs.sort().map(function(c) { return { c: c, g: by[c] }; });
+    }
+    function orderBlock(host, c, key, items, from) {
+      var card = div('bill-order' + (from === 'wait' ? ' stg-notyet' : ''));
+      var top = div('bill-order-top');
+      var nm = document.createElement('strong');
+      nm.textContent = (listName[items[0].listId] || 'ออเดอร์') + ' · ' +
+        new Date(items[0].timestamp).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' });
+      top.appendChild(nm);
+      if (from === 'wait') {
+        var ar = makeBtn('btn btn-ghost btn-sm', '&#x2713; ถึงไทยแล้ว', function() { markArrived(items, 'อัปเดตเป็นถึงไทยแล้ว'); });
+        ar.type = 'button'; top.appendChild(ar);
       } else {
-        var sentRow = div('bill-sent-row');
-        var sentAt = div('slip-meta bill-state sent');
-        sentAt.textContent = '✓ ส่งบิลแล้ว ' + new Date(b.sentAt).toLocaleString('th-TH', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
-        sentRow.appendChild(sentAt);
-        if (!x.pays.length) {
-          var unsend = makeBtn('btn btn-ghost btn-sm', 'ถอนบิล', function() { sendBill(b, false); });
-          unsend.type = 'button'; unsend.title = 'ซ่อนบิลจากลูกค้า กลับเป็นร่าง';
-          sentRow.appendChild(unsend);
-        }
-        card.appendChild(sentRow);
-        var paid = 0; x.pays.forEach(function(p) { paid += Number(p.amount) || 0; });
-        var ps = makeBtn('bill-paid' + (x.pays.length ? ' ok' : ''), x.pays.length ? '✓ โอนแล้ว ' + baht(paid) + ' · ดูสลิป' : 'รอลูกค้าโอน', null);
-        ps.type = 'button';
-        if (x.pays.length) ps.onclick = function() { openPaymentsModal(x.pays, x.items.length ? custName(x.items) : b.customer); };
-        else ps.disabled = true;
-        card.appendChild(ps);
+        // Tap fallback for touch screens, where drag and drop doesn't work
+        var go = makeBtn('btn btn-ghost btn-sm touch-only', 'สร้างบิล &#x2192;', function() { setBill(ids(items), null, true, c); });
+        go.type = 'button'; go.title = 'ย้ายทั้งออเดอร์ไปเป็นบิลใหม่'; top.appendChild(go);
       }
+      card.appendChild(top);
+      itemList(card, items, function(line, o) {
+        dragSource(line, function() { return { ids: [o.id], cust: c, from: from, key: key + '#' + o.id }; });
+      });
+      dragSource(card, function() { return { ids: ids(items), cust: c, from: from, key: key }; });
+      // Another order dropped on this one → both become one bill
+      if (from === 'left') dropZone(card, function(d) {
+        if (d.from === 'bill') { setBill(d.ids, null, false, d.cust); return; }
+        if (d.key === key || d.key.indexOf(key + '#') === 0) return;
+        if (d.cust !== c) { toast('รวมบิลได้เฉพาะสินค้าของลูกค้าคนเดียวกัน', 'error'); return; }
+        setBill(unique(d.ids.concat(ids(items))), null, true, c);
+      });
+      host.appendChild(card);
+    }
+    function column(host, rows, from) {
+      byCustomer(rows).forEach(function(x) {
+        var box = div('bill-cust');
+        var h = div('bill-cust-name'); h.textContent = custName(x.g.byKey[x.g.keys[0]]); box.appendChild(h);
+        x.g.keys.forEach(function(key) { orderBlock(box, x.c, key, x.g.byKey[key], from); });
+        host.appendChild(box);
+      });
+    }
 
+    var open = S.arrive.filter(function(o) { return !o.deliveryId && hit(o); });
+    var arrived = open.filter(function(o) { return ARRIVED_RE.test(o.status || ''); });
+    var notYet = open.filter(function(o) { return !ARRIVED_RE.test(o.status || ''); });
+    left.appendChild(div('bill-col-title', '📦 ถึงไทยแล้ว · ยังไม่มีบิล'));
+    var arrivedBox = div('stg-drop');
+    if (!arrived.length) arrivedBox.appendChild(div('state-empty', q() ? 'ไม่พบรายการตามที่ค้นหา' : 'ยังไม่มีสินค้าที่ถึงไทยและรอทำบิล'));
+    column(arrivedBox, arrived, 'left');
+    left.appendChild(arrivedBox);
+    // Dropping a not-yet-arrived order here marks it arrived
+    dropZone(arrivedBox, function(d) {
+      if (d.from === 'wait') markArrived(B.orders.filter(function(o) { return d.ids.indexOf(o.id) !== -1; }), 'อัปเดตเป็นถึงไทยแล้ว');
+    });
+    if (notYet.length) {
+      left.appendChild(div('bill-col-title stg-sub', '⏳ ชำระแล้ว · รอสินค้าถึงไทย (' + checkouts(notYet).length + ')'));
+      column(left, notYet, 'wait');
+    }
+
+    right.appendChild(div('bill-col-title', '🧾 บิลร่าง · ลูกค้าเห็นบิลเมื่อกด "ส่งบิลให้ลูกค้า"'));
+    var t = q();
+    var bills = drafts().filter(function(x) { return !t || x.items.some(hit) || x.b.customer.indexOf(t) !== -1; });
+    if (!bills.length) right.appendChild(div('state-empty', 'ลากออเดอร์จากทางซ้ายมาวางที่นี่เพื่อสร้างบิล'));
+    var n = {};
+    bills.sort(function(a, b) { return a.b.customer < b.b.customer ? -1 : a.b.customer > b.b.customer ? 1 : 0; }).forEach(function(x) {
+      var b = x.b; n[b.customer] = (n[b.customer] || 0) + 1;
+      var card = div('bill-card draft');
+      var top = div('bill-order-top');
+      var nm = document.createElement('strong');
+      // List names in the title, since item rows leave them out
+      nm.textContent = billTitle(x) + (n[b.customer] > 1 ? ' · บิล ' + n[b.customer] : '');
+      top.appendChild(nm);
+      card.appendChild(top);
+      itemList(card, x.items, function(line, o) {
+        dragSource(line, function() { return { ids: [o.id], cust: b.customer, from: 'bill', bill: b.id }; });
+      });
+      dragSource(card, function() { return { ids: ids(x.items), cust: b.customer, from: 'bill', bill: b.id }; });
+      card.appendChild(billSum(x));
+      card.appendChild(div('slip-meta bill-state', 'ร่าง · ลูกค้ายังไม่เห็นบิลนี้'));
+      var send = makeBtn('btn btn-primary btn-sm bill-send', '&#x1F4E8; ส่งบิลให้ลูกค้า', function() { sendBill(b, true); });
+      send.type = 'button';
+      if (b.fee === null) { send.disabled = true; send.title = 'ใส่ค่าส่งก่อน'; }
+      card.appendChild(send);
+      card.appendChild(summaryBtn(x, 'btn btn-ghost btn-sm bill-send'));
       dropZone(card, function(d) {
         if (d.bill === b.id) return;
         if (d.cust !== b.customer) { toast('รวมบิลได้เฉพาะสินค้าของลูกค้าคนเดียวกัน', 'error'); return; }
@@ -2525,24 +2786,154 @@ function drawBillsBoard() {
       });
       right.appendChild(card);
     });
+
+    // Sent bills stay in this step until the customer sends the slip; then they move to "รอจัดส่ง".
+    // Full width under the board: nothing is dragged here
+    var waiting = unpaid().filter(function(x) { return !t || x.items.some(hit) || x.b.customer.indexOf(t) !== -1; });
+    if (waiting.length) {
+      body.appendChild(div('stg-section-title', '📨 ส่งบิลแล้ว · รอลูกค้าโอน <span class="stg-count">' + waiting.length + '</span>'));
+      var grid = div('stg-grid');
+      body.appendChild(grid);
+      waiting.forEach(function(x) {
+        var b = x.b;
+        var card = div('bill-card stg-bill');
+        var top = div('bill-order-top');
+        var nm = document.createElement('strong'); nm.textContent = billTitle(x); top.appendChild(nm);
+        top.appendChild(div('slip-meta', escapeHtml('ส่งบิล ' + when(b.sentAt))));
+        card.appendChild(top);
+        itemList(card, x.items);
+        card.appendChild(billSum(x));
+        card.appendChild(paidButton(x));
+        card.appendChild(summaryBtn(x, 'btn btn-ghost btn-sm bill-send'));
+        var act = div('stg-actions');
+        var un = makeBtn('btn btn-ghost btn-sm', 'ถอนบิล', function() { sendBill(b, false); });
+        un.type = 'button'; un.title = 'ซ่อนบิลจากลูกค้า กลับเป็นร่าง'; act.appendChild(un);
+        // e.g. paid in cash or another way
+        var go = makeBtn('btn btn-ghost btn-sm', '&#x1F69A; จัดส่งเลย (ไม่รอโอน)', function() {
+          askConfirm('ลูกค้ายังไม่ได้ส่งสลิปค่าบิลนี้ — จัดส่งเลยไหม?', 'จัดส่งเลย').then(function(ok) {
+            if (ok) openIshipModal(b, x, renderStatusPanel);
+          });
+        });
+        go.type = 'button'; act.appendChild(go);
+        card.appendChild(act);
+        grid.appendChild(card);
+      });
+    }
+
+    // Empty space on the right → new bill; on the left → out of its bill
+    dropZone(right, function(d) { setBill(d.ids, null, true, d.cust); });
+    dropZone(left, function(d) { if (d.from === 'bill') setBill(d.ids, null, false, d.cust); });
   }
 
-  // Empty space on the right → new bill; on the left → out of its bill
-  dropZone(right, function(d) { setBill(d.ids, null, true, d.cust); });
-  dropZone(left, function(d) { if (d.from === 'bill') setBill(d.ids, null, false, d.cust); });
+  // ── 3. Bill sent: the one action is "deliver", which books iShip ──
+  function drawShip() {
+    body.appendChild(tools());
+    var t = q();
+    var bills = billsOf(S.ship).filter(function(x) { return !t || x.items.some(hit); });
+    if (!bills.length) return empty(STAGES[2].empty);
+    var grid = div('stg-grid');
+    bills.slice(0, STAGE_CAP).forEach(function(x) {
+      var b = x.b;
+      var card = div('bill-card stg-bill');
+      var top = div('bill-order-top');
+      var nm = document.createElement('strong'); nm.textContent = billTitle(x); top.appendChild(nm);
+      top.appendChild(div('slip-meta', escapeHtml('ส่งบิล ' + when(b.sentAt))));
+      card.appendChild(top);
+      itemList(card, x.items);
+      card.appendChild(billSum(x));
+      card.appendChild(paidButton(x));
+      var act = div('stg-actions');
+      var go = makeBtn('btn btn-primary btn-sm', '&#x1F69A; จัดส่ง', function() { openIshipModal(b, x, renderStatusPanel); });
+      go.type = 'button'; act.appendChild(go);
+      card.appendChild(act);
+      grid.appendChild(card);
+    });
+    body.appendChild(grid); more(bills.length);
+  }
+
+  // ── 4. Booked with iShip, not delivered yet ──
+  function drawTrack() {
+    var t = q();
+    var bills = billsOf(S.track).filter(function(x) { return !t || x.items.some(hit) || (x.b.tracking || '').toLowerCase().indexOf(t) !== -1; });
+    if (!bills.length) return empty(STAGES[3].empty);
+    var bar = div('bill-tools');
+    var all = makeBtn('btn btn-ghost btn-sm', '&#x1F504; เช็คสถานะทั้งหมด (' + bills.length + ')', function() { refreshAll(bills, all); });
+    all.type = 'button'; bar.appendChild(all);
+    var pk = makeBtn('btn btn-ghost btn-sm', '&#x1F69A; เรียกรถเข้ารับ', openPickupModal); pk.type = 'button'; bar.appendChild(pk);
+    body.appendChild(bar);
+    var grid = div('stg-grid');
+    bills.slice(0, STAGE_CAP).forEach(function(x) {
+      var b = x.b;
+      var card = div('bill-card stg-bill');
+      var top = div('bill-order-top');
+      var nm = document.createElement('strong'); nm.textContent = billTitle(x); top.appendChild(nm);
+      card.appendChild(top);
+      var tr = div('stg-track');
+      var a = document.createElement('a'); a.href = Couriers.trackUrl(b.courier, b.tracking); a.target = '_blank'; a.rel = 'noopener';
+      a.textContent = Couriers.name(b.courier) + ' · ' + b.tracking; tr.appendChild(a);
+      var st = div('stg-track-st' + (/cancel|return|fail/i.test(b.ishipCode || '') ? ' bad' : ''));
+      st.textContent = (b.ishipStatus || 'รอเข้ารับพัสดุ') + (b.ishipStatusAt ? ' · ' + when(b.ishipStatusAt) : '');
+      tr.appendChild(st);
+      card.appendChild(tr);
+      itemList(card, x.items);
+      var act = div('stg-actions');
+      [['&#x1F5A8; ใบปะหน้า A6', function() { openIshipLabel(b.tracking); }],
+       ['&#x1F4CD; เช็คสถานะ', function() { openIshipTrace(b.tracking, b.courier, renderStatusPanel); }]].forEach(function(p) {
+        var bt = makeBtn('btn btn-ghost btn-sm', p[0], p[1]); bt.type = 'button'; act.appendChild(bt);
+      });
+      card.appendChild(act);
+      grid.appendChild(card);
+    });
+    body.appendChild(grid); more(bills.length);
+  }
+  // Asks iShip for each parcel's latest step (saved by the function), then reloads
+  function refreshAll(bills, btn) {
+    btn.disabled = true;
+    var i = 0;
+    (function next() {
+      if (i >= bills.length) { toast('อัปเดตสถานะพัสดุแล้ว', 'success'); renderStatusPanel(); return; }
+      btn.textContent = '🔄 กำลังเช็ค ' + (i + 1) + '/' + bills.length;
+      apiCall('adminIship', 'trace', { tracking: bills[i++].b.tracking }).then(next);
+    })();
+  }
+
+  // ── 5. Delivered, shipped outside iShip, or cancelled ──
+  function drawDone() {
+    var gs = checkouts(S.done.filter(hit));
+    if (!gs.length) return empty(STAGES[4].empty);
+    var grid = div('stg-grid');
+    gs.slice(0, STAGE_CAP).forEach(function(g) { grid.appendChild(orderCard(g)); });
+    body.appendChild(grid); more(gs.length);
+  }
+
+  function markArrived(items, msg) {
+    var need = items.filter(function(o) { return !o.shippedAt && !ARRIVED_RE.test(o.status || ''); });
+    if (!need.length) { drawStages(); return Promise.resolve(); }
+    body.classList.add('busy');
+    return apiCall('adminSetOrderStatus', ids(need), ARRIVED_LABEL, '').then(function(res) {
+      body.classList.remove('busy');
+      if (res.status !== 'Success') { toast(res.message || 'บันทึกไม่สำเร็จ', 'error'); return; }
+      need.forEach(function(o) { o.status = res.orderStatus || ARRIVED_LABEL; });
+      if (msg) toast(msg, 'success');
+      drawStages();
+    });
+  }
 
   function sendBill(b, send) {
-    if (!send && !confirm('ถอนบิลนี้กลับเป็นร่าง? ลูกค้าจะไม่เห็นบิลจนกว่าจะส่งใหม่')) return;
-    board.classList.add('busy');
-    google.script.run.withSuccessHandler(function(r) {
-      board.classList.remove('busy');
-      var res; try { res = JSON.parse(r); } catch (e) { res = {}; }
+    if (send) { sendBillNow(b, true); return; }
+    askConfirm('ถอนบิลนี้กลับเป็นร่าง? ลูกค้าจะไม่เห็นบิลจนกว่าจะส่งใหม่', 'ถอนบิล').then(function(ok) {
+      if (ok) sendBillNow(b, false);
+    });
+  }
+  function sendBillNow(b, send) {
+    body.classList.add('busy');
+    apiCall('adminSendDelivery', b.id, send).then(function(res) {
+      body.classList.remove('busy');
       if (res.status !== 'Success') { toast(res.message || 'ส่งบิลไม่สำเร็จ', 'error'); return; }
       b.sentAt = res.sentAt || '';
-      toast(send ? 'ส่งบิลให้ลูกค้าแล้ว' : 'ถอนบิลแล้ว', 'success');
-      draw();
-    }).withFailureHandler(function() { board.classList.remove('busy'); toast('ส่งบิลไม่สำเร็จ', 'error'); })
-      .adminSendDelivery(b.id, send);
+      toast(send ? 'ส่งบิลแล้ว — รอลูกค้าโอน แล้วบิลจะย้ายไปแท็บ "รอจัดส่ง"' : 'ถอนบิลแล้ว — กลับเป็นบิลร่าง', 'success');
+      drawStages();
+    });
   }
 
   function setBill(orderIds, deliveryId, isNew, cust) {
@@ -2551,26 +2942,41 @@ function drawBillsBoard() {
       return orderIds.indexOf(o.id) !== -1 && o.deliveryId && o.deliveryId !== deliveryId &&
         B.payments.some(function(p) { return p.deliveryId === o.deliveryId; });
     });
-    if (leavingPaid && !confirm('ลูกค้าโอนค่าบิลเดิมของสินค้านี้แล้ว — ย้ายออกจากบิลนั้นจริงไหม?')) return;
-    board.classList.add('busy');
-    google.script.run.withSuccessHandler(function(r) {
-      board.classList.remove('busy');
-      var res; try { res = JSON.parse(r); } catch (e) { res = {}; }
+    if (!leavingPaid) { setBillNow(orderIds, deliveryId, isNew, cust); return; }
+    askConfirm('ลูกค้าโอนค่าบิลเดิมของสินค้านี้แล้ว — ย้ายออกจากบิลนั้นจริงไหม?', 'ย้าย').then(function(ok) {
+      if (ok) setBillNow(orderIds, deliveryId, isNew, cust);
+    });
+  }
+  function setBillNow(orderIds, deliveryId, isNew, cust) {
+    body.classList.add('busy');
+    apiCall('adminSetDelivery', orderIds, deliveryId, isNew).then(function(res) {
+      body.classList.remove('busy');
       if (res.status !== 'Success') { toast(res.message || 'ย้ายไม่สำเร็จ', 'error'); return; }
       var target = res.deliveryId || '';
-      if (isNew && target) B.deliveries.push({ id: target, customer: cust, fee: null, createdAt: new Date().toISOString(), sentAt: '' });
-      B.orders.forEach(function(o) { if (orderIds.indexOf(o.id) !== -1) o.deliveryId = target; });
+      if (isNew && target) {
+        var nb = { id: target, customer: cust, fee: null, createdAt: new Date().toISOString(), sentAt: '' };
+        B.deliveries.push(nb);
+        // New bills start with the default fee from ⚙️ ตั้งค่าบิล (still editable on the draft)
+        if (_billSet.fee !== null) apiCall('adminSetDeliveryFee', target, _billSet.fee).then(function(f) {
+          if (f.status === 'Success') { nb.fee = f.fee; drawStages(); }
+        });
+      }
+      var moved = B.orders.filter(function(o) { return orderIds.indexOf(o.id) !== -1; });
+      moved.forEach(function(o) { o.deliveryId = target; });
       // Mirror the database: bills with no items and no payments are gone
       B.deliveries = B.deliveries.filter(function(b) {
         return B.orders.some(function(o) { return o.deliveryId === b.id; }) || B.payments.some(function(p) { return p.deliveryId === b.id; });
       });
       toast(isNew ? 'สร้างบิลแล้ว' : target ? 'รวมเข้าบิลแล้ว' : 'นำออกจากบิลแล้ว', 'success');
-      draw();
-    }).withFailureHandler(function() { board.classList.remove('busy'); toast('ย้ายไม่สำเร็จ', 'error'); })
-      .adminSetDelivery(orderIds, deliveryId, isNew);
+      // Billing an order that hadn't been marked yet means it has arrived
+      if (target) markArrived(moved); else drawStages();
+    });
   }
 
-  si.oninput = function() { _stm.q = si.value; draw(); };
+  function draw() {
+    body.innerHTML = '';
+    ({ pay: drawPay, arrive: drawArrive, ship: drawShip, track: drawTrack, done: drawDone })[_stm.stage]();
+  }
   draw();
 }
 
@@ -2604,6 +3010,450 @@ function dropZone(node, onDrop) {
   });
 }
 
+// Promise wrapper for a google.script.run call; resolves to the parsed result
+function apiCall(fn) {
+  var args = Array.prototype.slice.call(arguments, 1);
+  return new Promise(function(resolve) {
+    var run = google.script.run.withSuccessHandler(function(r) {
+      var res; try { res = JSON.parse(r); } catch (e) { res = { status: 'Error', message: 'เกิดข้อผิดพลาด' }; }
+      resolve(res);
+    }).withFailureHandler(function(e) { resolve({ status: 'Error', message: (e && e.message) || 'เชื่อมต่อไม่ได้' }); });
+    run[fn].apply(run, args);
+  });
+}
+
+// ════════════════════════════════
+// REORDER — drag a row/card by its ⠿ handle onto another to take its place,
+// or use ▲▼ (touch screens). save(newKeys) gets every key in the new order.
+// ════════════════════════════════
+function enableReorder(nodes, keys, save, hostOf) {
+  var group = 'r' + Math.random().toString(36).slice(2);
+  Array.prototype.forEach.call(nodes, function(node, i) {
+    node.classList.add('reorder-item');
+    dragSource(node, function() { return { reorder: group, from: i }; });
+    node.draggable = false; // only the handle starts a drag, so inputs inside stay usable
+    dropZone(node, function(d) {
+      if (d.reorder !== group || d.from === i) return;
+      var order = keys.slice(); order.splice(i, 0, order.splice(d.from, 1)[0]);
+      save(order);
+    });
+    var host = hostOf(node);
+    var handle = document.createElement('span'); handle.className = 'reorder-handle mouse-only';
+    handle.textContent = '⠿'; handle.title = 'ลากเพื่อจัดลำดับ'; handle.setAttribute('aria-hidden', 'true');
+    handle.addEventListener('mousedown', function() { node.draggable = true; });
+    node.addEventListener('dragend', function() { node.draggable = false; });
+    host.appendChild(handle);
+    [[-1, '▲', 'เลื่อนขึ้น'], [1, '▼', 'เลื่อนลง']].forEach(function(a) {
+      var b = makeBtn('reorder-btn touch-only', a[1], function(e) {
+        e.stopPropagation();
+        var j = i + a[0];
+        var order = keys.slice(); order.splice(j, 0, order.splice(i, 1)[0]);
+        save(order);
+      });
+      b.type = 'button'; b.title = a[2]; b.setAttribute('aria-label', a[2]);
+      b.disabled = i + a[0] < 0 || i + a[0] >= keys.length;
+      host.appendChild(b);
+    });
+  });
+}
+
+// A press on a handle that didn't become a drag must not leave the row draggable
+document.addEventListener('mouseup', function() {
+  document.querySelectorAll('.reorder-item[draggable=true]').forEach(function(n) { n.draggable = false; });
+});
+
+// ════════════════════════════════
+// SLIP MATCHING — drag a slip (or pick it with "ย้าย") onto one of the
+// customer's order lists or delivery bills to re-file it there.
+// ════════════════════════════════
+var _slipTargets = null; // { orders, deliveries } loaded on first use
+function loadSlipTargets(cb) {
+  if (_slipTargets) { cb(); return; }
+  Promise.all([apiCall('adminGetAllOrders'), apiCall('adminGetDeliveries')]).then(function(r) {
+    if (r[0].status !== 'Success') { toast(r[0].message || 'โหลดคำสั่งซื้อไม่สำเร็จ', 'error'); return; }
+    _slipTargets = { orders: (r[0].orders || []).filter(function(o) { return o.remark !== 'POS'; }), deliveries: r[1].deliveries || [] };
+    cb();
+  });
+}
+
+function drawSlipTargets(panel, ctx) {
+  panel.innerHTML = '';
+  var head = div('slip-targets-head');
+  head.appendChild(div('bill-col-title', '🎯 ย้ายสลิปไปที่'));
+  if (ctx.close) {
+    var x = makeBtn('btn btn-ghost btn-sm', '&#x2715;', ctx.close);
+    x.type = 'button'; x.title = 'ปิด'; x.setAttribute('aria-label', 'ปิดแผงย้ายสลิป'); head.appendChild(x);
+  }
+  panel.appendChild(head);
+  var sw = div('search-row'); sw.innerHTML = SVG_SEARCH;
+  var si = document.createElement('input'); si.placeholder = 'ชื่อลูกค้า (@)'; si.value = ctx.who || '';
+  sw.appendChild(si); panel.appendChild(sw);
+  var box = div('slip-target-list'); panel.appendChild(box);
+  var p = ctx.picked;
+  panel.appendChild(div('slip-meta', p
+    ? 'สลิปที่เลือก: ' + escapeHtml(p.customer) + ' · ' + escapeHtml(baht(p.amount)) + ' — ลากสลิปมาวาง หรือแตะปลายทาง'
+    : 'ลากสลิปจากรายการทางซ้ายมาวางบนรายการ/บิลของลูกค้า หรือกด "ย้าย" ที่สลิป'));
+  si.oninput = function() { ctx.who = si.value; fill(); };
+
+  function fill() {
+    box.innerHTML = '';
+    var who = normCust(si.value);
+    if (who.length < 2) { box.appendChild(div('state-empty', 'พิมพ์ชื่อลูกค้า หรือเลือกสลิป')); return; }
+    if (!_slipTargets) { box.appendChild(makeSpinner()); loadSlipTargets(fill); return; }
+    var mine = _slipTargets.orders.filter(function(o) { return normCust(o.customer) === who; });
+    if (!mine.length) { box.appendChild(div('state-empty', 'ไม่พบคำสั่งซื้อของ @' + escapeHtml(who))); return; }
+    var raw = mine[0].customer;
+    var lists = [], byList = {};
+    mine.forEach(function(o) {
+      if (!byList[o.listId]) { byList[o.listId] = { id: o.listId, name: o.shopName, items: [] }; lists.push(byList[o.listId]); }
+      byList[o.listId].items.push(o);
+    });
+    lists.forEach(function(l) {
+      var dep = l.items.some(function(o) { return o.payType === 'Deposit'; });
+      var t = target('📋 ' + (l.name || 'รายการสั่งซื้อ'), l.items.length + ' รายการ · ' + (dep ? 'มัดจำ' : 'จ่ายเต็ม'),
+        p && p.listId === l.id && !p.deliveryId);
+      hook(t, { listId: l.id, deliveryId: '', customer: raw, label: l.name });
+    });
+    _slipTargets.deliveries.filter(function(b) { return b.customer === who; }).forEach(function(b, i) {
+      var items = mine.filter(function(o) { return o.deliveryId === b.id; });
+      if (!items.length) return;
+      var t = target('🧾 บิล ' + (i + 1) + ' · ส่วนที่เหลือ + ค่าส่ง', items.length + ' รายการ' + (b.sentAt ? ' · ส่งบิลแล้ว' : ' · ร่าง'), p && p.deliveryId === b.id);
+      hook(t, { listId: '', deliveryId: b.id, customer: raw, label: 'บิล ' + (i + 1) });
+    });
+  }
+  function target(title, sub, current) {
+    var t = document.createElement('button'); t.type = 'button'; t.className = 'slip-target' + (current ? ' current' : '');
+    var a = document.createElement('strong'); a.textContent = title; t.appendChild(a);
+    var b = document.createElement('span'); b.textContent = current ? sub + ' · อยู่ที่นี่' : sub; t.appendChild(b);
+    box.appendChild(t);
+    return t;
+  }
+  function hook(t, dest) {
+    t.onclick = function() { if (ctx.picked) link(ctx.picked, dest); else toast('เลือกสลิปก่อน (กด "ย้าย" ที่สลิป)', 'error'); };
+    dropZone(t, function(d) { if (d.slip) link(d.slip, dest); });
+  }
+  function link(pay, dest) {
+    var sameCust = normCust(pay.customer) === normCust(dest.customer);
+    if (sameCust && (dest.deliveryId ? pay.deliveryId === dest.deliveryId : pay.listId === dest.listId && !pay.deliveryId)) return;
+    if (sameCust) { linkNow(pay, dest); return; }
+    askConfirm('ย้ายสลิปของ ' + pay.customer + ' ไปเป็นของ ' + dest.customer + '?', 'ย้ายสลิป').then(function(ok) {
+      if (ok) linkNow(pay, dest);
+    });
+  }
+  function linkNow(pay, dest) {
+    apiCall('adminLinkPayment', pay.id, dest.listId, dest.deliveryId, dest.customer).then(function(res) {
+      if (res.status !== 'Success') { toast(res.message || 'ย้ายสลิปไม่สำเร็จ', 'error'); return; }
+      pay.listId = res.listId; pay.deliveryId = res.deliveryId; pay.kind = res.kind; pay.customer = res.customer;
+      toast('ย้ายสลิปไปที่ ' + (dest.label || 'ปลายทาง') + ' แล้ว', 'success');
+      ctx.onChange();
+    });
+  }
+  fill();
+}
+
+// ════════════════════════════════
+// IMAGE DROP — drop an image file on any photo picker to upload it, as if
+// it had been chosen with the file dialog.
+// ════════════════════════════════
+function imageDropInput(node) {
+  for (var depth = 0; node && node !== document.body && depth < 6; depth++, node = node.parentElement) {
+    var inp = node.querySelector && node.querySelector(':scope > input[type=file][accept^="image"]:not([capture]), :scope > * > input[type=file][accept^="image"]:not([capture])');
+    if (inp) return { zone: node, input: inp };
+  }
+  return null;
+}
+(function() {
+  var lit = null;
+  function hasFiles(e) { return e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types || [], 'Files') !== -1; }
+  function light(z) { if (lit && lit !== z) lit.classList.remove('img-drop-on'); lit = z; if (z) z.classList.add('img-drop-on'); }
+  document.addEventListener('dragover', function(e) {
+    if (!hasFiles(e)) return;
+    e.preventDefault(); // also stops the browser opening a stray dropped file
+    var t = imageDropInput(e.target);
+    e.dataTransfer.dropEffect = t ? 'copy' : 'none';
+    light(t ? t.zone : null);
+  });
+  document.addEventListener('dragleave', function(e) { if (!e.relatedTarget) light(null); });
+  document.addEventListener('drop', function(e) {
+    if (!hasFiles(e)) return;
+    e.preventDefault(); light(null);
+    var t = imageDropInput(e.target);
+    if (!t) return;
+    var files = Array.prototype.filter.call(e.dataTransfer.files, function(f) { return /^image\//.test(f.type); });
+    if (!files.length) { toast('วางได้เฉพาะไฟล์รูปภาพ', 'error'); return; }
+    var dt = new DataTransfer();
+    (t.input.multiple ? files : files.slice(0, 1)).forEach(function(f) { dt.items.add(f); });
+    t.input.files = dt.files;
+    t.input.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+})();
+
+// ════════════════════════════════
+// iSHIP — book a delivery bill with iShip (tracking number + label), track
+// parcels, call a courier for pickup. Calls go through the "iship" Edge
+// Function; the sender address lives in app_settings ('iship').
+// ════════════════════════════════
+var ISHIP_CATEGORIES = [[99, 'อื่นๆ'], [0, 'เอกสาร'], [1, 'อาหารแห้ง'], [2, 'ของใช้'], [3, 'อุปกรณ์ไอที'], [4, 'เสื้อผ้า'],
+  [5, 'สื่อบันเทิง'], [6, 'อะไหล่รถยนต์'], [7, 'รองเท้า/กระเป๋า'], [8, 'อุปกรณ์กีฬา'], [9, 'เครื่องสำอางค์'], [10, 'เฟอร์นิเจอร์'], [11, 'ผลไม้']];
+
+// Name / phone / address + subdistrict, district, province, postcode with
+// autocomplete, and a "paste the whole address" helper. get() → parts.
+function makeAddressFields(parts, idPrefix, nameLabel) {
+  parts = parts || {};
+  var wrap = div('addr-fields');
+  var paste = div('addr-paste');
+  var pt = document.createElement('textarea'); pt.rows = 2; pt.placeholder = 'วางที่อยู่ทั้งหมดที่นี่ แล้วกด "แยกที่อยู่" (ชื่อ เบอร์ บ้านเลขที่ ตำบล อำเภอ จังหวัด รหัสไปรษณีย์)';
+  pt.setAttribute('aria-label', 'วางที่อยู่ทั้งหมด');
+  var pb = makeBtn('btn btn-ghost btn-sm', 'แยกที่อยู่', function() {
+    ThaiAddress.load().then(function() {
+      var p = ThaiAddress.parse(pt.value);
+      Object.keys(p).forEach(function(k) { if (p[k] && inputs[k]) inputs[k].value = p[k]; });
+      toast(p.district ? 'แยกที่อยู่แล้ว ตรวจสอบอีกครั้ง' : 'หาตำบล/อำเภอไม่เจอ กรุณาเลือกเอง', p.district ? 'success' : 'error');
+    }, function() { toast('โหลดข้อมูลที่อยู่ไม่สำเร็จ', 'error'); });
+  });
+  pb.type = 'button';
+  paste.appendChild(pt); paste.appendChild(pb); wrap.appendChild(paste);
+  var grid = div('addr-grid');
+  var inputs = {};
+  [['name', nameLabel || 'ชื่อผู้รับ', 'full'], ['phone', 'เบอร์โทร', ''], ['zipcode', 'รหัสไปรษณีย์', ''], ['address', 'บ้านเลขที่ / หมู่ / ซอย / ถนน', 'full'],
+   ['district', 'ตำบล / แขวง', ''], ['amphoe', 'อำเภอ / เขต', ''], ['province', 'จังหวัด', 'full']].forEach(function(f) {
+    var lab = document.createElement('label'); lab.className = 'addr-field' + (f[2] ? ' ' + f[2] : '');
+    var sp = document.createElement('span'); sp.textContent = f[1]; lab.appendChild(sp);
+    var inp = document.createElement('input'); inp.value = parts[f[0]] || ''; inp.id = (idPrefix || 'ad') + '-' + f[0];
+    if (f[0] === 'phone') { inp.inputMode = 'tel'; inp.maxLength = 12; }
+    if (f[0] === 'zipcode') { inp.inputMode = 'numeric'; inp.maxLength = 5; }
+    lab.appendChild(inp); grid.appendChild(lab); inputs[f[0]] = inp;
+  });
+  wrap.appendChild(grid);
+  wrap.appendChild(div('slip-meta', 'พิมพ์ตำบล อำเภอ หรือรหัสไปรษณีย์ แล้วเลือกจากรายการ — ข้อมูลจะเติมให้ครบ'));
+  ThaiAddress.attach({ district: inputs.district, amphoe: inputs.amphoe, province: inputs.province, zipcode: inputs.zipcode });
+  return {
+    node: wrap,
+    get: function() { var o = {}; Object.keys(inputs).forEach(function(k) { o[k] = inputs[k].value.trim(); }); return o; },
+    set: function(p) { Object.keys(inputs).forEach(function(k) { inputs[k].value = (p && p[k]) || ''; }); }
+  };
+}
+function addressProblem(p) {
+  var miss = ['name', 'phone', 'address', 'district', 'amphoe', 'province', 'zipcode'].filter(function(k) { return !p[k]; });
+  if (miss.length) return 'กรุณากรอกที่อยู่ให้ครบ';
+  if (!/^0\d{8,9}$/.test(p.phone.replace(/[\s-]/g, ''))) return 'เบอร์โทรไม่ถูกต้อง';
+  if (!ThaiAddress.valid(p)) return 'ตำบล / อำเภอ / จังหวัด / รหัสไปรษณีย์ไม่ตรงกัน — กรุณาเลือกจากรายการ';
+  return '';
+}
+
+function openIshipSettings() {
+  apiCall('adminGetSetting', 'iship').then(function(res) {
+    if (res.status !== 'Success') { toast(res.message || 'โหลดการตั้งค่าไม่สำเร็จ', 'error'); return; }
+    var v = res.value || {};
+    el('modalBody').innerHTML = '';
+    el('modalBody').appendChild(div('iship-sec', '1. ที่อยู่ผู้ส่ง <small>พิมพ์บนใบปะหน้าทุกกล่อง</small>'));
+    var addr = makeAddressFields(v, 'isf', 'ชื่อผู้ส่ง / ชื่อร้าน');
+    el('modalBody').appendChild(addr.node);
+    // Parcel defaults: iShip needs a category and size to price a parcel; each booking can change them
+    el('modalBody').appendChild(div('iship-sec', '2. ค่าเริ่มต้นของพัสดุ <small>ขนส่งใช้คิดราคา · ปรับได้ทุกครั้งตอนกดจัดส่ง</small>'));
+    var cf = div('modal-field'); var cl = document.createElement('label'); cl.htmlFor = 'isfCat'; cl.textContent = 'ประเภทสินค้า (แจ้งขนส่ง)'; cf.appendChild(cl);
+    var cat = document.createElement('select'); cat.id = 'isfCat';
+    ISHIP_CATEGORIES.forEach(function(c) { var o = document.createElement('option'); o.value = c[0]; o.textContent = c[1]; cat.appendChild(o); });
+    cat.value = v.category_id === undefined ? 99 : v.category_id; cf.appendChild(cat); el('modalBody').appendChild(cf);
+    var parcel = makeParcelInputs(v);
+    el('modalBody').appendChild(parcel.node);
+    openModal('&#x2699;&#xFE0F; ตั้งค่าผู้ส่ง iShip', '', function() {
+      var p = addr.get();
+      var bad = addressProblem(p);
+      if (bad) { toast(bad, 'error'); return; }
+      var value = Object.assign(p, { category_id: Number(cat.value) }, parcel.get());
+      el('modalSave').disabled = true;
+      apiCall('adminSaveSetting', 'iship', value).then(function(r) {
+        el('modalSave').disabled = false;
+        if (r.status !== 'Success') { toast(r.message || 'บันทึกไม่สำเร็จ', 'error'); return; }
+        closeModal(); toast('บันทึกการตั้งค่าผู้ส่งแล้ว', 'success');
+      });
+    }, 'บันทึก');
+  });
+}
+
+function makeParcelInputs(v) {
+  var f = div('modal-field');
+  var l = document.createElement('label'); l.textContent = 'พัสดุ: น้ำหนัก (กก.) · กว้าง × ยาว × สูง (ซม.)'; f.appendChild(l);
+  var row = div('parcel-row'), ins = {};
+  [['weight', 'กก.', 1, '0.1'], ['width', 'กว้าง', 10, '1'], ['length', 'ยาว', 15, '1'], ['height', 'สูง', 5, '1']].forEach(function(d) {
+    var i = document.createElement('input'); i.type = 'number'; i.min = '0'; i.step = d[3]; i.inputMode = 'decimal';
+    i.value = v[d[0]] || d[2]; i.setAttribute('aria-label', d[1]); i.title = d[1];
+    row.appendChild(i); ins[d[0]] = i;
+  });
+  f.appendChild(row);
+  return { node: f, row: row, get: function() { var o = {}; Object.keys(ins).forEach(function(k) { o[k] = Number(ins[k].value) || 0; }); return o; } };
+}
+
+// Book one delivery bill: recipient, parcel size, courier prices → tracking number
+function openIshipModal(b, x, after) {
+  var who = x.items.length ? x.items[0].customer : '@' + b.customer;
+  el('modalBody').innerHTML = '';
+  var toBox = div('iship-to'); toBox.textContent = 'กำลังโหลดที่อยู่ผู้รับและราคาขนส่ง...';
+  el('modalBody').appendChild(toBox);
+  var editWrap = div(''); editWrap.hidden = true; el('modalBody').appendChild(editWrap);
+  var addr = null;
+  function editAddress(prefill) {
+    if (!addr) { addr = makeAddressFields(prefill || {}, 'ism'); editWrap.appendChild(addr.node); }
+    editWrap.hidden = false;
+  }
+  var parcel = makeParcelInputs({});
+  var qBtn = makeBtn('btn btn-ghost btn-sm', 'เช็คราคา', function() { quote(); }); qBtn.type = 'button';
+  parcel.row.appendChild(qBtn);
+  el('modalBody').appendChild(parcel.node);
+  var prices = div('iship-prices'); el('modalBody').appendChild(prices);
+  var rf = div('modal-field'); var rl = document.createElement('label'); rl.htmlFor = 'ismRemark'; rl.textContent = 'หมายเหตุถึงขนส่ง (ไม่บังคับ)'; rf.appendChild(rl);
+  var remark = document.createElement('input'); remark.id = 'ismRemark'; remark.maxLength = 200; remark.placeholder = 'เช่น ห้ามโยน'; rf.appendChild(remark);
+  el('modalBody').appendChild(rf);
+  var chosen = null;
+  var manual = makeBtn('btn btn-ghost btn-sm iship-manual', 'ส่งเองโดยไม่ใช้ iShip (กรอกเลขพัสดุเอง)', function() {
+    var waiting = x.items.filter(isWaiting);
+    if (!waiting.length) { toast('ไม่มีสินค้าที่รอจัดส่งในบิลนี้', 'error'); return; }
+    openStatusModal(waiting, { preset: 'shipped', after: after });
+  });
+  manual.type = 'button'; el('modalBody').appendChild(manual);
+  openModal('&#x1F69A; ส่งด้วย iShip · ' + escapeHtml(who), '', save, 'สร้างเลขพัสดุ');
+  el('modalSave').disabled = true;
+
+  apiCall('adminGetSetting', 'iship').then(function(res) {
+    var v = (res && res.value) || {};
+    var p = makeParcelInputs(v).get(); // defaults from settings
+    parcel.row.querySelectorAll('input').forEach(function(i, k) { i.value = p[['weight', 'width', 'length', 'height'][k]]; });
+    quote();
+  });
+
+  function quote() {
+    var to = addr && !editWrap.hidden ? addr.get() : undefined;
+    if (to) { var bad = addressProblem(to); if (bad) { toast(bad, 'error'); return; } }
+    prices.innerHTML = ''; prices.appendChild(makeSpinner());
+    chosen = null; el('modalSave').disabled = true;
+    apiCall('adminIship', 'quote', { deliveryId: b.id, parcel: parcel.get(), to: to }).then(function(res) {
+      prices.innerHTML = '';
+      if (res.status !== 'Success') {
+        var msg = res.message || 'เช็คราคาไม่สำเร็จ';
+        toBox.textContent = '⚠️ ' + msg;
+        if (/ผู้ส่ง/.test(msg)) {
+          var go = makeBtn('btn btn-ghost btn-sm', '&#x2699;&#xFE0F; ตั้งค่าผู้ส่ง', openIshipSettings); go.type = 'button'; toBox.appendChild(go);
+        } else if (/ผู้รับ/.test(msg)) {
+          // No structured address yet: start from the text address the customer sent
+          var text = (x.pays.filter(function(p) { return p.address; })[0] || {}).address || '';
+          ThaiAddress.load().then(function() { editAddress(text ? ThaiAddress.parse(text) : {}); }, function() { editAddress({}); });
+          toBox.textContent = 'ลูกค้ายังไม่ได้กรอกที่อยู่แบบแยกช่อง — ตรวจสอบ/กรอกด้านล่างแล้วกด "เช็คราคา"';
+        }
+        return;
+      }
+      var t = res.to || {};
+      toBox.innerHTML = '';
+      var h = document.createElement('strong'); h.textContent = 'ผู้รับ: ' + (t.name || '') + ' · ' + (t.phone || ''); toBox.appendChild(h);
+      var a = div('slip-meta'); a.textContent = [t.address, 'ต.' + t.district, 'อ.' + t.amphoe, 'จ.' + t.province, t.zipcode].join(' '); toBox.appendChild(a);
+      if (editWrap.hidden) {
+        var ed = makeBtn('btn btn-ghost btn-sm', 'แก้ที่อยู่ผู้รับ', function() { editAddress(t); ed.remove(); }); ed.type = 'button'; toBox.appendChild(ed);
+      }
+      (res.prices || []).forEach(function(c, i) {
+        var row = document.createElement('label'); row.className = 'iship-price' + (c.price == null ? ' off' : '');
+        var r = document.createElement('input'); r.type = 'radio'; r.name = 'ishipCourier'; r.value = c.code; r.disabled = c.price == null;
+        r.onchange = function() { chosen = c; el('modalSave').disabled = false; el('modalSave').textContent = 'สร้างเลขพัสดุ · ' + baht(c.price); };
+        row.appendChild(r);
+        var nm = document.createElement('span'); nm.className = 'iship-cname'; nm.textContent = c.name; row.appendChild(nm);
+        var pr = document.createElement('span'); pr.className = 'iship-cprice';
+        pr.textContent = c.price == null ? (c.error || 'ใช้ไม่ได้') : baht(c.price) + (c.remote ? ' (พื้นที่ห่างไกล +' + baht(c.remote) + ')' : '');
+        row.appendChild(pr);
+        prices.appendChild(row);
+        if (i === 0 && c.price != null) { r.checked = true; r.onchange(); }
+      });
+      if (!(res.prices || []).length) prices.appendChild(div('state-empty', 'ไม่มีขนส่งให้เลือก'));
+    });
+  }
+
+  function save() {
+    if (!chosen) { toast('กรุณาเลือกขนส่ง', 'error'); return; }
+    var to = addr && !editWrap.hidden ? addr.get() : undefined;
+    if (to) { var bad = addressProblem(to); if (bad) { toast(bad, 'error'); return; } }
+    askConfirm('สร้างเลขพัสดุกับ ' + chosen.name + ' ราคา ' + baht(chosen.price) + '?\nระบบจะตัดเครดิต iShip ของร้าน', 'สร้างเลขพัสดุ').then(function(ok) {
+      if (ok) create(to);
+    });
+  }
+  function create(to) {
+    el('modalSave').disabled = true; el('modalSave').textContent = 'กำลังสร้าง...';
+    apiCall('adminIship', 'create', { deliveryId: b.id, courier: chosen.code, parcel: parcel.get(), remark: remark.value.trim(), to: to }).then(function(res) {
+      if (res.status !== 'Success') {
+        el('modalSave').disabled = false; el('modalSave').textContent = 'สร้างเลขพัสดุ · ' + baht(chosen.price);
+        toast(res.message || 'สร้างเลขพัสดุไม่สำเร็จ', 'error'); return;
+      }
+      b.tracking = res.tracking; b.courier = res.courier; b.ishipStatus = 'รอเข้ารับพัสดุ'; b.ishipCode = 'order_success';
+      x.items.forEach(function(o) {
+        if ((res.shipped || []).indexOf(o.id) !== -1) { o.shippedAt = res.shippedAt; o.tracking = res.tracking; o.courier = res.courier; o.status = ''; }
+      });
+      Couriers.learn([{ code: chosen.code, name: chosen.name }]);
+      closeModal();
+      toast('สร้างเลขพัสดุแล้ว ' + res.tracking + ' — กด 🖨 เพื่อพิมพ์ใบปะหน้า', 'success');
+      if (after) after();
+    });
+  }
+}
+
+// Label PDF in a new tab (opened now so the pop-up blocker allows it)
+function openIshipLabel(tracking) {
+  var w = window.open('', '_blank');
+  if (w) w.document.write('<p style="font-family:sans-serif">กำลังโหลดใบปะหน้า...</p>');
+  apiCall('adminIshipLabel', tracking).then(function(res) {
+    if (res.status !== 'Success') { if (w) w.close(); toast(res.message || 'โหลดใบปะหน้าไม่สำเร็จ', 'error'); return; }
+    if (w) w.location = res.url; else window.open(res.url, '_blank');
+  });
+}
+
+function openIshipTrace(tracking, courier, onUpdated) {
+  el('modalBody').innerHTML = '';
+  var box = div('trace-list'); box.appendChild(makeSpinner()); el('modalBody').appendChild(box);
+  var link = Couriers.trackUrl(courier, tracking);
+  if (link) {
+    var a = document.createElement('a'); a.href = link; a.target = '_blank'; a.rel = 'noopener'; a.className = 'slip-meta';
+    a.textContent = 'เปิดหน้าติดตามของขนส่ง ↗'; el('modalBody').appendChild(a);
+  }
+  openModal('&#x1F4CD; ติดตามพัสดุ · ' + escapeHtml(tracking), '', null);
+  apiCall('adminIship', 'trace', { tracking: tracking }).then(function(res) {
+    box.innerHTML = '';
+    if (res.status !== 'Success') { box.appendChild(div('state-empty', escapeHtml(res.message || 'โหลดไม่สำเร็จ'))); return; }
+    if (onUpdated && (res.trace_routes || []).length) onUpdated();
+    var routes = (res.trace_routes || []).slice().reverse();
+    if (!routes.length) { box.appendChild(div('state-empty', 'ยังไม่มีความเคลื่อนไหว')); return; }
+    routes.forEach(function(r, i) {
+      var it = div('trace-item' + (i === 0 ? ' now' : ''));
+      var t = document.createElement('strong'); t.textContent = r.status_text || r.status || ''; it.appendChild(t);
+      var d = div('slip-meta'); d.textContent = (r.status_desc || '') + (r.current_location ? ' · ' + r.current_location : ''); it.appendChild(d);
+      var ts = div('slip-meta'); ts.textContent = r.timestamp || ''; it.appendChild(ts);
+      box.appendChild(it);
+    });
+  });
+}
+
+function openPickupModal() {
+  el('modalBody').innerHTML = '';
+  var cf = div('modal-field'); var cl = document.createElement('label'); cl.htmlFor = 'pkCourier'; cl.textContent = 'ขนส่ง'; cf.appendChild(cl);
+  var sel = document.createElement('select'); sel.id = 'pkCourier'; cf.appendChild(sel); el('modalBody').appendChild(cf);
+  var nf = div('modal-field'); var nl = document.createElement('label'); nl.htmlFor = 'pkCount'; nl.textContent = 'จำนวนพัสดุ'; nf.appendChild(nl);
+  var cnt = document.createElement('input'); cnt.id = 'pkCount'; cnt.type = 'number'; cnt.min = '1'; cnt.value = '1'; nf.appendChild(cnt); el('modalBody').appendChild(nf);
+  var rf = div('modal-field'); var rl = document.createElement('label'); rl.htmlFor = 'pkRemark'; rl.textContent = 'หมายเหตุ (ไม่บังคับ)'; rf.appendChild(rl);
+  var rem = document.createElement('input'); rem.id = 'pkRemark'; rem.maxLength = 200; rf.appendChild(rem); el('modalBody').appendChild(rf);
+  el('modalBody').appendChild(div('slip-meta', 'ขนส่งจะเข้ารับที่อยู่ผู้ส่งในการตั้งค่า iShip'));
+  function fill(list) {
+    sel.innerHTML = '';
+    list.forEach(function(c) { var o = document.createElement('option'); o.value = c.code; o.textContent = c.name; sel.appendChild(o); });
+  }
+  fill(Couriers.list.filter(function(c) { return c.code !== 'Other'; }));
+  apiCall('adminIship', 'couriers').then(function(res) {
+    if (res.status === 'Success' && (res.couriers || []).length) { Couriers.learn(res.couriers); fill(res.couriers); }
+  });
+  openModal('&#x1F69A; เรียกรถเข้ารับพัสดุ', '', function() {
+    el('modalSave').disabled = true;
+    apiCall('adminIship', 'pickup', { courier: sel.value, parcels: Number(cnt.value) || 1, remark: rem.value.trim() }).then(function(res) {
+      el('modalSave').disabled = false;
+      if (res.status !== 'Success') { toast(res.message || 'เรียกรถไม่สำเร็จ', 'error'); return; }
+      closeModal(); toast(res.message || 'เรียกขนส่งเข้ารับแล้ว', 'success');
+    });
+  }, 'เรียกรถ');
+}
+
 // Pulls every tab of the old status sheet into the database, replacing
 // what was imported before.
 function openImportStatusSheet() {
@@ -2623,8 +3473,8 @@ function openImportStatusSheet() {
       if (res.status !== 'Success') { toast(res.message || 'นำเข้าไม่สำเร็จ', 'error'); return; }
       closeModal();
       toast('นำเข้าแล้ว ' + res.imported + ' รายการ จาก ' + res.tabs.length + ' แท็บ', 'success');
-      _stm.legacy = null; _stm.legacyMissing = false; _stm.src = 'legacy'; _stm.round = ''; _stm.cat = ''; _stm.q = '';
-      renderStatusPanel();
+      _stm.legacy = null; _stm.legacyMissing = false; _stm.round = ''; _stm.cat = ''; _stm.q = '';
+      renderHistoryPanel();
     }).withFailureHandler(function(e) {
       btn.disabled = false; btn.textContent = 'นำเข้า'; toast('นำเข้าไม่สำเร็จ: ' + (e && e.message || ''), 'error');
     }).adminImportStatusSheet(inp.value.trim());
@@ -2913,6 +3763,17 @@ function renderProductsTable(products, sheetId, holder) {
   }
 
   card.appendChild(contentContainer);
+
+  // Order here = order customers see in the shop
+  enableReorder(contentContainer.querySelectorAll('#prodTable tbody tr, .prod-grid > .pcard'),
+    products.map(function(p) { return p.rowIndex; }), function(order) {
+      contentContainer.classList.add('busy');
+      apiCall('adminReorderProducts', sheetId, order).then(function(res) {
+        contentContainer.classList.remove('busy');
+        if (res.status !== 'Success') { toast(res.message || 'จัดลำดับไม่สำเร็จ', 'error'); return; }
+        toast('บันทึกลำดับแล้ว', 'success'); loadProducts(sheetId);
+      });
+    }, function(node) { return node.querySelector('.pcard-bottom') || node.querySelector('td:last-child > div'); });
 
   // ── Sticky save bar ──
   var saveBar = document.createElement('div');
@@ -3313,191 +4174,178 @@ function confirmClearList(sheetId) {
 }
 
 // ════════════════════════════════
-// SUMMARY
+// BILL SUMMARY MESSAGE — the chat message sent with a bill: the items, what's
+// left to pay + the delivery fee, how to pay and the delivery rounds.
+// Opened from the bills in "ถึงไทย / ส่งบิล".
 // ════════════════════════════════
-function renderSummaryPanel() {
-  setTopbar('สรุปยอดลูกค้า', 'สร้างสรุปยอดสำหรับส่งให้ลูกค้า');
-  var wrap = document.createElement('div');
-  var card = div('section-card');
-  card.appendChild(div('section-card-header', '<div class="section-card-title">&#x1F4CB; เลือกรายการและข้อมูลสรุปยอด</div>'));
+var TH_DAY = ['อา.', 'จ.', 'อ.', 'พ.', 'พฤ.', 'ศ.', 'ส.'];
+function isoDate(d) { return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
+function parseIsoDate(s) { var p = String(s || '').split('-'); return p.length === 3 ? new Date(+p[0], p[1] - 1, +p[2]) : null; }
+function thDay(d) { return d ? TH_DAY[d.getDay()] + ' ' + d.getDate() + '/' + (d.getMonth() + 1) : '-'; } // "พ. 5/11"
+// First given weekday after a date; never the same day, since rounds go out after the goods arrive
+function nextWeekday(from, day) { var d = new Date(from); d.setDate(d.getDate() + ((day - d.getDay() + 7) % 7 || 7)); return d; }
 
-  // 1. RESTORED COMBOBOX (Dropdown) for Shop Selection
-  var selWrap = div('modal-field');
-  selWrap.style.marginBottom = '12px';
-  var l1 = document.createElement('label'); l1.textContent = 'รายการสั่งซื้อ'; l1.style.cssText = 'display:block;font-size:0.78rem;font-weight:600;color:var(--text-2);margin-bottom:5px;';
-  var sel = document.createElement('select'); sel.id = 'summarySheetPicker'; sel.style.cssText = 'width:100%;padding:9px 12px;border:1.5px solid var(--border-strong);border-radius:var(--radius-sm);font-size:0.85rem;font-family:var(--font);';
-  var defOpt = document.createElement('option'); defOpt.value = ''; defOpt.textContent = '-- เลือกรายการ --'; sel.appendChild(defOpt);
-  var visibleLists = getVisibleLists();
-  for (var i = 0; i < visibleLists.length; i++) {
-    var it = visibleLists[i];
-    var opt = document.createElement('option'); opt.value = it.sheetId; opt.textContent = it.name;
-    if (it.sheetId === selectedSheetId && selectedSheetId !== 'ALL') opt.selected = true;
-    sel.appendChild(opt);
-  }
-  selWrap.appendChild(l1); selWrap.appendChild(sel); card.appendChild(selWrap);
+// Placeholders for the template in "⚙️ ตั้งค่าบิล"; each is filled from the bill and the chosen dates
+var SUMMARY_KEYS = [
+  ['{รายการ}', 'รายการสินค้า บรรทัดละชิ้น'],
+  ['{ค่าส่ง}', 'ค่าส่งของบิล'],
+  ['{ค้างชำระ}', 'ยอดค้างชำระสินค้า'],
+  ['{ยอดโอน}', 'ค้างชำระ + ค่าส่ง'],
+  ['{หยวน}', 'บรรทัดยอดหยวน (ว่างถ้าไม่มี)'],
+  ['{วันของเข้า}', 'วันที่สินค้าเข้า เช่น ส. 31/10'],
+  ['{รอบ1}', 'รอบส่งที่ 1 เช่น พ. 4/11'],
+  ['{รอบ2}', 'รอบส่งที่ 2 เช่น ส. 7/11'],
+  ['{ตัดรอบ}', 'วันก่อนรอบ 1 เช่น อ.']
+];
+var SUMMARY_DEFAULT =
+  'สวัสดีครับ~ 💌 รายการที่ตัวเองสั่งไว้กำลังเดินทางมาถึงไทยแล้วนะคะ! ด้านล่างนี้คือรายละเอียดรายการที่สั่งไว้ที่กำลังจะเข้าไทยค่ะ รบกวนเช็กชื่อและจำนวนสินค้าอีกทีนะคะ 😊\n\n' +
+  '{รายการ}\n\n' +
+  '📦 ค่าจัดส่ง + {ค่าส่ง} บาท\n\n' +
+  'ยอดค้างชำระสินค้า {ค้างชำระ} + ค่าจัดส่ง {ค่าส่ง} บาท = {ยอดโอน}\n\n' +
+  '💸 ยอดโอนทั้งหมด {ยอดโอน} ✅✅✅✅\n\n' +
+  '{หยวน}\n\n' +
+  '***หากพรีสินค้าที่พรีไว้แล้วต้องการรอส่งพร้อมกันรบกวนแจ้งได้เลยนะคะ\n\n' +
+  '🌟 ช่องทางการโอน\n\n' +
+  '•TrueMoney : 080-292-7553\n\n' +
+  '•กสิกรไทย : 094-8-44664-2\n\n' +
+  '•ชื่อบัญชี : ปิยธิดา ก.\n\n' +
+  '***หากสแกนด้วยบัตรเครดิตรบกวน+2% นะคะ\n\n' +
+  '🗓 รอบจัดส่ง\n' +
+  'สินค้าเข้าไม่เกินวัน {วันของเข้า}\n\n' +
+  'รอบจัดส่ง (วันหลังของเข้า)\n' +
+  'ร้านจัดส่งแค่ สัปดาห์ละ 2 วัน เท่านั้นนะคับ~\n\n' +
+  '•โอนก่อน {ตัดรอบ} 18:00 น. → ส่ง {รอบ1}\n' +
+  '•โอนหลัง {ตัดรอบ} 18:00 น. เป็นต้นไป → ส่ง {รอบ2}\n\n' +
+  'หากสินค้าไม่เข้าตามเวลาที่คาดการจะแจ้งเลื่อนรอบอีกครั้งค่า\n\n' +
+  '⏰) ⸻\n\n' +
+  '🧾 หลังโอนแล้วอย่าลืมแจ้ง\n' +
+  '• สลิปโอนเงิน\n' +
+  '• ชื่อ-ที่อยู่\n' +
+  '• เบอร์โทรศัพท์\n\n' +
+  'เพื่อให้น้อง ๆ ได้ออกเดินทางไปหาอย่างถูกต้องน้าา 💕 ขอบคุณมาก ๆ เลยนะคะที่มารับน้อง ๆ ไปอยู่ด้วย 🧸✨ 💖';
+// Saved in app_settings 'bill': { template, fee } — fee = default delivery fee of new bills
+var _billSet = { template: '', fee: null };
 
-  // 2. CSS Grid Form Container for everything else
-  var formGrid = document.createElement('div');
-  formGrid.className = 'summary-form-grid';
-  
-  function createField(id, label, type, val, placeholder) {
-    var w = div('modal-field');
-    var l = document.createElement('label'); l.textContent = label;
-    var inp = type === 'select' ? document.createElement('select') : document.createElement('input');
-    if (type === 'select') inp.innerHTML = '<option value="">-- กรุณาเลือกรายการด้านบนก่อน --</option>';
-    else { inp.type = type; if(val) inp.value = val; if(placeholder) inp.placeholder = placeholder; }
-    inp.id = id;
-    w.appendChild(l); w.appendChild(inp);
-    return w;
-  }
-
-  formGrid.appendChild(createField('summaryCustomerName', 'ชื่อลูกค้า', 'select')); 
-  formGrid.appendChild(createField('sumStartDate', 'กรองตั้งแต่วันที่', 'date'));      
-  formGrid.appendChild(createField('sumEndDate', 'ถึงวันที่', 'date'));            
-  formGrid.appendChild(createField('sumDelFee', 'ค่าจัดส่ง', 'number', '40'));      
-  formGrid.appendChild(createField('sumProdGetDate', 'วันที่สินค้าเข้า', 'text', 'จ-อ 22-23/12')); 
-  formGrid.appendChild(createField('sumDelDate1', 'รอบส่งที่ 1', 'text', 'พ 24/12'));  
-  formGrid.appendChild(createField('sumDelDate2', 'รอบส่งที่ 2', 'text', 'ส. 27/12')); 
-  card.appendChild(formGrid);
-
-  // 3. Generate Button
-  var btnGen = makeBtn('btn btn-primary', '&#x2728; สร้างสรุปยอด', generateSummary);
-  btnGen.style.width = '100%'; btnGen.style.padding = '14px'; btnGen.style.fontSize = '1rem';
-  card.appendChild(btnGen);
-  wrap.appendChild(card);
-
-  // 4. Auto-fetch logic for the combobox
-  sel.onchange = function() {
-    var sid = this.value;
-    var custSel = el('summaryCustomerName');
-    custSel.innerHTML = '<option value="">กำลังโหลดรายชื่อ...</option>';
-    custSel.disabled = true;
-    if (!sid) { custSel.innerHTML = '<option value="">-- กรุณาเลือกรายการก่อน --</option>'; return; }
-    
-    google.script.run.withSuccessHandler(function(r) {
-      custSel.disabled = false;
-      try {
-        var res = JSON.parse(r);
-        if (res.status === 'Success') {
-          var nameArr = res.customers || [];
-          custSel.innerHTML = '<option value="">-- เลือกลูกค้า (' + nameArr.length + ' คน) --</option>';
-          nameArr.forEach(function(n) {
-            var o = document.createElement('option'); o.value = n; o.textContent = n;
-            custSel.appendChild(o);
-          });
-        } else { custSel.innerHTML = '<option value="">โหลดรายชื่อไม่สำเร็จ</option>'; }
-      } catch(e) { custSel.innerHTML = '<option value="">เกิดข้อผิดพลาด</option>'; }
-    }).adminGetCustomers(sid);
+// o: { items, fee, arrive, round1, round2 } — the dates are Date objects
+function summaryMessage(o) {
+  var full = 0, paid = 0, yuan = 0, lines = [];
+  o.items.forEach(function(r, i) {
+    full += Number(r.totalFull) || 0; paid += Number(r.total) || 0; yuan += Number(r.totalYuan) || 0;
+    lines.push((i + 1) + '. ' + r.product + ' (' + (Number(r.fullPrice) || 0) + ' x ' + (Number(r.qty) || 1) + ')');
+  });
+  var rest = Math.max(0, full - paid), fee = Number(o.fee) || 0;
+  var val = {
+    '{รายการ}': lines.join('\n'), '{ค่าส่ง}': String(fee), '{ค้างชำระ}': fmt(rest), '{ยอดโอน}': fmt(rest + fee),
+    '{หยวน}': yuan ? 'ยอดเงินหยวน ¥' + yuan : '', '{วันของเข้า}': thDay(o.arrive), '{รอบ1}': thDay(o.round1), '{รอบ2}': thDay(o.round2),
+    // Transfers until 18:00 the day before round 1 make it into round 1
+    '{ตัดรอบ}': o.round1 ? TH_DAY[(o.round1.getDay() + 6) % 7] : 'อ.'
   };
-
-  var resultHolder = document.createElement('div'); resultHolder.id = 'summaryResult';
-  wrap.appendChild(resultHolder);
-  el('content').innerHTML = ''; el('content').appendChild(wrap);
-
-  // Trigger load if pre-selected
-  if (selectedSheetId && selectedSheetId !== 'ALL') { setTimeout(function() { sel.onchange(); }, 100); }
+  var t = _billSet.template || SUMMARY_DEFAULT;
+  SUMMARY_KEYS.forEach(function(k) { t = t.split(k[0]).join(val[k[0]]); });
+  return t.replace(/\n{3,}/g, '\n\n'); // an empty {หยวน} leaves no gap
 }
 
-function generateSummary() {
-  // Grab the value back from the dropdown!
-  var sheetId = el('summarySheetPicker').value;
-  var customer = el('summaryCustomerName').value.trim();
-  var sDate = el('sumStartDate').value;
-  var eDate = el('sumEndDate').value;
-  var fee = Number(el('sumDelFee').value) || 0;
-  var prodGetDate = el('sumProdGetDate').value || 'จ-อ 22-23/12';
-  var delDate1 = el('sumDelDate1').value || 'พ 24/12';
-  var delDate2 = el('sumDelDate2').value || 'ส. 27/12';
-
-  if (!sheetId) { toast('กรุณาเลือกรายการสั่งซื้อ', 'error'); return; }
-  if (!customer) { toast('กรุณากรอกชื่อลูกค้า', 'error'); return; }
-  
-  el('summaryResult').innerHTML = ''; el('summaryResult').appendChild(makeSpinner());
-  
-  google.script.run.withSuccessHandler(function(r) {
-    try {
-      var res = JSON.parse(r);
-      if (res.status !== 'Success') { el('summaryResult').innerHTML = ''; el('summaryResult').appendChild(div('state-empty', '&#x26A0;&#xFE0F; ' + escapeHtml(res.message))); return; }
-      
-      res.deliveryFee = fee;
-      res.prodGetDate = prodGetDate;
-      res.delDate1 = delDate1;
-      res.delDate2 = delDate2;
-
-      renderSummaryResult(res); 
-    } catch(e) { el('summaryResult').innerHTML = ''; el('summaryResult').appendChild(div('state-empty', 'เกิดข้อผิดพลาด')); }
-  }).adminGenerateCustomerSummary(sheetId, customer, sDate, eDate);
+function loadBillSettings() {
+  return apiCall('adminGetSetting', 'bill').then(function(res) {
+    var v = res.status === 'Success' ? res.value || {} : {};
+    _billSet = { template: v.template || '', fee: v.fee === undefined || v.fee === '' ? null : v.fee };
+    return res;
+  });
 }
 
-function renderSummaryResult(res) {
-  var lines = res.orderLines || [];
-  var fee = res.deliveryFee || 0;
-  var totalToPay = res.remaining + fee;
+// ⚙️ in "ถึงไทย / ส่งบิล": default delivery fee of new bills + the summary message template
+function openBillSettings(after) {
+  var body = el('modalBody'); body.innerHTML = '';
+  var ff = div('modal-field');
+  var fl = document.createElement('label'); fl.htmlFor = 'bsFee'; fl.textContent = 'ค่าส่งเริ่มต้นของบิลใหม่ (บาท)'; ff.appendChild(fl);
+  var fee = document.createElement('input'); fee.id = 'bsFee'; fee.type = 'number'; fee.min = '0'; fee.step = '1'; fee.inputMode = 'decimal';
+  fee.placeholder = 'ว่าง = ใส่เองทุกบิล'; fee.value = _billSet.fee === null ? '' : _billSet.fee; ff.appendChild(fee);
+  body.appendChild(ff);
 
-  // --- CUSTOM TEMPLATE GENERATION ---
-  var text = 'สวัสดีครับ~ 💌 รายการที่ตัวเองสั่งไว้กำลังเดินทางมาถึงไทยแล้วนะคะ! ด้านล่างนี้คือรายละเอียดรายการที่สั่งไว้ที่กำลังจะเข้าไทยค่ะ รบกวนเช็กชื่อและจำนวนสินค้าอีกทีนะคะ 😊\n\n';
-  
-  for (var i = 0; i < lines.length; i++) text += lines[i] + '\n';
-  
-  text += '\n📦 ค่าจัดส่ง + ' + fee + ' บาท\n\n';
-  text += 'ยอดค้างชำระสินค้า ' + fmt(res.remaining) + ' + ค่าจัดส่ง ' + fee + ' บาท = ' + fmt(totalToPay) + '\n\n';
-  text += '💸 ยอดโอนทั้งหมด ' + fmt(totalToPay) + ' ✅✅✅✅\n\n';
-  
-  if (res.totalYuan) {
-    text += 'ยอดเงินหยวน ¥' + res.totalYuan + '\n\n';
+  var tf = div('modal-field');
+  var tl = document.createElement('label'); tl.htmlFor = 'bsTpl'; tl.textContent = 'ข้อความสรุปยอด'; tf.appendChild(tl);
+  var keys = div('tpl-keys');
+  keys.appendChild(div('slip-meta', 'แตะเพื่อแทรก — ระบบจะแทนด้วยข้อมูลของบิลตอนเปิดข้อความ'));
+  var ta = document.createElement('textarea'); ta.id = 'bsTpl'; ta.className = 'summary-text';
+  ta.value = _billSet.template || SUMMARY_DEFAULT;
+  SUMMARY_KEYS.forEach(function(k) {
+    var c = makeBtn('tpl-key', escapeHtml(k[0]), function() {
+      var s = ta.selectionStart, e = ta.selectionEnd;
+      ta.value = ta.value.slice(0, s) + k[0] + ta.value.slice(e);
+      ta.focus(); ta.selectionStart = ta.selectionEnd = s + k[0].length;
+    });
+    c.type = 'button'; c.title = k[1]; keys.appendChild(c);
+  });
+  tf.appendChild(keys); tf.appendChild(ta);
+  var reset = makeBtn('btn btn-ghost btn-sm', 'คืนค่าข้อความเริ่มต้น', function() {
+    askConfirm('แทนข้อความด้วยข้อความเริ่มต้น?', 'คืนค่า').then(function(ok) { if (ok) ta.value = SUMMARY_DEFAULT; });
+  });
+  reset.type = 'button'; tf.appendChild(reset);
+  body.appendChild(tf);
+
+  openModal('&#x2699;&#xFE0F; ตั้งค่าบิล', '', function() {
+    var f = fee.value.trim() === '' ? null : Number(fee.value);
+    if (f !== null && !(f >= 0 && f <= 100000)) { toast('ค่าส่งไม่ถูกต้อง', 'error'); return; }
+    // Saving the default text unchanged keeps following future default changes
+    var value = { template: ta.value.trim() === SUMMARY_DEFAULT.trim() ? '' : ta.value, fee: f };
+    el('modalSave').disabled = true;
+    apiCall('adminSaveSetting', 'bill', value).then(function(r) {
+      el('modalSave').disabled = false;
+      if (r.status !== 'Success') { toast(r.message || 'บันทึกไม่สำเร็จ', 'error'); return; }
+      _billSet = value;
+      closeModal(); toast('บันทึกการตั้งค่าบิลแล้ว', 'success');
+      if (after) after();
+    });
+  }, 'บันทึก');
+}
+
+// Dates are remembered for the next bill: one shipment usually covers many customers
+var _sumDates = null;
+function openBillSummary(items, fee, who) {
+  var body = el('modalBody'); body.innerHTML = '';
+  var today = new Date(); today.setHours(0, 0, 0, 0);
+  var d = _sumDates || { arrive: isoDate(today), auto1: true, auto2: true };
+  var grid = div('summary-form-grid');
+  function field(label, val) {
+    var w = div('modal-field');
+    var l = document.createElement('label'); l.textContent = label; w.appendChild(l);
+    var inp = document.createElement('input'); inp.type = 'date'; inp.value = val || ''; w.appendChild(inp);
+    grid.appendChild(w);
+    return inp;
   }
-  
-  // Inject the custom dates here!
-  text += '***หากพรีสินค้าที่พรีไว้แล้วต้องการรอส่งพร้อมกันรบกวนแจ้งได้เลยนะคะ\n\n' +
-          '🌟 ช่องทางการโอน\n\n' +
-          '•TrueMoney : 080-292-7553\n\n' +
-          '•กสิกรไทย : 094-8-44664-2\n\n' +
-          '•ชื่อบัญชี : ปิยธิดา ก.\n\n' +
-          '***หากสแกนด้วยบัตรเครดิตรบกวน+2% นะคะ\n\n' +
-          '🗓 รอบจัดส่ง\n' +
-          'สินค้าเข้าไม่เกินวัน ' + res.prodGetDate + '\n\n' +
-          'รอบจัดส่ง (วันหลังของเข้า)\n' +
-          'ร้านจัดส่งแค่ สัปดาห์ละ 2 วัน เท่านั้นนะคับ~\n\n' +
-          '•โอนก่อน อ. 18:00 น. → ส่ง ' + res.delDate1 + '\n' +
-          '•โอนหลัง อ. 18:00 น. เป็นต้นไป → ส่ง ' + res.delDate2 + '\n\n' +
-          'หากสินค้าไม่เข้าตามเวลาที่คาดการจะแจ้งเลื่อนรอบอีกครั้งค่า\n\n' +
-          '⏰) ⸻\n\n' +
-          '🧾 หลังโอนแล้วอย่าลืมแจ้ง\n' +
-          '• สลิปโอนเงิน\n' +
-          '• ชื่อ-ที่อยู่\n' +
-          '• เบอร์โทรศัพท์\n\n' +
-          'เพื่อให้น้อง ๆ ได้ออกเดินทางไปหาอย่างถูกต้องน้าา 💕 ขอบคุณมาก ๆ เลยนะคะที่มารับน้อง ๆ ไปอยู่ด้วย 🧸✨ 💖';
+  var fArrive = field('วันที่สินค้าเข้า', d.arrive);
+  var f1 = field('รอบส่งที่ 1 (พุธ)', d.round1);
+  var f2 = field('รอบส่งที่ 2 (เสาร์)', d.round2);
+  body.appendChild(grid);
+  var ta = document.createElement('textarea'); ta.className = 'summary-text'; ta.readOnly = true;
+  ta.setAttribute('aria-label', 'ข้อความสรุปยอด');
+  body.appendChild(ta);
+  var copy = makeBtn('btn btn-primary summary-copy', '&#x1F4CB; คัดลอกข้อความ', function() {
+    var done = function() { toast('คัดลอกแล้ว!', 'success'); };
+    if (navigator.clipboard) navigator.clipboard.writeText(ta.value).then(done, function() { ta.select(); document.execCommand('copy'); done(); });
+    else { ta.select(); document.execCommand('copy'); done(); }
+  });
+  copy.type = 'button'; body.appendChild(copy);
 
-  // --- RENDER UI ---
-  var card = div('section-card');
-  var hdr = div('section-card-header');
-  hdr.appendChild(div('section-card-title', '&#x1F9FE; ผลลัพธ์: ' + escapeHtml(res.customerName)));
-  hdr.appendChild(makeBtn('btn btn-ghost btn-sm', '&#x1F4CB; คัดลอก', function() {
-    var ta = el('summaryText'); if (!ta) return; ta.select(); document.execCommand('copy'); toast('คัดลอกแล้ว!', 'success');
-  }));
-  card.appendChild(hdr);
-
-  var ta = document.createElement('textarea'); ta.id = 'summaryText'; ta.readOnly = true;
-  ta.style.cssText = 'width:100%;padding:14px;border:1.5px solid var(--border);border-radius:var(--radius-md);font-size:0.85rem;font-family:var(--font);color:var(--text-2);line-height:1.9;resize:vertical;min-height:380px;background:var(--surface-2);outline:none;';
-  ta.value = text; card.appendChild(ta);
-
-  var statsRow = document.createElement('div'); statsRow.style.cssText = 'display:flex;gap:16px;flex-wrap:wrap;margin-top:16px;padding-top:14px;border-top:1.5px dashed var(--border);';
-  function addStat2(label, value, color) {
-    var s = document.createElement('div');
-    var lb = document.createElement('div'); lb.style.cssText = 'font-size:0.7rem;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:0.05em;'; lb.textContent = label;
-    var vl = document.createElement('div'); vl.style.cssText = 'font-size:1.1rem;font-weight:700;color:' + color + ';'; vl.textContent = value;
-    s.appendChild(lb); s.appendChild(vl); statsRow.appendChild(s);
+  // Round 1 = the Wednesday after arrival, round 2 = the Saturday after round 1
+  // (late transfers go in the later round); each follows along until edited by hand
+  function autoRounds() {
+    var a = parseIsoDate(fArrive.value);
+    if (a && d.auto1) f1.value = isoDate(nextWeekday(a, 3));
+    var r1 = parseIsoDate(f1.value);
+    if (r1 && d.auto2) f2.value = isoDate(nextWeekday(r1, 6));
   }
-  
-  addStat2('ราคาเต็มรวม', fmt(res.totalFull), 'var(--text)');
-  addStat2('มัดจำแล้ว', fmt(res.totalDeposit), 'var(--warning)');
-  addStat2('ค่าจัดส่ง', '+ ' + fmt(fee), 'var(--text-2)');
-  addStat2('ต้องชำระเพิ่ม', fmt(totalToPay), 'var(--error)');
-  
-  if (res.totalYuan) addStat2('หยวน', '¥' + res.totalYuan, 'var(--text-2)');
-  card.appendChild(statsRow);
-
-  el('summaryResult').innerHTML = ''; el('summaryResult').appendChild(card);
+  function update() {
+    _sumDates = { arrive: fArrive.value, round1: f1.value, round2: f2.value, auto1: d.auto1, auto2: d.auto2 };
+    ta.value = summaryMessage({ items: items, fee: fee, arrive: parseIsoDate(fArrive.value),
+      round1: parseIsoDate(f1.value), round2: parseIsoDate(f2.value) });
+  }
+  if (!f1.value || !f2.value) autoRounds();
+  fArrive.onchange = function() { autoRounds(); update(); };
+  f1.onchange = function() { d.auto1 = false; autoRounds(); update(); };
+  f2.onchange = function() { d.auto2 = false; update(); };
+  update();
+  openModal('&#x1F4AC; สรุปยอด · ' + escapeHtml(who), '', null);
 }
 
 // ════════════════════════════════
@@ -3885,6 +4733,13 @@ var _whDelMode = false;     // "เลือกลบ" mode: taps pick products 
 var _stockDelSelected = {}; // parent rowIndex → true (delete mode)
 var _whVisibleRows = [];    // rowIndexes currently shown (after search) — what "เลือกทั้งหมด" picks
 
+// What happened to the photos of deleted stock items, for the toast
+function photoNote(p) {
+  if (!p || p.notSetUp) return '';
+  if (p.error) return ' · ลบรูปบน Cloudinary ไม่สำเร็จ';
+  return p.deleted ? ' · ลบรูปบน Cloudinary ' + p.deleted + ' รูป' : '';
+}
+
 function renderStockPanel() {
   _whDelMode = false; _stockDelSelected = {};
   renderStockTopbar();
@@ -3905,6 +4760,52 @@ function renderStockTopbar() {
   var refBtn = makeBtn('btn btn-ghost btn-sm', '&#x21BB;', function() { loadStock(renderStockContent); });
   refBtn.title = 'รีเฟรช'; refBtn.setAttribute('aria-label', 'รีเฟรช');
   el('topbarActions').appendChild(refBtn);
+  var sweep = makeBtn('btn btn-ghost btn-sm', '&#x1F9F9;', openPhotoSweep);
+  sweep.title = 'ล้างรูปบน Cloudinary ที่ไม่ได้ใช้แล้ว'; sweep.setAttribute('aria-label', sweep.title);
+  el('topbarActions').appendChild(sweep);
+}
+
+// Lists the Cloudinary photos nothing in the shop shows any more, then deletes them on request
+function openPhotoSweep() {
+  var body = el('modalBody'); body.innerHTML = '';
+  body.appendChild(makeSpinner());
+  body.appendChild(div('slip-meta', 'กำลังตรวจรูปทั้งหมดบน Cloudinary เทียบกับรูปที่ร้านใช้อยู่...'));
+  openModal('&#x1F9F9; ล้างรูปที่ไม่ได้ใช้', '', null);
+  apiCall('adminCloudinary', 'scan').then(function(res) {
+    body.innerHTML = '';
+    if (res.status !== 'Success') {
+      body.appendChild(div('state-empty', '&#x26A0;&#xFE0F; ' + escapeHtml(res.message || 'ตรวจไม่สำเร็จ')));
+      return;
+    }
+    var unused = res.unused || [], bytes = 0;
+    unused.forEach(function(u) { bytes += Number(u.bytes) || 0; });
+    Object.keys(res.totals || {}).forEach(function(cloud) {
+      var t = res.totals[cloud];
+      body.appendChild(div('sweep-acct', '<strong>' + escapeHtml(cloud) + '</strong> · ทั้งหมด ' + t.all + ' รูป · ไม่ได้ใช้ ' + t.unused + ' รูป (' + mb(t.bytes) + ')'));
+    });
+    if (!unused.length) { body.appendChild(div('state-empty', '&#x2728; ไม่มีรูปที่ไม่ได้ใช้')); return; }
+    body.appendChild(div('sweep-warn', '⚠️ รูปที่ไม่มีอะไรในเว็บนี้ใช้อยู่ จะถูกลบถาวร — ถ้าเคยใช้รูปเหล่านี้ที่อื่น (เช่น Google Sheet เก่า หรือโพสต์ที่ลิงก์รูปไว้) รูปที่นั่นจะหายด้วย'));
+    var grid = div('sweep-grid');
+    unused.slice(0, 60).forEach(function(u) {
+      var im = document.createElement('img'); im.loading = 'lazy'; im.alt = ''; im.title = u.id;
+      im.src = String(u.url).replace('/image/upload/', '/image/upload/w_120,h_120,c_fill,q_auto,f_auto/');
+      grid.appendChild(im);
+    });
+    body.appendChild(grid);
+    if (unused.length > 60) body.appendChild(div('slip-meta', 'แสดง 60 จาก ' + unused.length + ' รูป'));
+    openModal('&#x1F9F9; ล้างรูปที่ไม่ได้ใช้', '', function() {
+      askConfirm('ลบรูปที่ไม่ได้ใช้ ' + unused.length + ' รูป (' + mb(bytes) + ') ออกจาก Cloudinary ถาวร?', 'ลบรูป').then(function(ok) {
+        if (!ok) return;
+        el('modalSave').disabled = true; el('modalSave').textContent = 'กำลังลบ...';
+        apiCall('adminCloudinary', 'delete', { items: unused.map(function(u) { return { cloud: u.cloud, id: u.id }; }) }).then(function(r) {
+          if (r.status !== 'Success') { el('modalSave').disabled = false; el('modalSave').textContent = 'ลบ ' + unused.length + ' รูป'; toast(r.message || 'ลบไม่สำเร็จ', 'error'); return; }
+          closeModal(); toast('ลบรูปบน Cloudinary แล้ว ' + r.deleted + ' รูป', 'success');
+        });
+      });
+    }, 'ลบ ' + unused.length + ' รูป');
+    el('modalSave').className = 'btn btn-danger';
+  });
+  function mb(b) { return (b / 1048576).toFixed(1) + ' MB'; }
 }
 
 function whSetDelMode(on) {
@@ -5730,7 +6631,7 @@ function confirmDeleteStockProduct(prod) {
       saveBtn8.disabled = false;
       try {
         var res = JSON.parse(r);
-        if (res.status === 'Success') { closeModal(); toast('ลบสินค้าแล้ว', 'success'); loadStock(renderStockContent); }
+        if (res.status === 'Success') { closeModal(); toast('ลบสินค้าแล้ว' + photoNote(res.photos), 'success'); loadStock(renderStockContent); }
         else { toast(res.message || 'เกิดข้อผิดพลาด', 'error'); }
       } catch(e) { toast('เกิดข้อผิดพลาด', 'error'); }
     }).adminDeleteStockProduct(prod.rowIndex, childRows);
@@ -5760,7 +6661,7 @@ function confirmDeleteSelectedStock() {
       try {
         var res = JSON.parse(r);
         if (res.status === 'Success') {
-          closeModal(); toast('ลบสินค้าแล้ว ' + (res.deleted || 0) + ' รายการ', 'success');
+          closeModal(); toast('ลบสินค้าแล้ว ' + (res.deleted || 0) + ' รายการ' + photoNote(res.photos), 'success');
           _whDelMode = false; _stockDelSelected = {}; renderStockTopbar();
           loadStock(renderStockContent);
         } else { btn.textContent = 'ลบ'; toast(res.message || 'เกิดข้อผิดพลาด', 'error'); loadStock(renderStockContent); }
@@ -6307,3 +7208,139 @@ function openPOSMode(listItem) {
     window.open(url, '_blank');
   }).getWebAppUrl();
 }
+
+// ════════════════════════════════
+// NOTIFICATIONS — new web orders and slips. Checked every minute while the
+// page is open; the bell counts what arrived since the panel was last
+// opened. Desktop pop-ups + a sound once the admin allows them.
+// ════════════════════════════════
+var NOTIF_POLL_MS = 60000;
+var NOTIF_KEEP = 60;
+var _notif = { events: [], newest: '', loaded: false, title: document.title, audio: null };
+function notifSeen(v) {
+  try { if (v === undefined) return localStorage.getItem('adminNotifSeen') || ''; localStorage.setItem('adminNotifSeen', v); }
+  catch (e) { return ''; }
+}
+function notifNewer(a, b) { return !b || new Date(a) > new Date(b); }
+function notifText(e) {
+  if (e.type === 'order') return e.customer + ' สั่ง ' + e.pieces + ' ชิ้น · ' + baht(e.total);
+  if (e.type === 'delivered') return '@' + e.customer + ' ได้รับพัสดุแล้ว · ' + Couriers.name(e.courier) + ' ' + e.tracking;
+  if (e.deliveryId) return e.customer + ' โอนบิลส่วนที่เหลือ + ค่าส่ง ' + baht(e.total) + ' · พร้อมจัดส่ง';
+  return e.customer + ' ส่งสลิป ' + baht(e.total) + (PAY_KIND[e.kind] ? ' · ' + PAY_KIND[e.kind] : '');
+}
+function timeAgo(d) {
+  var s = (Date.now() - new Date(d)) / 1000;
+  if (s < 60) return 'เมื่อสักครู่';
+  if (s < 3600) return Math.floor(s / 60) + ' นาทีที่แล้ว';
+  if (s < 86400) return Math.floor(s / 3600) + ' ชั่วโมงที่แล้ว';
+  return new Date(d).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
+function notifCheck() {
+  if (document.hidden) return;
+  // First load: the last 7 days; then only what is newer than the newest seen
+  apiCall('adminGetNotifications', _notif.newest).then(function(res) {
+    if (res.status !== 'Success') return;
+    var fresh = (res.events || []).filter(function(e) { return notifNewer(e.at, _notif.newest); });
+    if (!_notif.loaded && !notifSeen()) notifSeen(res.now); // first visit ever: start from now, not 7 days back
+    if (_notif.loaded && fresh.length) notifAnnounce(fresh);
+    _notif.events = fresh.concat(_notif.events).slice(0, NOTIF_KEEP);
+    if (fresh.length) _notif.newest = fresh[0].at;
+    _notif.loaded = true;
+    drawNotifBadge();
+    if (!el('notifPanel').hidden) drawNotifPanel();
+  });
+}
+
+function notifUnread() {
+  var seen = notifSeen();
+  return _notif.events.filter(function(e) { return notifNewer(e.at, seen); }).length;
+}
+function drawNotifBadge() {
+  var n = notifUnread(), c = el('notifCount');
+  c.textContent = n > 99 ? '99+' : n;
+  c.hidden = !n;
+  el('notifBtn').setAttribute('aria-label', n ? 'การแจ้งเตือน ' + n + ' รายการใหม่' : 'การแจ้งเตือน');
+  document.title = (n ? '(' + n + ') ' : '') + _notif.title;
+}
+
+function notifAnnounce(fresh) {
+  var first = notifText(fresh[0]) + (fresh.length > 1 ? ' และอีก ' + (fresh.length - 1) + ' รายการ' : '');
+  toast('🔔 ' + first, 'success');
+  if (_notif.audio) {
+    try {
+      var o = _notif.audio.createOscillator(), g = _notif.audio.createGain();
+      o.frequency.value = 880; g.gain.setValueAtTime(0.15, _notif.audio.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, _notif.audio.currentTime + 0.4);
+      o.connect(g); g.connect(_notif.audio.destination); o.start(); o.stop(_notif.audio.currentTime + 0.4);
+    } catch (e) {}
+  }
+  if (window.Notification && Notification.permission === 'granted') {
+    try { new Notification('Order Hub · ใหม่ ' + fresh.length + ' รายการ', { body: first, tag: 'order-hub' }); } catch (e) {}
+  }
+}
+
+function drawNotifPanel() {
+  var panel = el('notifPanel'), seen = notifSeen();
+  panel.innerHTML = '';
+  var head = div('notif-head');
+  var h = document.createElement('strong'); h.textContent = 'การแจ้งเตือน'; head.appendChild(h);
+  var sub = document.createElement('span'); sub.textContent = 'คำสั่งซื้อ สลิป และพัสดุที่ส่งถึง · 7 วันล่าสุด'; head.appendChild(sub);
+  panel.appendChild(head);
+  if (window.Notification && Notification.permission === 'default') {
+    var allow = makeBtn('btn btn-ghost btn-sm notif-allow', '&#x1F514; เปิดแจ้งเตือนบนเครื่อง (มีเสียง)', function() {
+      notifEnableSound();
+      Notification.requestPermission().then(function() { drawNotifPanel(); });
+    });
+    allow.type = 'button'; panel.appendChild(allow);
+  }
+  var list = div('notif-list');
+  if (!_notif.events.length) list.appendChild(div('state-empty', _notif.loaded ? 'ยังไม่มีคำสั่งซื้อ สลิป หรือพัสดุที่ส่งถึงใหม่' : 'กำลังโหลด...'));
+  _notif.events.forEach(function(e) {
+    var row = document.createElement('button'); row.type = 'button';
+    row.className = 'notif-item' + (notifNewer(e.at, seen) ? ' unread' : '');
+    var ic = document.createElement('span'); ic.className = 'notif-icon ' + e.type;
+    ic.textContent = e.type === 'order' ? '🛒' : e.type === 'delivered' ? '📦' : e.deliveryId ? '🚚' : '🧾'; row.appendChild(ic);
+    var body = div('notif-body');
+    var t = div('notif-text'); t.textContent = notifText(e); body.appendChild(t);
+    var m = div('notif-meta');
+    m.textContent = (e.listName || '') + (e.type === 'order' && e.deposit ? ' · มีมัดจำ' : '') + (e.type === 'slip' && e.hasAddress ? ' · มีที่อยู่' : '') + ' · ' + timeAgo(e.at);
+    body.appendChild(m); row.appendChild(body);
+    row.onclick = function() {
+      closeNotif();
+      if (e.type === 'order') { selectedSheetId = e.listId; selectedSheetName = e.listName; switchPanel('orders'); }
+      // Bill paid → ready to ship; delivered → done. Both open the status steps on that customer
+      else if (e.type === 'delivered' || e.deliveryId) {
+        _stm.stage = e.type === 'delivered' ? 'done' : 'ship'; _stm.q = normCust(e.customer); switchPanel('status');
+      } else { _slipView.cat = 'order'; _slipView.list = ''; _slipView.filter = 'all'; _slipView.q = e.customer; switchPanel('slips'); }
+    };
+    list.appendChild(row);
+  });
+  panel.appendChild(list);
+}
+
+// The browser only lets a page play sound after the admin clicks something
+function notifEnableSound() {
+  if (_notif.audio) return;
+  try { var A = window.AudioContext || window.webkitAudioContext; if (A) _notif.audio = new A(); } catch (e) {}
+}
+function openNotif() {
+  notifEnableSound();
+  drawNotifPanel();
+  el('notifPanel').hidden = false;
+  el('notifBtn').setAttribute('aria-expanded', 'true');
+  // Everything listed now counts as read (the panel keeps the highlight until reopened)
+  if (_notif.events.length) notifSeen(_notif.events[0].at);
+  drawNotifBadge();
+}
+function closeNotif() {
+  el('notifPanel').hidden = true;
+  el('notifBtn').setAttribute('aria-expanded', 'false');
+}
+el('notifBtn').onclick = function(e) { e.stopPropagation(); if (el('notifPanel').hidden) openNotif(); else closeNotif(); };
+el('notifPanel').onclick = function(e) { e.stopPropagation(); };
+document.addEventListener('click', function() { if (!el('notifPanel').hidden) closeNotif(); });
+document.addEventListener('keydown', function(e) { if (e.key === 'Escape' && !el('notifPanel').hidden) { closeNotif(); el('notifBtn').focus(); } });
+document.addEventListener('visibilitychange', function() { if (!document.hidden) notifCheck(); });
+setTimeout(notifCheck, 1500);
+setInterval(notifCheck, NOTIF_POLL_MS);
