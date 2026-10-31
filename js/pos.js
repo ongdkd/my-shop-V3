@@ -888,16 +888,25 @@ var _posScanner = null;        // reused Html5Qrcode instance
 var _posScannerActive = false;
 var _scannerLibPromise = null;
 
+function loadScript(src) {
+  return new Promise(function(resolve, reject) {
+    var s = document.createElement('script');
+    s.src = src; s.onload = resolve;
+    s.onerror = function() { reject(new Error('scanner lib load failed')); };
+    document.head.appendChild(s);
+  });
+}
 function ensureScannerLib() {
   if (window.Html5Qrcode) return Promise.resolve();
   if (_scannerLibPromise) return _scannerLibPromise;
-  _scannerLibPromise = new Promise(function(resolve, reject) {
-    var s = document.createElement('script');
-    s.src = 'https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js';
-    s.onload = resolve;
-    s.onerror = function() { _scannerLibPromise = null; reject(new Error('scanner lib load failed')); };
-    document.head.appendChild(s);
-  });
+  // iPhone Safari has no BarcodeDetector, so html5-qrcode fell back to its weak JS
+  // decoder; the polyfill (zxing-cpp, WebAssembly) adds one first. If it can't
+  // load, the scanner still works the old way.
+  var detector = window.BarcodeDetector ? Promise.resolve()
+    : loadScript('https://cdn.jsdelivr.net/npm/barcode-detector@3.2.2/dist/iife/polyfill.js').catch(function() {});
+  _scannerLibPromise = detector.then(function() {
+    return loadScript('https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js');
+  }).catch(function(e) { _scannerLibPromise = null; throw e; });
   return _scannerLibPromise;
 }
 
@@ -926,11 +935,11 @@ function openBarcodeScanner() {
       // Native detector (Android Chrome) is faster and far more accurate
       // on 1D barcodes than the JS fallback
       experimentalFeatures: { useBarCodeDetectorIfSupported: true },
-      // Higher-resolution frames make thin 1D bars readable
+      // Higher-resolution frames make thin 1D bars readable, even held further away
       videoConstraints: {
         facingMode: 'environment',
-        width: { ideal: 1280 },
-        height: { ideal: 720 }
+        width: { ideal: 1920 },
+        height: { ideal: 1080 }
       }
     };
     // Only the formats this shop actually uses — every extra format is
@@ -966,7 +975,7 @@ function openBarcodeScanner() {
       },
       function() {}
     ).then(function() {
-      status.textContent = 'พร้อมสแกนบาร์โค้ด';
+      status.textContent = 'พร้อมสแกน · ถ้าภาพเบลอ ถือห่างขึ้นอีกนิด (~15 ซม.)';
     }).catch(function() {
       _posScannerActive = false;
       status.textContent = 'ไม่สามารถเปิดกล้องได้ กรุณาอนุญาตการใช้กล้อง';

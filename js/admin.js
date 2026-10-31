@@ -553,6 +553,9 @@ function makeScannerPopupHtml(scanToken, continuous) {
     '<!DOCTYPE html><html><head><meta charset="UTF-8">',
     '<meta name="viewport" content="width=device-width,initial-scale=1">',
     '<title>สแกนบาร์โค้ด</title>',
+    // iPhone Safari has no BarcodeDetector, so html5-qrcode fell back to its weak JS
+    // decoder; this adds one (zxing-cpp, WebAssembly) only where it's missing
+    '<script src="https://cdn.jsdelivr.net/npm/barcode-detector@3.2.2/dist/iife/polyfill.js"><\/script>',
     '<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"><\/script>',
     '<style>',
     '*{box-sizing:border-box;margin:0;padding:0;}',
@@ -563,8 +566,10 @@ function makeScannerPopupHtml(scanToken, continuous) {
     '#reader canvas{display:none!important;}',
     '#reader__scan_region{border:none!important;box-shadow:none!important;}',
     '#reader__scan_region img{display:none!important;}',
+    '#qr-shaded-region{display:none!important;}',
+    /* same size as the qrbox below: only this box is decoded */
     '#reader::after{content:"";position:absolute;top:50%;left:50%;',
-    'transform:translate(-50%,-55%);width:280px;height:140px;',
+    'transform:translate(-50%,-50%);width:min(85vw,440px);height:min(42.5vw,220px);',
     'border:3px solid #00C896;border-radius:8px;',
     'box-shadow:0 0 0 9999px rgba(0,0,0,0.45);pointer-events:none;}',
     '.bottom{width:100%;padding:16px 20px 28px;display:flex;flex-direction:column;',
@@ -611,13 +616,17 @@ function makeScannerPopupHtml(scanToken, continuous) {
     '  setTimeout(function(){window.close();},700);',
     '}',
     'var lastT="",streak=0;',
+    /* iPhone Pro cameras can't focus closer than ~15 cm: too close = blurry bars */
+    'var AIM="เล็งบาร์โค้ดให้อยู่ในกรอบ · ถ้าภาพเบลอ ถือห่างขึ้นอีกนิด (~15 ซม.)";',
     'function startScanner(){',
     '  scanner=new Html5Qrcode("reader");',
     '  scanner.start(',
     '    {facingMode:"environment"},',
     '    {fps:15,disableFlip:true,',
+    '     qrbox:function(w,h){var bw=Math.min(Math.floor(w*0.85),440);return{width:bw,height:Math.min(Math.floor(bw/2),Math.floor(h*0.6))};},',
     '     experimentalFeatures:{useBarCodeDetectorIfSupported:true},',
-    '     videoConstraints:{facingMode:"environment",width:{ideal:1280},height:{ideal:720}},',
+    /* 1080p: thin bars stay sharp even when the phone is held further away */
+    '     videoConstraints:{facingMode:"environment",width:{ideal:1920},height:{ideal:1080}},',
     '     formatsToSupport:[',
     '       Html5QrcodeSupportedFormats.EAN_13,',
     '       Html5QrcodeSupportedFormats.EAN_8,',
@@ -636,9 +645,9 @@ function makeScannerPopupHtml(scanToken, continuous) {
     '      if(streak<2||text===lastSent)return;',
     '      sendResult(text);',
     '    },',
-    '    function(){if(!hasScanned)document.getElementById("status").textContent="เล็งกล้องไปที่บาร์โค้ด...";}',
+    '    function(){if(!hasScanned)document.getElementById("status").textContent=AIM;}',
     '  ).then(function(){',
-    '    document.getElementById("status").textContent="เล็งกล้องไปที่บาร์โค้ด...";',
+    '    document.getElementById("status").textContent=AIM;',
     '  }).catch(function(e){',
     '    document.getElementById("status").textContent="เปิดกล้องไม่ได้: กรุณาอนุญาตการใช้กล้อง";',
     '  });',
@@ -2306,6 +2315,11 @@ function drawSyncPreview(out, res) {
   out.appendChild(div('sync-sum', 'จะ<strong>เพิ่ม ' + res.added + ' แถว</strong> · <strong>แก้ ' + res.updated + ' แถว</strong>' +
     (res.created && res.created.length ? ' · สร้างแท็บใหม่ <strong>' + escapeHtml(res.created.join(', ')) + '</strong>' : '') +
     ' (จากออเดอร์เว็บ ' + (res.orders || 0) + ' ชิ้น)'));
+  // Per tab first (newest quarter on top), so every quarter is visible even when the rows are many
+  if (p.tabs && p.tabs.length) {
+    table('แยกตามแท็บ', [['tab', 'แท็บ'], ['state', ''], ['orders', 'ออเดอร์เว็บ'], ['added', 'เพิ่ม'], ['updated', 'แก้']],
+      p.tabs.map(function(t) { return { tab: t.tab, state: t.isNew ? 'แท็บใหม่' : '', orders: String(t.orders), added: String(t.added), updated: String(t.updated) }; }), p.tabs.length);
+  }
   if (!res.added && !res.updated) { out.appendChild(div('slip-meta', '✓ ชีตตรงกับเว็บแล้ว ไม่มีอะไรต้องอัปเดต')); return; }
   if (p.headers.length) out.appendChild(div('slip-meta', 'เพิ่มหัวคอลัมน์: ' + escapeHtml(p.headers.join(' · '))));
   function table(title, heads, rows, total) {

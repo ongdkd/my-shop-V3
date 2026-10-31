@@ -121,7 +121,7 @@ function rowFor(o: Record<string, any>, listPaid: boolean, bill: Record<string, 
 
 // dry: work out every change but write nothing (no new tabs either) — the
 // result lists the rows to add and the cells to change, for the admin to check
-const PREVIEW_MAX = 300;
+const PREVIEW_MAX = 2000;
 async function sync(db: SupabaseClient, dry = false) {
   const { data: setting } = await db.from("app_settings").select("value").eq("key", "sheets").maybeSingle();
   const conf = (setting?.value ?? {}) as { from?: string; url?: string };
@@ -163,14 +163,16 @@ async function sync(db: SupabaseClient, dry = false) {
   // A preview treats a missing tab as a new, empty one
   missing.forEach((k) => { titleOf.set(k, "เดือน" + k); created.push("เดือน" + k); });
 
-  const quarters = [...byQuarter.keys()];
+  // Newest quarter first, so a long preview starts with the current orders
+  const quarters = [...byQuarter.keys()].reverse();
   const reading = quarters.filter((k) => !(dry && missing.includes(k)));
   const got = reading.length
     ? await api("/values:batchGet?" + reading.map((k) => "ranges=" + encodeURIComponent(quote(titleOf.get(k)!))).join("&"))
     : {};
   const data: { range: string; values: string[][] }[] = [];
   let added = 0, updated = 0;
-  const preview = { rows: [] as Record<string, string>[], cells: [] as Record<string, string>[], headers: [] as string[] };
+  const preview = { rows: [] as Record<string, string>[], cells: [] as Record<string, string>[], headers: [] as string[],
+    tabs: [] as { tab: string; orders: number; added: number; updated: number; isNew: boolean }[] };
 
   quarters.forEach((k) => {
     const title = titleOf.get(k)!;
@@ -191,6 +193,7 @@ async function sync(db: SupabaseClient, dry = false) {
     const rowOf = new Map<string, number>();
     values.forEach((r, i) => { const id = String(r[col.web] ?? "").trim(); if (i > 0 && id) rowOf.set(id, i); });
     let next = Math.max(values.length, 1); // first free row (0-based)
+    const before = { added, updated };
     for (const want of byQuarter.get(k)!) {
       const i = rowOf.get(want.web);
       if (i === undefined) {
@@ -211,6 +214,8 @@ async function sync(db: SupabaseClient, dry = false) {
       }
       if (changed) updated++;
     }
+    preview.tabs.push({ tab: title, orders: byQuarter.get(k)!.length, added: added - before.added,
+      updated: updated - before.updated, isNew: missing.includes(k) });
   });
 
   if (dry) return { added, updated, created, orders: orders.length, sheetId, preview };
