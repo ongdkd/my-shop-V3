@@ -2235,7 +2235,7 @@ function drawSlips(pays) {
 // ════════════════════════════════
 // STATUS MANAGER — bulk status for web orders and imported old-sheet rows
 // ════════════════════════════════
-var _stm = { stage: 'pay', round: '', cat: '', q: '', legacy: null, bills: null };
+var _stm = { stage: 'pay', list: '', round: '', cat: '', q: '', legacy: null, bills: null };
 var STM_CAP = 400; // rows drawn at once; filters narrow the rest
 
 // Shipped / waiting / cancelled / custom label
@@ -2457,11 +2457,14 @@ function drawStages() {
     if (p.deliveryId) B.billPaid[p.deliveryId] = true;
     else B.paid[p.listId + '|' + normCust(p.customer)] = true;
   });
-  var S = {};
-  STAGES.forEach(function(s) { S[s.id] = []; });
-  B.orders.forEach(function(o) { S[stageOf(o, B)].push(o); });
   var listName = {};
   B.orders.forEach(function(o) { listName[o.listId] = o.shopName; });
+  // Order-list filter: narrows every step and its count
+  if (_stm.list && !listName[_stm.list]) _stm.list = '';
+  function inList(o) { return !_stm.list || o.listId === _stm.list; }
+  var S = {};
+  STAGES.forEach(function(s) { S[s.id] = []; });
+  B.orders.filter(inList).forEach(function(o) { S[stageOf(o, B)].push(o); });
 
   function ckKey(o) { return o.checkoutId ? 'c:' + o.checkoutId : 't:' + o.listId + '|' + o.customer + '|' + String(o.timestamp || '').slice(0, 16); }
   function checkouts(rows) {
@@ -2478,7 +2481,10 @@ function drawStages() {
     return { b: b, items: B.orders.filter(function(o) { return o.deliveryId === b.id; }),
              pays: B.payments.filter(function(p) { return p.deliveryId === b.id; }) };
   }
-  function drafts() { return B.deliveries.filter(function(b) { return !b.sentAt && !b.tracking; }).map(billCtx); }
+  function drafts() {
+    return B.deliveries.filter(function(b) { return !b.sentAt && !b.tracking; }).map(billCtx)
+      .filter(function(x) { return !_stm.list || x.items.some(inList); });
+  }
   // Sent, not paid yet, still something to ship
   function unpaid() { return billsOf(S.arrive.filter(function(o) { return o.deliveryId && B.billById[o.deliveryId].sentAt; })); }
   function count(id) {
@@ -2498,6 +2504,13 @@ function drawStages() {
     tabs.appendChild(b);
   });
   ctl.appendChild(tabs);
+  var ls = document.createElement('select'); ls.className = 'slip-list stg-list'; ls.setAttribute('aria-label', 'รายการสั่งซื้อ');
+  [['', 'ทุกรายการสั่งซื้อ']].concat(Object.keys(listName).map(function(id) { return [id, listName[id] || '(ไม่มีชื่อ)']; })
+    .sort(function(a, b) { return a[1].localeCompare(b[1], 'th'); }))
+    .forEach(function(o) { var e = document.createElement('option'); e.value = o[0]; e.textContent = o[1]; ls.appendChild(e); });
+  ls.value = _stm.list || '';
+  ls.onchange = function() { _stm.list = ls.value; drawStages(); };
+  ctl.appendChild(ls);
   var sw = div('search-row'); sw.innerHTML = SVG_SEARCH;
   var si = document.createElement('input'); si.placeholder = 'ค้นหาชื่อลูกค้า / สินค้า / เลขพัสดุ'; si.value = _stm.q;
   si.oninput = function() { _stm.q = si.value; draw(); };
@@ -7332,7 +7345,7 @@ function drawNotifPanel() {
       if (e.type === 'order') { selectedSheetId = e.listId; selectedSheetName = e.listName; switchPanel('orders'); }
       // Bill paid → ready to ship; delivered → done. Both open the status steps on that customer
       else if (e.type === 'delivered' || e.deliveryId) {
-        _stm.stage = e.type === 'delivered' ? 'done' : 'ship'; _stm.q = normCust(e.customer); switchPanel('status');
+        _stm.stage = e.type === 'delivered' ? 'done' : 'ship'; _stm.list = ''; _stm.q = normCust(e.customer); switchPanel('status');
       } else { _slipView.cat = 'order'; _slipView.list = ''; _slipView.filter = 'all'; _slipView.q = e.customer; switchPanel('slips'); }
     };
     list.appendChild(row);

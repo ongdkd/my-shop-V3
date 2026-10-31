@@ -1000,9 +1000,13 @@ a.ocard-phone{text-decoration:underline;text-decoration-color:var(--border-stron
 .stg-tab.on .stg-num{background:var(--primary);color:#fff;}
 .stg-count{min-width:20px;padding:1px 7px;border-radius:999px;background:var(--surface);border:1px solid var(--border);font-size:0.7rem;color:var(--text-3);}
 .stg-tab.on .stg-count{background:var(--primary-light);border-color:transparent;color:var(--primary);}
-.stg-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;align-items:start;}
-@media(max-width:560px){.stg-grid{grid-template-columns:1fr;}}
-.stg-grid .bill-card{margin-bottom:0;cursor:default;}
+/* Columns, not grid rows: each card sits right under the one above it, so a
+   tall card doesn't leave empty space beside the short ones (newest first, read down each column) */
+.stg-grid{columns:300px;column-gap:12px;}
+.stg-grid>*{break-inside:avoid;margin:0 0 12px;}
+@media(max-width:560px){.stg-grid{columns:1;}}
+.stg-grid .bill-card{cursor:default;}
+.stg-list{max-width:260px;}
 .ocard-ship-info.stg-wait{color:var(--text-3);}
 .stg-sub{margin-top:16px;}
 .stg-drop{min-height:60px;border-radius:10px;}
