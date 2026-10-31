@@ -320,3 +320,29 @@ secret is set, deletes leave the photos in place.
 2. Supabase Dashboard → Edge Functions → Secrets → add `CLOUDINARY_ACCOUNTS`:
    `{"dk5f1v2ro":{"key":"…","secret":"…"},"dkjqjkc6":{"key":"…","secret":"…"}}`
 3. `npx supabase functions deploy cloudinary`
+
+## Status sheet sync (website orders → Google Sheet)
+
+The Edge Function `supabase/functions/sheets-sync` writes every website order
+(not POS) into a **new** Google Sheet whose link is set in admin (ประวัติจากชีต →
+**📤 อัปเดตชีต**): one row per item, in the tab of the quarter it was ordered in
+(`เดือนตุลาคม-ธันวาคม 2026`; a new quarter gets a new tab), with its current
+status and tracking number. It finds its rows again by the order id in the
+`รหัสเว็บ (ห้ามแก้)` column and only rewrites cells that changed. It never writes
+to the old hand-kept status sheet, which stays the source of the history import.
+It runs every 15 minutes, and from the 📤 button.
+
+1. Create a new, empty Google Sheet.
+2. Google Cloud console (the project that has the Sheets API key) →
+   IAM & Admin → Service Accounts → **Create service account** (no roles) →
+   open it → Keys → Add key → **JSON**. A `.json` file downloads.
+3. Share the new sheet with the service account's email
+   (`…@….iam.gserviceaccount.com`) as **Editor**.
+4. Supabase Dashboard → Edge Functions → Secrets:
+   - `GOOGLE_SERVICE_ACCOUNT` = the whole content of the `.json` file
+   - `SHEETS_SYNC_KEY` = any long random text
+5. `npx supabase functions deploy sheets-sync --no-verify-jwt`
+   (the schedule calls it with `SHEETS_SYNC_KEY`, not a login)
+6. SQL Editor: open `supabase/migrations/2026-11-01-sheets-sync.sql`, replace
+   `PUT_SHEETS_SYNC_KEY_HERE` with your `SHEETS_SYNC_KEY`, and run it.
+7. Admin → ประวัติจากชีต → 📤 อัปเดตชีต: paste the new sheet's link → อัปเดตชีตตอนนี้.

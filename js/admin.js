@@ -2244,11 +2244,54 @@ function stmCat(o) {
   return o.status || 'รอจัดส่ง';
 }
 
+// Website orders → the status Google Sheet (supabase/functions/sheets-sync): runs
+// every 15 minutes by itself; this shows the last run and runs it now
+function openSheetsSync() {
+  var body = el('modalBody'); body.innerHTML = '';
+  body.appendChild(div('slip-meta', 'เขียนออเดอร์จากเว็บลงชีตสถานะ แท็บละ 3 เดือนตามวันที่สั่ง (ขึ้นไตรมาสใหม่จะสร้างแท็บใหม่ให้) พร้อมสถานะและเลขพัสดุล่าสุด · ' +
+    'แถวที่พิมพ์เองในชีตจะไม่ถูกแตะ · แถวจากเว็บ (มีรหัสในคอลัมน์ "รหัสเว็บ") ถ้าแก้ในชีตจะถูกเขียนทับรอบถัดไป · ระบบอัปเดตเองทุก 15 นาที'));
+  var sheet = div('slip-meta', ''); body.appendChild(sheet);
+  var last = div('sync-last', 'กำลังโหลด...'); body.appendChild(last);
+  var ff = div('modal-field');
+  var fl = document.createElement('label'); fl.htmlFor = 'syncFrom'; fl.textContent = 'ส่งเฉพาะออเดอร์ที่สั่งตั้งแต่วันที่ (ว่าง = ทั้งหมด)'; ff.appendChild(fl);
+  var from = document.createElement('input'); from.type = 'date'; from.id = 'syncFrom'; ff.appendChild(from);
+  ff.appendChild(div('slip-meta', 'ใช้กันออเดอร์เก่าที่เคยพิมพ์ลงชีตเองไว้แล้วซ้ำ'));
+  body.appendChild(ff);
+  var saved = {};
+  Promise.all([apiCall('adminGetSetting', 'sheets'), apiCall('adminGetSetting', 'sheets_last')]).then(function(r) {
+    saved = r[0].value || {};
+    from.value = saved.from || '';
+    if (saved.url) sheet.innerHTML = 'ชีต: <a href="' + escapeHtml(saved.url) + '" target="_blank" rel="noopener">เปิดชีตสถานะ</a> · เปลี่ยนชีตได้ที่ 📥 นำเข้าจากชีต';
+    var v = r[1].value || {};
+    last.innerHTML = !v.at ? 'ยังไม่เคยอัปเดตชีต'
+      : 'อัปเดตล่าสุด ' + escapeHtml(new Date(v.at).toLocaleString('th-TH', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })) +
+        (v.by === 'auto' ? ' (อัตโนมัติ)' : '') + ' · ' +
+        (v.error ? '<span class="sync-bad">' + escapeHtml(v.error) + '</span>' : 'เพิ่ม ' + v.added + ' · แก้ ' + v.updated + ' แถว' + (v.created && v.created.length ? ' · แท็บใหม่ ' + escapeHtml(v.created.join(', ')) : ''));
+  });
+  openModal('&#x1F4E4; อัปเดตชีตสถานะ', '', function() {
+    el('modalSave').disabled = true; el('modalSave').textContent = 'กำลังอัปเดต...';
+    // Keep the sheet link saved with it
+    apiCall('adminSaveSetting', 'sheets', Object.assign({}, saved, { from: from.value })).then(function(s) {
+      if (s.status !== 'Success') throw new Error(s.message);
+      return apiCall('adminSheetsSync');
+    }).then(function(res) {
+      el('modalSave').disabled = false; el('modalSave').textContent = 'อัปเดตชีตตอนนี้';
+      if (res.status !== 'Success') { toast(res.message || 'อัปเดตชีตไม่สำเร็จ', 'error'); return; }
+      closeModal();
+      toast('อัปเดตชีตแล้ว · เพิ่ม ' + res.added + ' · แก้ ' + res.updated + ' แถว' + (res.created && res.created.length ? ' · แท็บใหม่ ' + res.created.join(', ') : ''), 'success');
+    }).catch(function(e) {
+      el('modalSave').disabled = false; el('modalSave').textContent = 'อัปเดตชีตตอนนี้';
+      toast(e.message || 'บันทึกไม่สำเร็จ', 'error');
+    });
+  }, 'อัปเดตชีตตอนนี้');
+}
+
 // Old orders imported from the status sheet, with bulk status changes
 function renderHistoryPanel() {
   setTopbar('ประวัติจากชีต', 'สถานะออเดอร์เก่าที่นำเข้าจาก Google Sheet');
   el('topbarActions').innerHTML = '';
   el('topbarActions').appendChild(makeBtn('btn btn-ghost btn-sm', '&#x1F4E5; นำเข้าจากชีต', openImportStatusSheet));
+  el('topbarActions').appendChild(makeBtn('btn btn-primary btn-sm', '&#x1F4E4; อัปเดตชีต', openSheetsSync));
   el('content').innerHTML = ''; el('content').appendChild(makeSpinner());
   if (_stm.legacy) { drawStatusManager(); return; }
   apiCall('adminGetLegacy').then(function(res) {
@@ -3494,10 +3537,13 @@ function openImportStatusSheet() {
   el('modalBody').innerHTML = '';
   var f = div('modal-field');
   var l = document.createElement('label'); l.htmlFor = 'stmSheetUrl'; l.textContent = 'ลิงก์ Google Sheet สถานะ'; f.appendChild(l);
-  var inp = document.createElement('input'); inp.id = 'stmSheetUrl'; inp.placeholder = 'เว้นว่าง = ใช้ชีตสถานะเดิมของร้าน';
+  var inp = document.createElement('input'); inp.id = 'stmSheetUrl'; inp.placeholder = 'https://docs.google.com/spreadsheets/d/...';
   f.appendChild(inp); el('modalBody').appendChild(f);
+  // Prefilled with the shop's current sheet; a different link becomes the shop's sheet
+  apiCall('adminGetSetting', 'sheets').then(function(r) { if (!inp.value && r.value && r.value.url) inp.value = r.value.url; });
   el('modalBody').appendChild(div('slip-meta',
     'นำเข้าทุกแท็บ (หัวคอลัมน์ต้องมี "ชื่อแอคลูกค้า" และ "ชื่อสินค้า") ชีตต้องแชร์เป็น "ทุกคนที่มีลิงก์ดูได้"<br>' +
+    'ลิงก์นี้จะเป็นชีตสถานะของร้าน — 📤 อัปเดตชีต จะเขียนออเดอร์จากเว็บลงชีตนี้ด้วย<br>' +
     '<strong style="color:var(--danger)">ข้อมูลที่นำเข้าก่อนหน้าจะถูกแทนที่ทั้งหมด</strong> รวมถึงสถานะที่แก้ในหน้านี้'));
   openModal('&#x1F4E5; นำเข้าชีตสถานะ', '', function() {
     var btn = el('modalSave'); btn.disabled = true; btn.textContent = 'กำลังนำเข้า...';

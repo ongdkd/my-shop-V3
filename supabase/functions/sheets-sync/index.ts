@@ -1,0 +1,229 @@
+// sheets-sync — writes the website's orders into the status Google Sheet:
+// one row per item, in the tab of the quarter it was ordered in
+// ("เดือนตุลาคม-ธันวาคม 2026"; a new quarter gets a new tab), with its current
+// status and tracking number. Rows are found again by the order id in the
+// "รหัสเว็บ" column, so later runs update them; rows typed by hand are never
+// touched. Edits made in the sheet to synced rows are overwritten.
+//
+// Called by admin (📤 in ประวัติจากชีต) or every 15 minutes by pg_cron with the
+// x-sync-key header (SHEETS_SYNC_KEY). Google access is a service account
+// (GOOGLE_SERVICE_ACCOUNT = its JSON key) that the sheet is shared with as editor.
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+
+// The shop's sheet is app_settings 'sheets'.url (set by 📥 นำเข้าจากชีต); this is only the fallback
+const DEFAULT_SHEET_ID = Deno.env.get("STATUS_SHEET_ID") || "1tXcsJ-qNRGLXsPCSu4srsmuibxhYZZTRrALn5BVeIx8";
+const sheetIdOf = (url: unknown) => (String(url ?? "").match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/) ?? [])[1] ?? "";
+const SYNC_KEY = Deno.env.get("SHEETS_SYNC_KEY") ?? "";
+
+const cors = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-sync-key",
+};
+const reply = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
+
+// ── Google auth: service-account JWT → access token ──
+function b64url(bytes: Uint8Array) {
+  let s = "";
+  bytes.forEach((b) => s += String.fromCharCode(b));
+  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+async function googleToken() {
+  let sa: { client_email?: string; private_key?: string } = {};
+  try { sa = JSON.parse(Deno.env.get("GOOGLE_SERVICE_ACCOUNT") || "{}"); } catch { /* checked below */ }
+  if (!sa.client_email || !sa.private_key) throw new Error("ยังไม่ได้ตั้งค่า GOOGLE_SERVICE_ACCOUNT ใน Supabase secrets");
+  const enc = (o: unknown) => b64url(new TextEncoder().encode(JSON.stringify(o)));
+  const now = Math.floor(Date.now() / 1000);
+  const unsigned = enc({ alg: "RS256", typ: "JWT" }) + "." + enc({
+    iss: sa.client_email, scope: "https://www.googleapis.com/auth/spreadsheets",
+    aud: "https://oauth2.googleapis.com/token", iat: now, exp: now + 3600,
+  });
+  const der = Uint8Array.from(atob(sa.private_key.replace(/-----[^-]+-----/g, "").replace(/\s/g, "")), (c) => c.charCodeAt(0));
+  const key = await crypto.subtle.importKey("pkcs8", der, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["sign"]);
+  const sig = new Uint8Array(await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, new TextEncoder().encode(unsigned)));
+  const r = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion: unsigned + "." + b64url(sig) }),
+  });
+  const j = await r.json();
+  if (!j.access_token) throw new Error("Google ไม่ให้สิทธิ์: " + (j.error_description || j.error || r.status));
+  return { token: j.access_token as string, email: sa.client_email };
+}
+
+// email: the service account, named in the error when the sheet isn't shared with it
+async function sheets(sheetId: string, token: string, email: string, path: string, init: RequestInit = {}) {
+  const r = await fetch("https://sheets.googleapis.com/v4/spreadsheets/" + sheetId + path, {
+    ...init, headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const msg = j?.error?.message ?? String(r.status);
+    throw new Error(r.status === 403 || r.status === 404 ? `เปิดชีตไม่ได้ — แชร์ชีตให้ ${email} เป็นผู้แก้ไข (${msg})` : "Google Sheets: " + msg);
+  }
+  return j;
+}
+
+// ── Quarters and tab names ──
+const MONTHS = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"];
+// Thai time (UTC+7) decides the quarter
+function quarterKey(iso: string) {
+  const d = new Date(new Date(iso).getTime() + 7 * 3600 * 1000);
+  const q = Math.floor(d.getUTCMonth() / 3);
+  return MONTHS[q * 3] + "-" + MONTHS[q * 3 + 2] + " " + d.getUTCFullYear();
+}
+// "เดือนตุลาคม-ธันวาคม 2026" and "ตุลาคม-ธันวาคม 2026" are the same quarter
+const tabKey = (title: string) => title.trim().replace(/^เดือน\s*/, "").replace(/\s+/g, " ");
+function colA1(i: number) { let s = ""; for (i++; i > 0; i = Math.floor((i - 1) / 26)) s = String.fromCharCode(65 + (i - 1) % 26) + s; return s; }
+const quote = (t: string) => "'" + t.replace(/'/g, "''") + "'";
+
+// Columns, found by header text like the importer; added at the end when missing
+const FIELDS = [
+  { id: "name", find: ["ชื่อแอค"], head: "ชื่อแอค" },
+  { id: "channel", find: ["ช่องทาง"], head: "ช่องทาง" },
+  { id: "product", find: ["ชื่อสินค้า"], head: "ชื่อสินค้า" },
+  { id: "qty", find: ["จำนวน"], head: "จำนวน" },
+  { id: "pay", find: ["สถานะชำระ"], head: "สถานะชำระ" },
+  { id: "status", find: ["สถานะของ"], head: "สถานะของ" },
+  { id: "tracking", find: ["เลขพัสดุ", "หมายเหตุ"], head: "เลขพัสดุ" },
+  { id: "web", find: ["รหัสเว็บ"], head: "รหัสเว็บ (ห้ามแก้)" },
+] as const;
+type Field = typeof FIELDS[number]["id"];
+
+async function allRows(db: SupabaseClient, table: string, cols: string, filter?: (q: any) => any) {
+  let out: Record<string, any>[] = [];
+  for (let from = 0; ; from += 1000) {
+    let q = db.from(table).select(cols).order("created_at", { ascending: true }).range(from, from + 999);
+    if (filter) q = filter(q);
+    const { data, error } = await q;
+    if (error) throw new Error(`อ่าน ${table} ไม่สำเร็จ: ${error.message}`);
+    out = out.concat(data ?? []);
+    if (!data || data.length < 1000) return out;
+  }
+}
+const norm = (s: unknown) => String(s ?? "").trim().toLowerCase().replace(/^@+/, "");
+const num = (v: unknown) => Number(v) || 0;
+
+// The row the sheet shows for one order item
+function rowFor(o: Record<string, any>, listPaid: boolean, bill: Record<string, any> | undefined, billPaid: boolean): Record<Field, string> {
+  let status: string;
+  if (o.status === "ยกเลิก") status = "ยกเลิก";
+  else if (o.shipped_at) status = "จัดส่งแล้ว";
+  else if (bill?.sent_at) status = billPaid ? "ชำระบิลแล้ว · รอจัดส่ง" : "ส่งบิลแล้ว · รอโอน";
+  else if (o.status) status = o.status; // ถึงไทยแล้ว, ชำระแล้ว or a label set in admin
+  else status = listPaid ? "สั่งซื้อแล้ว" : "รอชำระเงิน";
+  const pay = o.pay_type === "Gift" ? "ของแถม"
+    : o.pay_type === "Deposit" ? `มัดจำ ${num(o.total)} / เต็ม ${num(o.total_full)}` : String(num(o.total));
+  return {
+    name: String(o.customer ?? "").replace(/\s*\n\s*/g, " "), channel: "เว็บไซต์", product: String(o.product ?? ""),
+    qty: String(num(o.qty)), pay, status, tracking: String(o.tracking ?? ""), web: String(o.id),
+  };
+}
+
+async function sync(db: SupabaseClient) {
+  const { data: setting } = await db.from("app_settings").select("value").eq("key", "sheets").maybeSingle();
+  const conf = (setting?.value ?? {}) as { from?: string; url?: string };
+  const since = String(conf.from ?? "");
+  const sheetId = sheetIdOf(conf.url) || DEFAULT_SHEET_ID;
+
+  const orders = await allRows(db, "orders",
+    "id,customer,product,qty,pay_type,total,total_full,status,shipped_at,tracking,delivery_id,list_id,created_at",
+    (q) => { q = q.neq("remark", "POS"); return since ? q.gte("created_at", since + "T00:00:00+07:00") : q; });
+  const payments = await allRows(db, "payments", "list_id,customer,delivery_id,created_at");
+  const bills = await allRows(db, "deliveries", "id,sent_at,created_at");
+  const listPaid = new Set<string>(), billPaid = new Set<string>();
+  payments.forEach((p) => p.delivery_id ? billPaid.add(p.delivery_id) : listPaid.add(p.list_id + "|" + norm(p.customer)));
+  const billById = new Map(bills.map((b) => [b.id, b]));
+
+  // Orders by quarter
+  const byQuarter = new Map<string, Record<Field, string>[]>();
+  for (const o of orders) {
+    const k = quarterKey(o.created_at);
+    if (!byQuarter.has(k)) byQuarter.set(k, []);
+    byQuarter.get(k)!.push(rowFor(o, listPaid.has(o.list_id + "|" + norm(o.customer)), billById.get(o.delivery_id), billPaid.has(o.delivery_id)));
+  }
+  if (!byQuarter.size) return { added: 0, updated: 0, created: [] as string[] };
+
+  const { token, email } = await googleToken();
+  const api = (path: string, init?: RequestInit) => sheets(sheetId, token, email, path, init);
+
+  // Existing tabs; a new quarter gets its own tab
+  const meta = await api("?fields=sheets.properties.title");
+  const titles: string[] = (meta.sheets ?? []).map((s: any) => s.properties.title);
+  const titleOf = new Map(titles.map((t) => [tabKey(t), t]));
+  const created: string[] = [];
+  const missing = [...byQuarter.keys()].filter((k) => !titleOf.has(k));
+  if (missing.length) {
+    await api(":batchUpdate", { method: "POST", body: JSON.stringify({
+      requests: missing.map((k) => ({ addSheet: { properties: { title: "เดือน" + k, gridProperties: { frozenRowCount: 1 } } } })),
+    }) });
+    missing.forEach((k) => { titleOf.set(k, "เดือน" + k); created.push("เดือน" + k); });
+  }
+
+  const quarters = [...byQuarter.keys()];
+  const got = await api("/values:batchGet?" + quarters.map((k) => "ranges=" + encodeURIComponent(quote(titleOf.get(k)!))).join("&"));
+  const data: { range: string; values: string[][] }[] = [];
+  let added = 0, updated = 0;
+
+  quarters.forEach((k, qi) => {
+    const title = titleOf.get(k)!;
+    const values: string[][] = (got.valueRanges?.[qi]?.values ?? []) as string[][];
+    const head = (values[0] ?? []).map((h) => String(h ?? ""));
+    let width = Math.max(head.length, ...values.map((r) => r.length), 0);
+    const col = {} as Record<Field, number>;
+    for (const f of FIELDS) {
+      let i = head.findIndex((h) => f.find.some((w) => h.includes(w)));
+      if (i < 0) { i = width++; data.push({ range: `${quote(title)}!${colA1(i)}1`, values: [[f.head]] }); }
+      col[f.id] = i;
+    }
+    // Synced rows already in the tab, by order id
+    const rowOf = new Map<string, number>();
+    values.forEach((r, i) => { const id = String(r[col.web] ?? "").trim(); if (i > 0 && id) rowOf.set(id, i); });
+    let next = Math.max(values.length, 1); // first free row (0-based)
+    for (const want of byQuarter.get(k)!) {
+      const i = rowOf.get(want.web);
+      if (i === undefined) {
+        const r = next++;
+        for (const f of FIELDS) data.push({ range: `${quote(title)}!${colA1(col[f.id])}${r + 1}`, values: [[want[f.id]]] });
+        added++;
+        continue;
+      }
+      // Only the cells that changed
+      let changed = false;
+      for (const f of FIELDS) {
+        if (String(values[i][col[f.id]] ?? "") === want[f.id]) continue;
+        data.push({ range: `${quote(title)}!${colA1(col[f.id])}${i + 1}`, values: [[want[f.id]]] });
+        changed = true;
+      }
+      if (changed) updated++;
+    }
+  });
+
+  for (let i = 0; i < data.length; i += 2000) {
+    await api("/values:batchUpdate", { method: "POST", body: JSON.stringify({ valueInputOption: "RAW", data: data.slice(i, i + 2000) }) });
+  }
+  return { added, updated, created, orders: orders.length, at: new Date().toISOString() };
+}
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
+  // The schedule sends the sync key; admins send their login
+  const byCron = !!SYNC_KEY && req.headers.get("x-sync-key") === SYNC_KEY;
+  if (!byCron) {
+    const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!, {
+      global: { headers: { Authorization: req.headers.get("Authorization") ?? "" } },
+    });
+    const { data: isAdmin } = await sb.rpc("is_admin");
+    if (isAdmin !== true) return reply({ error: "Forbidden — ต้องเข้าสู่ระบบแอดมิน" }, 403);
+  }
+  const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  try {
+    const res = await sync(db);
+    // Remembered for the admin page ("last synced …")
+    await db.from("app_settings").upsert({ key: "sheets_last", value: { ...res, by: byCron ? "auto" : "admin" }, updated_at: new Date().toISOString() });
+    return reply(res);
+  } catch (e) {
+    const error = (e as Error).message;
+    await db.from("app_settings").upsert({ key: "sheets_last", value: { error, at: new Date().toISOString(), by: byCron ? "auto" : "admin" }, updated_at: new Date().toISOString() });
+    return reply({ error });
+  }
+});

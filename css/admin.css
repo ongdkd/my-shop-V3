@@ -217,6 +217,8 @@ button{font-family:var(--font);cursor:pointer;border:none;}
 .summary-text{width:100%;min-height:320px;padding:12px;border:1.5px solid var(--border);border-radius:var(--radius-md);background:var(--surface-2);color:var(--text-2);font-family:var(--font);font-size:0.84rem;line-height:1.7;resize:vertical;outline:none;}
 .summary-copy{width:100%;margin-top:10px;}
 .modal-field textarea.summary-text{min-height:320px;line-height:1.7;margin-bottom:8px;}
+.sync-last{margin:10px 0 14px;padding:10px 12px;border-radius:var(--radius-sm);background:var(--surface-2);font-size:0.82rem;color:var(--text-2);}
+.sync-bad{color:var(--error);font-weight:600;}
 .sweep-acct{font-size:0.84rem;color:var(--text-2);margin-bottom:6px;}
 .sweep-warn{margin:10px 0;padding:10px 12px;border-radius:var(--radius-sm);background:var(--error-light);color:var(--error);font-size:0.8rem;line-height:1.5;}
 .sweep-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:6px;margin-bottom:8px;}

@@ -228,11 +228,13 @@
   function parseStatusTab(tab) {
     var head = (tab.rows[0] || []).map(function (h) { return String(h || ''); });
     function col(word) { for (var i = 0; i < head.length; i++) if (head[i].indexOf(word) !== -1) return i; return -1; }
-    var c = { name: col('ชื่อแอค'), product: col('ชื่อสินค้า'), qty: col('จำนวน'), pay: col('สถานะชำระ'), status: col('สถานะของ'), note: col('หมายเหตุ'), channel: col('ช่องทาง') };
+    var c = { name: col('ชื่อแอค'), product: col('ชื่อสินค้า'), qty: col('จำนวน'), pay: col('สถานะชำระ'), status: col('สถานะของ'), note: col('หมายเหตุ'), channel: col('ช่องทาง'), web: col('รหัสเว็บ') };
     if (c.name < 0) return [];
     function at(row, i) { return i >= 0 ? String(row[i] || '').trim() : ''; }
     var out = [], last = '';
     for (var r = 1; r < tab.rows.length; r++) {
+      // Rows written by sheets-sync are website orders already in the database
+      if (at(tab.rows[r], c.web)) continue;
       var row = tab.rows[r], customer = at(row, c.name), product = at(row, c.product);
       // Merged name cells only fill their first row: a row with no name and
       // no channel continues the order above. A new order without a name is skipped.
@@ -1114,10 +1116,14 @@
 
     // Re-imports the old status sheet: every tab, replacing what was
     // imported before (status changes made in admin are overwritten).
+    // The shop's sheet is app_settings 'sheets'.url (also where sheets-sync
+    // writes); importing from a new link makes that link the shop's sheet.
     adminImportStatusSheet: async function (sheetUrl) {
       try {
         requireSb(); await requireAdmin();
-        var id = spreadsheetIdFromUrl(sheetUrl || STATUS_SHEET_URL);
+        var set = await sb.from('app_settings').select('value').eq('key', 'sheets').maybeSingle();
+        var saved = (set.data && set.data.value) || {};
+        var id = spreadsheetIdFromUrl(sheetUrl || saved.url || STATUS_SHEET_URL);
         if (!id) return err('URL Google Spreadsheet ไม่ถูกต้อง');
         var tabs = await fetchStatusSheet(id);
         var rows = [], perTab = [];
@@ -1128,7 +1134,11 @@
           if (r.error.code === 'PGRST202') return err('Supabase ยังไม่มีฟังก์ชันนำเข้า — รันไฟล์ supabase/migrations/2026-10-29b-legacy-status.sql ก่อน');
           return err(r.error.message);
         }
-        return ok({ imported: r.data, tabs: perTab });
+        var url = 'https://docs.google.com/spreadsheets/d/' + id + '/edit';
+        if (saved.url !== url && !set.error) {
+          await sb.from('app_settings').upsert({ key: 'sheets', value: Object.assign({}, saved, { url: url }), updated_at: new Date().toISOString() });
+        }
+        return ok({ imported: r.data, tabs: perTab, url: url });
       } catch (e) { return e.__json || err(e.message || e); }
     },
 
@@ -1894,6 +1904,21 @@
         var d = r.data || {};
         if (d.error) return err(d.error);
         return ok(d);
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
+    // Website orders → status Google Sheet (supabase/functions/sheets-sync)
+    adminSheetsSync: async function () {
+      try {
+        requireSb(); await requireAdmin();
+        var r = await sb.functions.invoke('sheets-sync', { body: { action: 'sync' } });
+        if (r.error) {
+          var st = r.error.context && r.error.context.status;
+          if (st === 404) return err('ยังไม่ได้ deploy ฟังก์ชัน sheets-sync');
+          return err('อัปเดตชีตไม่สำเร็จ' + (st ? ' (' + st + ')' : '') + ' — ลองใหม่อีกครั้ง');
+        }
+        var d = r.data || {};
+        return d.error ? err(d.error) : ok(d);
       } catch (e) { return e.__json || err(e.message || e); }
     },
 
