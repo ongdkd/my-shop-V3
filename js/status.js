@@ -78,10 +78,12 @@
     { id: 'done', label: 'สำเร็จแล้ว', empty: 'ยังไม่มีรายการที่จัดส่งแล้ว' }
   ];
   var ARRIVED = /ถึงไทย/;
+  // The shop can mark items paid without a slip ("ชำระแล้ว", e.g. paid in cash); arrived items are paid too
+  var PAID = /ชำระแล้ว|ถึงไทย/;
   function webStage(o, paidList) {
     if (o.shippedAt || o.status === 'ยกเลิก') return 'done';
     if (o.deliveryId) return 'balance';
-    return paidList[o.listId] ? 'arrive' : 'pay';
+    return paidList[o.listId] || PAID.test(o.status || '') ? 'arrive' : 'pay';
   }
   // Old sheet rows carry no payment info; anything still open was ordered and paid for
   function legacyStage(s) {
@@ -314,6 +316,7 @@
     setParts(target.address ? saved : {});
     if (target.address) ThaiAddress.load().catch(function () {});
     $('paySlipPreview').hidden = true;
+    $('paySend').disabled = true; // until a slip with a readable QR is picked
     $('payDialog').showModal();
   }
 
@@ -355,8 +358,11 @@
     });
     return jsqrLoading;
   }
+  // A bank transaction reference: letters and digits only (same rule as the database)
+  var REF_RE = /^[A-Za-z0-9]{8,64}$/;
   // Thai bank slips carry a mini QR: TLV with tag 00 holding the bank's
-  // transaction reference in sub-tag 02. Falls back to the raw payload.
+  // transaction reference in sub-tag 02. Falls back to the raw payload, which
+  // only counts if it looks like a reference (not a PromptPay or web QR).
   function slipRef(payload) {
     function tlv(str) {
       var out = {}, i = 0;
@@ -368,21 +374,25 @@
       return out;
     }
     var top = tlv(payload);
-    var ref = top['00'] ? tlv(top['00'])['02'] : '';
-    return (ref || payload).trim().slice(0, 120);
+    var ref = (top['00'] ? tlv(top['00'])['02'] || '' : '').trim();
+    if (REF_RE.test(ref)) return ref;
+    return REF_RE.test(payload.trim()) ? payload.trim() : '';
   }
+  // Resolves to the reference, or '' when the image has no slip QR.
+  // Rejects when the QR reader itself can't load.
   function readQR(img) {
     return loadJsQR().then(function (jsQR) {
-      // Slip QRs are small; try full size first, then smaller copies
-      var sizes = [1600, 1000];
+      // Slip QRs are small; try a few sizes, the last pass also for light-on-dark codes
+      var sizes = [1600, 1000, 2200, 700];
       for (var i = 0; i < sizes.length; i++) {
         var c = draw(img, sizes[i]);
         var d = c.getContext('2d').getImageData(0, 0, c.width, c.height);
-        var code = jsQR(d.data, d.width, d.height, { inversionAttempts: 'dontInvert' });
-        if (code && code.data) return slipRef(code.data);
+        var code = jsQR(d.data, d.width, d.height, { inversionAttempts: i === sizes.length - 1 ? 'attemptBoth' : 'dontInvert' });
+        var ref = code && code.data ? slipRef(code.data) : '';
+        if (ref) return ref;
       }
       return '';
-    }).catch(function () { return ''; });
+    }, function () { throw new Error('โหลดตัวอ่าน QR ไม่สำเร็จ กรุณาตรวจอินเทอร์เน็ตแล้วเลือกรูปใหม่'); });
   }
 
   $('paySlip').addEventListener('change', function () {
@@ -399,12 +409,17 @@
       if (!current.slip) throw new Error('รูปใหญ่เกินไป กรุณาครอปให้เหลือเฉพาะสลิป');
       return readQR(img).then(function (ref) {
         current.ref = ref;
-        $('payRef').textContent = ref ? 'เลขอ้างอิง ' + ref : 'ไม่พบ QR บนสลิป (ส่งได้ตามปกติ)';
+        $('payRef').textContent = ref ? '✓ เลขอ้างอิง ' + ref
+          : '✗ ไม่พบ QR ของสลิป — กรุณาใช้รูปสลิปจากแอปธนาคาร (แคปหน้าจอเต็ม ไม่ครอป QR มุมสลิปออก)';
+        $('payRef').classList.toggle('bad', !ref);
       });
     }).catch(function (e) {
       $('payRef').textContent = '';
       toast(e.message || 'อ่านรูปไม่ได้', 'error');
-    }).then(function () { $('paySend').disabled = false; });
+    }).then(function () {
+      // Every slip must carry its bank reference: it's how a slip used twice is caught
+      $('paySend').disabled = !current.ref;
+    });
   });
 
   $('payCancel').onclick = function () { $('payDialog').close(); };
@@ -433,6 +448,7 @@
   $('payForm').addEventListener('submit', function (e) {
     e.preventDefault();
     if (!current.slip) { toast('กรุณาแนบรูปสลิป', 'error'); return; }
+    if (!current.ref) { toast('ไม่พบ QR บนสลิป กรุณาเลือกรูปสลิปจากแอปธนาคาร', 'error'); return; }
     var amount = Number($('payAmount').value);
     if (!(amount > 0)) { toast('กรุณากรอกยอดโอน', 'error'); return; }
     var t = $('payTime').value ? new Date($('payTime').value) : null;

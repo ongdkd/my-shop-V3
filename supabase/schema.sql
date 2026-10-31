@@ -1009,6 +1009,10 @@ begin
     raise exception 'ไฟล์สลิปไม่ถูกต้องหรือใหญ่เกินไป';
   end if;
   if p_amount is null or p_amount <= 0 or p_amount > 1000000 then raise exception 'จำนวนเงินไม่ถูกต้อง'; end if;
+  -- Every slip carries its bank reference (read from the slip's QR): it's what catches a slip sent twice
+  if v_ref !~ '^[A-Za-z0-9]{8,64}$' then
+    raise exception 'ไม่พบเลขอ้างอิงจาก QR บนสลิป กรุณาใช้รูปสลิปจากแอปธนาคาร';
+  end if;
   if length(coalesce(p_address, '')) > 1000 then raise exception 'ที่อยู่ยาวเกินไป'; end if;
   if v_ref <> '' and exists (select 1 from public.payments where bank_ref = v_ref) then
     raise exception 'สลิปนี้ถูกส่งมาแล้ว';
@@ -1298,6 +1302,10 @@ begin
     raise exception 'ไฟล์สลิปไม่ถูกต้องหรือใหญ่เกินไป';
   end if;
   if p_amount is null or p_amount <= 0 or p_amount > 1000000 then raise exception 'จำนวนเงินไม่ถูกต้อง'; end if;
+  -- Every slip carries its bank reference (read from the slip's QR): it's what catches a slip sent twice
+  if v_ref !~ '^[A-Za-z0-9]{8,64}$' then
+    raise exception 'ไม่พบเลขอ้างอิงจาก QR บนสลิป กรุณาใช้รูปสลิปจากแอปธนาคาร';
+  end if;
   if length(v_address) > 1000 then raise exception 'ที่อยู่ยาวเกินไป'; end if;
 
   -- Same slip again from the same customer → new address
@@ -1459,6 +1467,10 @@ begin
     raise exception 'ไฟล์สลิปไม่ถูกต้องหรือใหญ่เกินไป';
   end if;
   if p_amount is null or p_amount <= 0 or p_amount > 1000000 then raise exception 'จำนวนเงินไม่ถูกต้อง'; end if;
+  -- Every slip carries its bank reference (read from the slip's QR): it's what catches a slip sent twice
+  if v_ref !~ '^[A-Za-z0-9]{8,64}$' then
+    raise exception 'ไม่พบเลขอ้างอิงจาก QR บนสลิป กรุณาใช้รูปสลิปจากแอปธนาคาร';
+  end if;
   if length(v_address) > 1000 then raise exception 'ที่อยู่ยาวเกินไป'; end if;
   if p_address_parts is not null and (jsonb_typeof(p_address_parts) <> 'object' or length(p_address_parts::text) > 2000) then
     raise exception 'ที่อยู่ไม่ถูกต้อง';

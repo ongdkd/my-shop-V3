@@ -2393,6 +2393,10 @@ function drawStatusManager() {
 // ════════════════════════════════
 var ARRIVED_LABEL = 'ถึงไทยแล้ว';
 var ARRIVED_RE = /ถึงไทย/;
+// Paid another way (no slip): the admin marks it, and it counts like a slip for step 2.
+// Arrived items count too. Same rule on the customer page (status.js webStage).
+var PAID_LABEL = 'ชำระแล้ว';
+var PAID_RE = /ชำระแล้ว|ถึงไทย/;
 var _billDrag = null; // { ids, cust, from: 'left' | 'wait' | 'bill', key, bill }
 var STAGES = [
   { id: 'pay', label: 'รอชำระเงิน', empty: 'ไม่มีออเดอร์ที่รอชำระเงิน' },
@@ -2416,7 +2420,7 @@ function stageOf(o, B) {
   if (o.shippedAt) return b && b.tracking && !isDelivered(b) ? 'track' : 'done';
   // A sent bill waits in step 2 until the customer pays it
   if (b) return b.sentAt && B.billPaid[b.id] ? 'ship' : 'arrive';
-  return B.paid[o.listId + '|' + normCust(o.customer)] ? 'arrive' : 'pay';
+  return B.paid[o.listId + '|' + normCust(o.customer)] || PAID_RE.test(o.status || '') ? 'arrive' : 'pay';
 }
 
 function renderStatusPanel() {
@@ -2668,6 +2672,9 @@ function drawStages() {
       act.appendChild(div('ocard-ship-info stg-wait', 'ยังไม่ได้รับสลิป'));
       var ed = makeBtn('btn btn-ghost btn-sm', 'แก้ไขสถานะ', function() { openStatusModal(g, { after: renderStatusPanel }); });
       ed.type = 'button'; act.appendChild(ed);
+      // e.g. paid in cash or by another transfer the customer didn't upload
+      var paid = makeBtn('btn btn-primary btn-sm', '&#x2713; ชำระแล้ว &#x2192;', function() { markPaid(g); });
+      paid.type = 'button'; paid.title = 'ย้ายไปขั้น "ถึงไทย / ส่งบิล" โดยไม่ต้องรอสลิป'; act.appendChild(paid);
       c.appendChild(act);
       grid.appendChild(c);
     });
@@ -2904,6 +2911,20 @@ function drawStages() {
     var grid = div('stg-grid');
     gs.slice(0, STAGE_CAP).forEach(function(g) { grid.appendChild(orderCard(g)); });
     body.appendChild(grid); more(gs.length);
+  }
+
+  function markPaid(items) {
+    askConfirm('ยังไม่ได้รับสลิปของ ' + custName(items) + ' — ถือว่าชำระแล้ว และย้ายไปขั้น "ถึงไทย / ส่งบิล"?', 'ชำระแล้ว').then(function(ok) {
+      if (!ok) return;
+      body.classList.add('busy');
+      apiCall('adminSetOrderStatus', ids(items), PAID_LABEL, '').then(function(res) {
+        body.classList.remove('busy');
+        if (res.status !== 'Success') { toast(res.message || 'บันทึกไม่สำเร็จ', 'error'); return; }
+        items.forEach(function(o) { o.status = res.orderStatus || PAID_LABEL; });
+        toast('ย้ายไปขั้น "ถึงไทย / ส่งบิล" แล้ว', 'success');
+        drawStages();
+      });
+    });
   }
 
   function markArrived(items, msg) {
