@@ -1005,7 +1005,7 @@ function renderOrderLists() {
     if (isHidden) card.style.opacity = '0.55';
  
     var img = document.createElement('img');
-    img.src = item.image || PLACEHOLDER; img.className = 'ol-card-img';
+    img.src = cdnThumb(item.image, 600) || PLACEHOLDER; img.className = 'ol-card-img';
     img.onerror = function() { this.src = PLACEHOLDER; };
     card.appendChild(img);
  
@@ -3842,7 +3842,7 @@ function renderProductsTable(products, sheetId, holder) {
       pCard.appendChild(pSel);
 
       var pIW = div('pcard-img');
-      if (pGrid.image) { var pImg = document.createElement('img'); pImg.src = pGrid.image; pImg.alt = ''; pImg.loading = 'lazy'; pImg.onerror = function() { this.src = PLACEHOLDER; }; pIW.appendChild(pImg); }
+      if (pGrid.image) { var pImg = document.createElement('img'); pImg.src = cdnThumb(pGrid.image, 480); pImg.alt = ''; pImg.loading = 'lazy'; pImg.onerror = function() { this.src = PLACEHOLDER; }; pIW.appendChild(pImg); }
       else { pIW.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>'; }
       pCard.appendChild(pIW);
 
@@ -5104,7 +5104,7 @@ function renderStockCards(container, query) {
     card.setAttribute('aria-label', _whDelMode ? 'เลือกลบ ' + p.name : (hasKids ? 'เลือกแบบของ ' : 'เลือก ') + p.name);
 
     var img = div('wcard-img');
-    if (p.image) { var im = document.createElement('img'); im.src = p.image; im.alt = ''; im.loading = 'lazy'; img.appendChild(im); }
+    if (p.image) { var im = document.createElement('img'); im.src = cdnThumb(p.image, 480); im.alt = ''; im.loading = 'lazy'; img.appendChild(im); }
     else img.innerHTML = '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>';
     img.appendChild(div('wcard-check', sel ? '&#x2713;' : ''));
     if (p.status !== 'Open') img.appendChild(div('wcard-tag closed', 'ปิด'));
@@ -5226,7 +5226,7 @@ function openVariantPicker(p) {
     p.children.forEach(function(c) {
       var tracked = isTrackedStock(c.stock), have = tracked ? Number(c.stock) : null, out = tracked && have <= 0;
       var row = div('vp-row' + (out ? ' out' : '') + (draft[c.rowIndex] ? ' on' : ''));
-      var th = div('ep-vthumb'); if (c.image) { var im = document.createElement('img'); im.src = c.image; im.alt = ''; im.loading = 'lazy'; th.appendChild(im); }
+      var th = div('ep-vthumb'); if (c.image) { var im = document.createElement('img'); im.src = cdnThumb(c.image, 160); im.alt = ''; im.loading = 'lazy'; th.appendChild(im); }
       row.appendChild(th);
       var info = div('vp-info');
       var n = div('ep-vname'); n.textContent = c.name; info.appendChild(n);
@@ -6535,7 +6535,7 @@ function openEditStockModal(prod) {
   (prod.children || []).forEach(function(child) {
     var row = div('ep-vrow');
     var th = div('ep-vthumb');
-    if (child.image) { var ci = document.createElement('img'); ci.src = child.image; ci.alt = ''; ci.loading = 'lazy'; th.appendChild(ci); }
+    if (child.image) { var ci = document.createElement('img'); ci.src = cdnThumb(child.image, 160); ci.alt = ''; ci.loading = 'lazy'; th.appendChild(ci); }
     row.appendChild(th);
     var info = div('ep-vinfo');
     var vn = div('ep-vname'); vn.textContent = child.name; info.appendChild(vn);

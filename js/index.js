@@ -49,6 +49,8 @@ function safeImg(u) {
     return (parsed.protocol === 'https:' || parsed.protocol === 'http:') ? parsed.href : PLACEHOLDER;
   } catch (e) { return PLACEHOLDER; }
 }
+// Card-sized copy for display (cdnThumb in api.js); saved cart and order data keep the original link
+function thumbImg(u, w) { return window.cdnThumb ? cdnThumb(safeImg(u), w) : safeImg(u); }
 
 function ensureHtml2Canvas() {
   if (typeof window.html2canvas === 'function') return Promise.resolve(window.html2canvas);
@@ -214,7 +216,7 @@ function renderCartSidebar() {
     var ptl = item.isDeposit ? 'มัดจำ' : 'ราคาเต็ม';
     html+='<div class="cart-item" id="ci-'+item.cartId+'">';
     html+='<div class="cart-item-header">';
-    html+='<img src="'+escapeHtml(safeImg(item.image))+'" class="cart-item-img" data-fb="1" alt="">';
+    html+='<img src="'+escapeHtml(thumbImg(item.image, 160))+'" class="cart-item-img" data-fb="1" alt="">';
     html+='<div class="cart-item-info"><div class="cart-item-name">'+escapeHtml(item.name)+'</div>'+pill+'</div>';
     html+='<button class="cart-item-remove" data-cid="'+item.cartId+'" aria-label="นำ '+escapeHtml(item.name)+' ออกจากตะกร้า">&#x2715;</button>';
     html+='</div>';
@@ -354,7 +356,7 @@ function populateProductTable() {
     var row=tbody.insertRow();
     row.className = (soldOut ? 'sold-out' : '') + (hasDep ? '' : ' no-dep');
     row.innerHTML=
-      '<td class="prod-img-cell"><img src="'+escapeHtml(safeImg(p.image))+'" alt="'+escapeHtml(p.name||'')+'" class="product-image" loading="lazy" width="50" height="50" data-fb="1">'+(soldOut?'<span class="sold-out-tag">หมดแล้ว</span>':'')+'</td>'+
+      '<td class="prod-img-cell"><img src="'+escapeHtml(thumbImg(p.image, 120))+'" alt="'+escapeHtml(p.name||'')+'" class="product-image" loading="lazy" width="50" height="50" data-fb="1">'+(soldOut?'<span class="sold-out-tag">หมดแล้ว</span>':'')+'</td>'+
       '<td class="prod-name-cell"><span class="prod-name">'+escapeHtml(p.name||'')+'</span>'+optHtml+'</td>'+
       '<td class="center-align prod-price-cell">'+formatCurrency(Number(p.price)||0)+'</td>'+
       '<td class="center-align prod-dep-cell">'+(hasDep
@@ -482,7 +484,7 @@ function onOrderSuccess(gifted){
 function buildItemHtml(img,name,option,qty,up,total,isDeposit,fullPrice){
   var hint=isDeposit?'<div class="receipt-item-hint">ราคาเต็ม: '+formatCurrency(fullPrice)+'</div>':'';
   var opt=option?'<div class="receipt-item-option">'+escapeHtml(optLabel(option))+'</div>':'';
-  return '<li class="receipt-item"><img src="'+escapeHtml(safeImg(img))+'" class="receipt-item-img" data-fb="1"><div class="receipt-item-body"><div class="receipt-item-name">'+escapeHtml(name)+'</div>'+opt+'<div class="receipt-item-price">'+escapeHtml(qty)+' x '+formatCurrency(up)+' = <strong>'+formatCurrency(total)+'</strong></div>'+hint+'</div></li>';
+  return '<li class="receipt-item"><img src="'+escapeHtml(thumbImg(img, 160))+'" class="receipt-item-img" data-fb="1"><div class="receipt-item-body"><div class="receipt-item-name">'+escapeHtml(name)+'</div>'+opt+'<div class="receipt-item-price">'+escapeHtml(qty)+' x '+formatCurrency(up)+' = <strong>'+formatCurrency(total)+'</strong></div>'+hint+'</div></li>';
 }
 
 // Guard against silently throwing away a filled cart when navigating
@@ -686,7 +688,7 @@ function renderHubCards(lists){
     // by keyboard while keeping the existing card markup/design
     var a11y=isOpen?' role="button" tabindex="0" aria-label="เลือกรายการ '+escapeHtml(item.name)+'"':' aria-disabled="true"';
     html+='<div class="hub-card'+(isOpen?'':' closed')+'" data-shid="'+escapeHtml(item.sheetId)+'"'+a11y+'>';
-    html+='<div class="hub-card-img-wrap"><img src="'+escapeHtml(safeImg(item.image))+'" class="hub-card-img" loading="lazy" data-fb="1" alt=""></div>';
+    html+='<div class="hub-card-img-wrap"><img src="'+escapeHtml(thumbImg(item.image, 600))+'" class="hub-card-img" loading="lazy" data-fb="1" alt=""></div>';
     html+='<div class="hub-card-body"><div class="hub-card-name">'+escapeHtml(item.name)+'</div>';
     html+='<div class="hub-card-desc">'+escapeHtml(item.description||(isOpen?'คลิกเพื่อสั่งซื้อ':'ปิดรับออเดอร์แล้วค่ะ'))+'</div>';
     html+='<div class="hub-card-footer">'+badge+arrow+'</div></div></div>';
@@ -752,7 +754,7 @@ function buildSideMenuItems(){
     var st=isCurrent?'<div class="sms-open">&#x25CF; กำลังดูอยู่</div>':(isOpen?'<div class="sms-open">&#x25CF; เปิดรับอยู่</div>':'<div class="sms-closed">&#x2715; ปิดรับแล้ว</div>');
     var dis=!isOpen?'style="opacity:0.5;cursor:not-allowed;"':'';
     html+='<button class="side-menu-item'+(isCurrent?' active':'')+'" data-shid="'+escapeHtml(item.sheetId)+'" data-open="'+(isOpen?'1':'0')+'" data-cur="'+(isCurrent?'1':'0')+'" '+dis+'>';
-    html+='<img src="'+escapeHtml(safeImg(item.image))+'" class="side-menu-item-img" loading="lazy" data-fb="1">';
+    html+='<img src="'+escapeHtml(thumbImg(item.image, 120))+'" class="side-menu-item-img" loading="lazy" data-fb="1">';
     html+='<div><div class="side-menu-item-name">'+escapeHtml(item.name)+'</div>'+st+'</div></button>';
   }
 

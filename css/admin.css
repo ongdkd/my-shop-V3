@@ -725,7 +725,7 @@ a.ocard-phone{text-decoration:underline;text-decoration-color:var(--border-stron
 .wcard-note{flex:1;min-width:0;font-size:0.72rem;font-weight:600;color:var(--text-3);}
 .wcard-edit{width:40px;height:40px;flex-shrink:0;}
 /* Bottom bar: search + scan; the import row slides in once something is selected */
-.wh-bar{position:sticky;bottom:0;z-index:50;display:flex;flex-direction:column;gap:8px;padding:10px 12px calc(10px + env(safe-area-inset-bottom));background:rgba(255,255,255,0.97);backdrop-filter:blur(12px);border:1.5px solid var(--border);border-radius:16px 16px 0 0;box-shadow:0 -6px 20px rgba(26,29,58,0.08);}
+.wh-bar{position:sticky;bottom:0;z-index:50;display:flex;flex-direction:column;gap:8px;padding:10px 12px calc(10px + env(safe-area-inset-bottom));background:var(--surface);border:1.5px solid var(--border);border-radius:16px 16px 0 0;box-shadow:0 -6px 20px rgba(26,29,58,0.08);}
 .wh-search{display:flex;gap:8px;}
 .wh-search input{flex:1;min-width:0;min-height:44px;padding:0 14px;border:1.5px solid var(--border-strong);border-radius:12px;background:var(--surface-2);font-family:var(--font);font-size:0.9rem;color:var(--text);outline:none;}
 .wh-search input:focus{border-color:var(--primary);background:var(--surface);}

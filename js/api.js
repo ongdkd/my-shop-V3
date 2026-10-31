@@ -11,6 +11,15 @@
 
   var PLACEHOLDER_IMG = 'https://www.svgrepo.com/show/508699/landscape-placeholder.svg';
 
+  // A smaller copy of a Cloudinary photo for lists and cards: uploads are
+  // phone photos (4000px, ~3 MB), which made pages with many of them crawl.
+  // w = displayed width × 2 for sharp screens. Other URLs pass through.
+  window.cdnThumb = function (url, w) {
+    var u = String(url || '');
+    if (!/^https:\/\/res\.cloudinary\.com\/[^/]+\/image\/upload\//.test(u)) return u;
+    return u.replace('/image/upload/', '/image/upload/w_' + (w || 400) + ',c_limit,q_auto,f_auto/');
+  };
+
   var CONFIGURED =
     typeof window.SUPABASE_URL === 'string' &&
     window.SUPABASE_URL.indexOf('YOUR_') === -1 &&
