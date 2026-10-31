@@ -577,10 +577,21 @@ function makeScannerPopupHtml(scanToken, continuous) {
     '#status{font-size:0.82rem;color:#aaa;text-align:center;line-height:1.5;}',
     '#result{font-size:0.95rem;font-weight:700;color:#00C896;text-align:center;',
     'word-break:break-all;min-height:18px;}',
+    /* Continuous mode: how many codes went in so far, big and at the top */
+    '#counter{position:fixed;top:max(14px,env(safe-area-inset-top));left:50%;transform:translateX(-50%);z-index:10;',
+    'display:flex;flex-direction:column;align-items:center;gap:2px;padding:10px 22px;border-radius:18px;',
+    'background:rgba(0,0,0,0.72);border:2px solid #00C896;text-align:center;pointer-events:none;}',
+    '#counter[hidden]{display:none;}',
+    '#counter .n{font-size:2.4rem;font-weight:800;line-height:1;color:#00C896;}',
+    '#counter .l{font-size:0.8rem;color:#ddd;}',
+    '#counter .last{font-size:0.75rem;color:#aaa;max-width:70vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
+    '#counter.bump{animation:bump 0.35s ease-out;}',
+    '@keyframes bump{0%{transform:translateX(-50%) scale(1.18);background:rgba(0,200,150,0.55);}100%{transform:translateX(-50%) scale(1);}}',
     '#cancelBtn{padding:11px 0;background:#FF4757;color:#fff;border:none;',
     'border-radius:10px;font-size:0.92rem;font-weight:600;cursor:pointer;width:100%;max-width:320px;}',
     '</style></head>',
     '<body style="display:flex;flex-direction:column;">',
+    '<div id="counter"' + (continuous ? '' : ' hidden') + ' aria-live="polite"><span class="n">0</span><span class="l">เพิ่มแล้ว (รายการ)</span><span class="last">ยังไม่ได้สแกน</span></div>',
     '<div id="reader" style="flex:1;"></div>',
     '<div class="bottom">',
     '  <div id="status">กำลังเปิดกล้อง...</div>',
@@ -608,13 +619,21 @@ function makeScannerPopupHtml(scanToken, continuous) {
     '  );}catch(e){}}',
     '  if(CONTINUOUS){',
     '    sentCount++;lastSent=text;',
-    '    document.getElementById("status").textContent="สแกนแล้ว "+sentCount+" รายการ — สแกนชิ้นถัดไปได้เลย";',
+    '    document.getElementById("status").textContent="สแกนแล้ว "+sentCount+" ครั้ง — สแกนชิ้นถัดไปได้เลย";',
     '    setTimeout(function(){hasScanned=false;},900);',
     '    return;',
     '  }',
     '  if(scanner){try{scanner.stop();}catch(e){}}',
     '  setTimeout(function(){window.close();},700);',
     '}',
+    /* The page that opened the scanner reports each code: added (counted) or refused */
+    'var addedCount=0;',
+    'window.__scanResult=function(ok,msg){',
+    '  var c=document.getElementById("counter"),last=c.querySelector(".last");',
+    '  if(ok){addedCount++;c.querySelector(".n").textContent=addedCount;last.textContent="ล่าสุด: "+msg;last.style.color="";}',
+    '  else{last.textContent="✗ "+msg;last.style.color="#FF6B7A";}',
+    '  c.classList.remove("bump");void c.offsetWidth;c.classList.add("bump");',
+    '};',
     'var lastT="",streak=0;',
     /* iPhone Pro cameras can't focus closer than ~15 cm: too close = blurry bars */
     'var AIM="เล็งบาร์โค้ดให้อยู่ในกรอบ · ถ้าภาพเบลอ ถือห่างขึ้นอีกนิด (~15 ซม.)";',
@@ -5037,8 +5056,8 @@ function renderStockContent() {
   var sInp = document.createElement('input'); sInp.type = 'search'; sInp.id = 'whSearch';
   sInp.placeholder = 'ค้นหาชื่อหรือบาร์โค้ด…'; sInp.setAttribute('aria-label', 'ค้นหาสินค้าในคลัง'); sInp.value = stockSearchQuery;
   sInp.oninput = function() { stockSearchQuery = sInp.value.toLowerCase().trim(); renderStockCards(grid, stockSearchQuery); };
-  var scan = makeBtn('wh-scan', '&#x1F4F7;'); scan.type = 'button'; scan.title = 'สแกนเพื่อเลือกสินค้า (สแกนต่อเนื่องได้)'; scan.setAttribute('aria-label', 'สแกนบาร์โค้ดเพื่อเลือกสินค้า');
-  scan.onclick = whScanLoop;
+  var scan = makeBtn('wh-scan', '&#x1F4F7;'); scan.type = 'button'; scan.title = 'สแกนบาร์โค้ด 1 ชิ้นเพื่อค้นหาและเลือกสินค้า'; scan.setAttribute('aria-label', 'สแกนบาร์โค้ดเพื่อค้นหาสินค้า');
+  scan.onclick = whScanOnce;
   sRow.appendChild(sInp); if (!_whDelMode) sRow.appendChild(scan);
   bar.appendChild(sRow);
   var act = div('wh-act'); act.id = 'whAct';
@@ -5318,13 +5337,21 @@ function whPickByCode(code) {
   }
   whRerender();
 }
-function whScanLoop() {
+// Search 📷: one code, then the scanner closes. The code goes in the search box
+// so only that product shows, and the product is selected (or offered to add if unknown).
+function whScanOnce() {
   var tok = 'wh_' + Date.now();
   var pop = window.open('', 'wh_scan', 'width=420,height=600,resizable=yes');
   if (!pop) { toast('กรุณาอนุญาต Pop-up', 'error'); return; }
-  var bridge = function(t, code) { if (t === tok) whPickByCode(code); };
+  var bridge = function(t, code) {
+    if (t !== tok) return;
+    delete window.__barcodeResultBridge;
+    var inp = el('whSearch');
+    if (inp) { inp.value = code; stockSearchQuery = String(code).toLowerCase().trim(); whRerender(); }
+    whPickByCode(code);
+  };
   window.__barcodeResultBridge = bridge;
-  pop.document.open(); pop.document.write(makeScannerPopupHtml(tok, true)); pop.document.close();
+  pop.document.open(); pop.document.write(makeScannerPopupHtml(tok)); pop.document.close();
   var ck = setInterval(function() {
     if (!pop || pop.closed) { clearInterval(ck); if (window.__barcodeResultBridge === bridge) delete window.__barcodeResultBridge; }
   }, 500);
@@ -6122,17 +6149,23 @@ function openBulkStockModal() {
   }
 
   // ── Scan in a row: each new barcode fills the next row still on a random code ──
-  function onScanned(code) {
+  // pop: the camera window — told whether each code went in, for its counter
+  // (toasts here can't be seen while the camera covers the page)
+  function onScanned(code, pop) {
     code = String(code || '').trim(); if (!code) return;
+    function tell(ok, msg) { try { if (pop && !pop.closed && pop.__scanResult) pop.__scanResult(ok, msg); } catch (e) {} }
     var key = code.toLowerCase();
     var dup = bulkSRows.some(function(r) {
       return (!r.idAuto && r.id.trim().toLowerCase() === key) ||
         r.opts.some(function(o) { return !o.idAuto && String(o.id).trim().toLowerCase() === key; });
     });
-    if (dup) { toast('สแกนซ้ำ: ' + code, 'error'); return; }
+    if (dup) { toast('สแกนซ้ำ: ' + code, 'error'); tell(false, 'สแกนซ้ำ: ' + code); return; }
     google.script.run.withSuccessHandler(function(s) {
       var res; try { res = JSON.parse(s); } catch (e) { res = {}; }
-      if (res.found) { toast('มีในคลังแล้ว: ' + (res.item.parentName || res.item.name || code), 'error'); return; }
+      if (res.found) {
+        var nm = res.item.parentName || res.item.name || code;
+        toast('มีในคลังแล้ว: ' + nm, 'error'); tell(false, 'มีในคลังแล้ว: ' + nm); return;
+      }
       // Next slot still on an automatic code, in screen order: a single
       // product, or a variant of an options product
       var target = null;
@@ -6144,14 +6177,14 @@ function openBulkStockModal() {
       });
       if (!target) { var last = bulkSRows[bulkSRows.length - 1]; target = makeBulkSRow({ price: last.price, deposit: last.deposit, yuan: last.yuan }); bulkSRows.push(target); }
       target.id = code; target.idAuto = false;
-      rerender(); toast('เพิ่มบาร์โค้ด ' + code, 'success');
+      rerender(); toast('เพิ่มบาร์โค้ด ' + code, 'success'); tell(true, code);
     }).adminFindStockByBarcode(code);
   }
   function startScanLoop() {
     var tok = 'sbk_loop_' + Date.now();
     var pop = window.open('', 'sbk_loop', 'width=420,height=600,resizable=yes');
     if (!pop) { toast('กรุณาอนุญาต Pop-up', 'error'); return; }
-    var bridge = function(t, code) { if (t === tok) onScanned(code); };
+    var bridge = function(t, code) { if (t === tok) onScanned(code, pop); };
     window.__barcodeResultBridge = bridge;
     pop.document.open(); pop.document.write(makeScannerPopupHtml(tok, true)); pop.document.close();
     var ck = setInterval(function() {
