@@ -232,7 +232,7 @@
       } else if (tab.id === 'arrive') {
         foot.appendChild(amountBox(owed > 0 ? 'ส่วนที่เหลือ (ชำระเมื่อของถึงไทย) + ค่าส่ง' : 'ชำระครบแล้ว · รอค่าส่งเมื่อของถึงไทย',
           owed > 0 ? baht(owed) : '✓'));
-        foot.appendChild(payButton('ส่งสลิปเพิ่ม', function () { openPay({ listId: l.id, title: l.name, amount: 0 }); }, true));
+        // No slip here: the rest + delivery fee is paid with the shop's bill in tab 3
       } else if (mine.length) {
         foot.appendChild(h('div', 'st-paid ok', sent));
       } else { out.appendChild(card); return; }

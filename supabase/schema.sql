@@ -1269,6 +1269,7 @@ returns jsonb language plpgsql volatile security definer set search_path = publi
 declare v_customer text; v_list uuid := p_list_id; v_kind text;
         v_ref text := btrim(coalesce(p_bank_ref, ''));
         v_address text := btrim(coalesce(p_address, '')); v_same uuid;
+        v_same_bill uuid; v_same_list uuid;
 begin
   if p_delivery_id is not null then
     -- The bill must be this customer's, sent by the shop, with its delivery fee set
@@ -1300,11 +1301,17 @@ begin
   if length(v_address) > 1000 then raise exception 'ที่อยู่ยาวเกินไป'; end if;
 
   -- Same slip again from the same customer → new address
-  select p.id into v_same from public.payments p
+  select p.id, p.delivery_id, p.list_id into v_same, v_same_bill, v_same_list from public.payments p
    where public.norm_customer(p.customer) = public.norm_customer(p_name)
      and ((v_ref <> '' and p.bank_ref = v_ref) or p.slip_image = p_slip)
    order by p.created_at desc limit 1;
   if v_same is not null then
+    -- …but only for what that slip paid. A slip sent when ordering can't pay a
+    -- delivery bill (or another list): the bill needs its own transfer.
+    if v_same_bill is distinct from p_delivery_id or (p_delivery_id is null and v_same_list <> p_list_id) then
+      raise exception 'สลิปนี้เคยส่งแล้วสำหรับ% — กรุณาโอนยอดนี้แล้วแนบสลิปใหม่',
+        case when v_same_bill is not null then 'บิลค่าส่งอื่น' else 'ตอนสั่งซื้อ' end;
+    end if;
     if v_address = '' then
       raise exception 'สลิปนี้ถูกส่งมาแล้ว — ถ้าต้องการแก้ที่อยู่ ให้กรอกที่อยู่ใหม่แล้วส่งสลิปเดิมอีกครั้ง';
     end if;
@@ -1423,6 +1430,7 @@ returns jsonb language plpgsql volatile security definer set search_path = publi
 declare v_customer text; v_list uuid := p_list_id; v_kind text;
         v_ref text := btrim(coalesce(p_bank_ref, ''));
         v_address text := btrim(coalesce(p_address, '')); v_same uuid;
+        v_same_bill uuid; v_same_list uuid;
 begin
   if p_delivery_id is not null then
     -- The bill must be this customer's, sent by the shop, with its delivery fee set
@@ -1457,11 +1465,17 @@ begin
   end if;
 
   -- Same slip again from the same customer → new address
-  select p.id into v_same from public.payments p
+  select p.id, p.delivery_id, p.list_id into v_same, v_same_bill, v_same_list from public.payments p
    where public.norm_customer(p.customer) = public.norm_customer(p_name)
      and ((v_ref <> '' and p.bank_ref = v_ref) or p.slip_image = p_slip)
    order by p.created_at desc limit 1;
   if v_same is not null then
+    -- …but only for what that slip paid. A slip sent when ordering can't pay a
+    -- delivery bill (or another list): the bill needs its own transfer.
+    if v_same_bill is distinct from p_delivery_id or (p_delivery_id is null and v_same_list <> p_list_id) then
+      raise exception 'สลิปนี้เคยส่งแล้วสำหรับ% — กรุณาโอนยอดนี้แล้วแนบสลิปใหม่',
+        case when v_same_bill is not null then 'บิลค่าส่งอื่น' else 'ตอนสั่งซื้อ' end;
+    end if;
     if v_address = '' then
       raise exception 'สลิปนี้ถูกส่งมาแล้ว — ถ้าต้องการแก้ที่อยู่ ให้กรอกที่อยู่ใหม่แล้วส่งสลิปเดิมอีกครั้ง';
     end if;
