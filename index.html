@@ -12,10 +12,13 @@
   else if (p === 'admin' || p === 'adminlogin') location.replace('admin-login.html');
 })();
 </script>
+<link rel="icon" type="image/png" href="img/logo-64.png">
+<link rel="apple-touch-icon" href="img/logo-180.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Mitr:wght@400;500;600&family=Noto+Sans+Thai:wght@300;400;500;600;700&family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://unpkg.com/@dotlottie/player-component@latest/dist/dotlottie-player.mjs" type="module"></script>
 <link rel="stylesheet" href="css/index.css?v=20261029b">
+<link rel="stylesheet" href="css/theme-pink.css?v=20261102c">
 </head>
 <body>
 <div id="message" style="display:none;"></div>
@@ -54,9 +57,18 @@
 <div class="container" id="hubContainer">
   <div id="hubPage">
     <div class="hub-topbar">
-      <div class="hub-title">Kagayaku Shop</div>
-      <div class="hub-subtitle" id="hubSubtitle">กำลังโหลดรายการสั่งซื้อ...</div>
-      <a class="hub-status-link" href="status.html">&#x1F4E6; เช็คสถานะ / แจ้งโอน &#x2192;</a>
+      <div class="hub-brand">
+        <img class="shop-logo" src="img/logo-256.webp" alt="" width="60" height="60">
+        <div class="hub-brand-text">
+          <div class="hub-title">Kagayaku Shop</div>
+          <div class="hub-subtitle" id="hubSubtitle">กำลังโหลดรายการสั่งซื้อ...</div>
+        </div>
+      </div>
+      <a class="hub-status-link menu-row" href="status.html">
+        <span class="mr-icon" aria-hidden="true">&#x1F4E6;</span>
+        <span class="mr-text"><strong>เช็คสถานะ / แจ้งโอน</strong><small>ดูสถานะสินค้า เลขพัสดุ และส่งสลิปพร้อมที่อยู่</small></span>
+        <span class="mr-chev" aria-hidden="true">&#x203A;</span>
+      </a>
     </div>
     <div class="hub-inputs">
       <div class="hub-field">
@@ -113,6 +125,7 @@
       <button class="menu-btn" id="menuToggleBtn" aria-label="เปิดเมนูเลือกรายการ">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </button>
+      <img class="shop-logo sm" src="img/logo-256.webp" alt="" width="34" height="34">
       <div class="header-title">Kagayaku Shop</div>
       <div class="search-pill">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>

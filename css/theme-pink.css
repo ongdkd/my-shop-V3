@@ -1,0 +1,150 @@
+/* Pink pastel theme for the customer pages (shop + status): soft gradient
+   background, frosted rounded cards, menu-style rows, rounded heading font.
+   Loaded after index.css (and status.css), so it only restyles. Blur is kept
+   to a few static panels: blurring over a scrolling photo grid makes phones lag. */
+:root {
+  --primary: #E4639B;
+  --primary-light: #FDE8F1;
+  --primary-dark: #C94B82;
+  --accent: #FF8FB8;
+  --bg: #FFF3F8;
+  --surface: #FFFFFF;
+  --surface-2: #FFF7FA;
+  --text: #4A2E3D;
+  --text-2: #8A6577;
+  --text-3: #BC9AAB;
+  --border: #F7DCE8;
+  --border-strong: #EFC6D8;
+  --shadow-sm: 0 4px 14px rgba(228, 99, 155, 0.10);
+  --shadow-md: 0 12px 30px rgba(228, 99, 155, 0.18);
+  --radius-sm: 12px;
+  --radius-md: 18px;
+  --radius-lg: 26px;
+  --glass: rgba(255, 255, 255, 0.74);
+  --glass-line: rgba(255, 255, 255, 0.9);
+  --pink-grad: linear-gradient(135deg, #F27FB0 0%, #E4639B 55%, #D9548E 100%);
+  --heading: 'Mitr', var(--font);
+}
+
+html, body {
+  background:
+    radial-gradient(620px 420px at 0% 0%, rgba(255, 182, 213, 0.55), transparent 70%),
+    radial-gradient(520px 420px at 100% 15%, rgba(235, 205, 255, 0.45), transparent 70%),
+    radial-gradient(700px 520px at 50% 105%, rgba(255, 210, 230, 0.65), transparent 70%),
+    var(--bg);
+  background-attachment: fixed;
+}
+.container { background: transparent; }
+
+/* Frosted panel used by headers and form blocks */
+.hub-topbar, .hub-inputs, .page-header, .st-glass {
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  border: 1.5px solid var(--glass-line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+/* Shop logo (img/logo-*): round, with a white ring and a soft pink glow */
+.hub-brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.hub-brand-text { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.shop-logo { flex: none; width: 60px; height: 60px; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 4px 14px rgba(228, 99, 155, 0.28); object-fit: cover; }
+.shop-logo.sm { width: 34px; height: 34px; border-width: 2px; }
+.st-head .shop-logo { width: 52px; height: 52px; }
+
+/* ── List page (hub) ── */
+.hub-topbar { padding: 16px 18px; margin-bottom: 14px; gap: 4px; }
+.hub-title { font-family: var(--heading); font-weight: 600; color: var(--primary-dark); letter-spacing: 0.01em; }
+.hub-subtitle { color: var(--text-2); }
+.hub-inputs { padding: 14px 16px; border-bottom: 1.5px solid var(--glass-line); }
+.hub-input-group, .hub-search-group { background: #fff; border-color: var(--border); }
+.hub-section-title { font-family: var(--heading); font-weight: 500; color: var(--text); }
+
+/* Menu-style row: [icon] title / small subtitle ……… › */
+.menu-row {
+  display: flex; align-items: center; gap: 12px; align-self: stretch;
+  margin-top: 10px; padding: 12px 14px;
+  background: #fff; border: 1.5px solid var(--border); border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm); color: var(--text); text-decoration: none;
+  transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
+}
+.menu-row:hover { border-color: var(--primary); box-shadow: var(--shadow-md); transform: translateY(-1px); }
+.mr-icon {
+  flex: none; width: 44px; height: 44px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; font-size: 1.3rem;
+  background: var(--primary-light);
+}
+.mr-text { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
+.mr-text strong { font-family: var(--heading); font-weight: 500; font-size: 0.98rem; }
+.mr-text small { font-size: 0.76rem; color: var(--text-3); }
+.mr-chev { flex: none; font-size: 1.4rem; line-height: 1; color: var(--text-3); }
+/* The old pill look of this link is replaced by the row */
+.hub-status-link.menu-row { background: #fff; border-radius: var(--radius-md); padding: 12px 14px; font-weight: 400; }
+
+/* The whole list page scrolls (the header cards are taller now), and each card is as tall as its content */
+#hubPage { overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.hub-grid { flex: none; overflow: visible; grid-auto-rows: max-content; padding-bottom: 24px; }
+.hub-card {
+  border-radius: var(--radius-lg); border: 1.5px solid var(--glass-line);
+  background: rgba(255, 255, 255, 0.85); box-shadow: var(--shadow-sm); overflow: hidden;
+}
+.hub-card:hover { border-color: var(--primary); box-shadow: var(--shadow-md); }
+.hub-card-img-wrap { border-radius: 0; margin: 0; }
+.hub-card-body { background: transparent; }
+.hub-card-name { font-family: var(--heading); font-weight: 500; }
+.hub-card-footer { border-top-color: var(--border); }
+
+/* ── Product page ── */
+.page-header { padding: 10px 12px; margin-bottom: 12px; border-bottom: 1.5px solid var(--glass-line); }
+.menu-btn { border-radius: 50%; background: var(--primary-light); }
+.header-title { font-family: var(--heading); font-weight: 500; color: var(--primary-dark); }
+.search-pill { background: #fff; border-color: var(--border); }
+.product-header-row h3 { font-family: var(--heading); font-weight: 500; }
+.view-switcher { background: #fff; border-radius: 999px; }
+.view-btn { border-radius: 999px; }
+th { background: var(--primary); }
+.table-container { border-radius: var(--radius-md); }
+#productTable:not(.grid-mode) tbody tr { background: rgba(255, 255, 255, 0.8); }
+#productTable.grid-mode tr { border-radius: 20px; border-color: var(--glass-line); background: #fff; box-shadow: var(--shadow-sm); }
+.add-to-cart-btn, #productTable.grid-mode .add-to-cart-btn { background: var(--pink-grad); border-radius: 14px; }
+.add-to-cart-btn:hover { background: var(--pink-grad); box-shadow: 0 6px 16px rgba(228, 99, 155, 0.35); }
+@media (hover: none) { .add-to-cart-btn:hover { background: var(--pink-grad); } }
+.dep-toggle { border-radius: 14px; }
+.option-chip { border-radius: 999px; }
+
+/* Side menu + cart */
+.side-menu-header, .cart-header { background: var(--pink-grad); }
+.side-menu-item.active, .side-menu-item:hover { background: var(--primary-light); }
+.side-menu-item-img, .cart-item-img, .receipt-item-img { border-radius: 14px; }
+.cart-item { background: #fff; border-color: var(--border); border-radius: var(--radius-md); }
+.cart-checkout-btn, #cartBarBtn, .btn-new-order { background: var(--pink-grad); box-shadow: 0 8px 22px rgba(228, 99, 155, 0.32); }
+#cartBarBtn { border-radius: 999px; }
+#bottomBar { background: rgba(255, 255, 255, 0.92); border-top-color: var(--border); box-shadow: 0 -6px 24px rgba(228, 99, 155, 0.12); }
+#cartBadge { background: #fff; color: var(--primary-dark); }
+
+/* Summary + confirmation */
+.summary-total-bar { background: var(--primary-light); border-color: rgba(228, 99, 155, 0.25); border-radius: var(--radius-md); }
+.btn-confirm { background: var(--pink-grad); box-shadow: 0 8px 22px rgba(228, 99, 155, 0.32); }
+#confirmation { background: transparent; }
+.card { background: var(--glass); border-color: var(--glass-line); border-radius: var(--radius-lg); }
+.btn-download { background: var(--pink-grad); box-shadow: 0 4px 12px rgba(228, 99, 155, 0.28); }
+.confirmation-header h2 { font-family: var(--heading); font-weight: 500; color: var(--primary-dark); }
+
+/* ── Status page ── */
+.st-page { background: transparent; }
+.st-head { padding: 16px 18px; margin-bottom: 14px; }
+.st-title { font-family: var(--heading); font-weight: 600; color: var(--primary-dark); }
+.st-back { color: var(--primary-dark); }
+.st-search { margin-bottom: 0; }
+.st-btn { background: var(--pink-grad); border-radius: 999px; }
+.st-btn:hover { background: var(--pink-grad); filter: brightness(0.96); }
+.st-btn.ghost { background: #fff; filter: none; }
+.st-tab { background: rgba(255, 255, 255, 0.8); border-color: var(--glass-line); border-radius: 999px; box-shadow: var(--shadow-sm); }
+.st-tab[aria-selected=true] { background: var(--pink-grad); border-color: transparent; }
+.st-tab-count { background: var(--primary-light); color: var(--primary-dark); }
+.st-card { background: rgba(255, 255, 255, 0.85); border-color: var(--glass-line); border-radius: 22px; box-shadow: var(--shadow-sm); }
+.st-card-head { background: rgba(253, 232, 241, 0.6); border-bottom-color: var(--border); }
+.st-card-name { font-family: var(--heading); font-weight: 500; }
+.st-dialog { border-radius: var(--radius-lg); }
+.st-dialog::backdrop { background: rgba(74, 46, 61, 0.4); }

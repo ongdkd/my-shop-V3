@@ -4,15 +4,22 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>เช็คสถานะ / แจ้งโอน — Kagayaku Shop</title>
+<link rel="icon" type="image/png" href="img/logo-64.png">
+<link rel="apple-touch-icon" href="img/logo-180.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Mitr:wght@400;500;600&family=Noto+Sans+Thai:wght@300;400;500;600;700&family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/index.css?v=20261029b">
 <link rel="stylesheet" href="css/status.css?v=20261101s">
+<link rel="stylesheet" href="css/theme-pink.css?v=20261102c">
 </head>
 <body>
 <main class="st-page">
   <a class="st-back" href="index.html">&#x2190; กลับไปหน้าสั่งซื้อ</a>
+  <div class="st-head st-glass">
+  <div class="hub-brand">
+  <img class="shop-logo" src="img/logo-256.webp" alt="Kagayaku Shop" width="52" height="52">
   <h1 class="st-title">เช็คสถานะ / แจ้งโอน</h1>
+  </div>
   <p class="st-sub">กรอกชื่อ @ ที่ใช้สั่งซื้อ เพื่อดูสถานะสินค้า เลขพัสดุ และส่งสลิปพร้อมที่อยู่จัดส่ง</p>
 
   <form id="stForm" class="st-search" autocomplete="off">
@@ -22,6 +29,7 @@
     </div>
     <button type="submit" class="st-btn" id="stGo">ค้นหา</button>
   </form>
+  </div>
 
   <div id="stResult" aria-live="polite"></div>
 </main>
