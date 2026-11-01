@@ -10,22 +10,22 @@
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&family=Sora:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    --primary: #6C63FF;
-    --primary-light: #EEF0FF;
-    --primary-dark: #4B44C7;
+    --primary: #E4639B;
+    --primary-light: #FDE8F1;
+    --primary-dark: #C94B82;
     --error: #FF4757;
     --error-light: #FFF0F1;
     --success: #00C896;
     --success-light: #E8FBF5;
     --warning: #FFB547;
     --warning-light: #FFF8EE;
-    --bg: #F2F3FA;
+    --bg: #FBF3F7;
     --surface: #FFFFFF;
-    --text: #1A1D3A;
-    --text-2: #5A5F80;
-    --text-3: #9BA0C0;
-    --border: #E4E6F2;
-    --shadow-md: 0 4px 28px rgba(108,99,255,0.14);
+    --text: #2E1F28;
+    --text-2: #6E5866;
+    --text-3: #AE96A4;
+    --border: #F2E2EA;
+    --shadow-md: 0 4px 28px rgba(228,99,155,0.14);
     --radius-sm: 8px;
     --radius-md: 12px;
     --radius-lg: 20px;
@@ -43,7 +43,7 @@
     content: '';
     position: fixed; inset: 0;
     background:
-      radial-gradient(ellipse 65% 55% at 15% 5%, rgba(108,99,255,0.13) 0%, transparent 65%),
+      radial-gradient(ellipse 65% 55% at 15% 5%, rgba(228,99,155,0.13) 0%, transparent 65%),
       radial-gradient(ellipse 50% 45% at 85% 95%, rgba(0,200,150,0.09) 0%, transparent 65%);
     pointer-events: none; z-index: 0;
   }
@@ -80,7 +80,7 @@
     width: 90px; height: 90px; border-radius: 50%;
     background: rgba(255,255,255,0.06);
   }
-  .logo-icon { font-size: 2.2rem; position: relative; z-index: 1; }
+  .logo-icon { position: relative; z-index: 1; display: block; width: 76px; height: 76px; margin: 0 auto; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 6px 18px rgba(0,0,0,0.15); object-fit: cover; }
   .card-title { color: #fff; font-size: 1.15rem; font-weight: 700; position: relative; z-index: 1; }
   .card-subtitle { color: rgba(255,255,255,0.7); font-size: 0.78rem; position: relative; z-index: 1; }
 
@@ -120,7 +120,7 @@
   }
   .pw-input:focus {
     border-color: var(--primary);
-    box-shadow: 0 0 0 3px rgba(108,99,255,0.12);
+    box-shadow: 0 0 0 3px rgba(228,99,155,0.12);
     background: #fff;
   }
   .pw-input.error {
@@ -136,7 +136,7 @@
   }
   .text-input:focus {
     border-color: var(--primary);
-    box-shadow: 0 0 0 3px rgba(108,99,255,0.12);
+    box-shadow: 0 0 0 3px rgba(228,99,155,0.12);
     background: #fff;
   }
   .text-input.error {
@@ -215,7 +215,7 @@
 <div class="page">
   <div class="card">
     <div class="card-header">
-      <div class="logo-icon">🛍️</div>
+      <img class="logo-icon" src="img/logo-256.webp" alt="Kagayaku Shop" width="76" height="76">
       <div class="card-title">Order Hub Admin</div>
       <div class="card-subtitle">ระบบจัดการรายการสั่งซื้อ</div>
     </div>

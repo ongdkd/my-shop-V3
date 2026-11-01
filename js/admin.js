@@ -4153,6 +4153,7 @@ function renderProductsTable(products, sheetId, holder) {
   bulkBtns.appendChild(makeBtn('btn btn-ghost btn-sm', 'เลือกทั้งหมด', function() { setAllProdSelection(true); }));
   bulkBtns.appendChild(makeBtn('btn btn-ghost btn-sm', 'ล้างที่เลือก', function() { setAllProdSelection(false); }));
   bulkBtns.appendChild(makeBtn('btn btn-primary btn-sm', '&#x21A9; คืนคลังที่เลือก', function() { confirmBulkReturn(sheetId); }));
+  bulkBtns.appendChild(makeBtn('btn btn-primary btn-sm', '&#x1F4E6; ย้ายไปคลัง', function() { openMoveToStock(); }));
   bulkBtns.appendChild(makeBtn('btn btn-danger btn-sm', '&#x1F5D1; ลบที่เลือก', function() { confirmBulkDelete(sheetId); }));
   bulkBar.appendChild(bulkCount);
   bulkBar.appendChild(bulkBtns);
@@ -4362,6 +4363,30 @@ function confirmDeleteProduct(sheetId, rowIndex, name) {
   }, 'ลบ');
   el('modalSave').className = 'btn btn-danger';
   el('modal').classList.add('open');
+}
+
+// 📦 ย้ายไปคลัง: preorder products (e.g. imported from a sheet) that arrived and
+// are now kept in the warehouse. Opens the "add many" stock form filled with
+// their name, photo, prices and options; the real barcodes are scanned there
+// and the stock counted, and options can be merged by dragging one row onto another.
+function openMoveToStock() {
+  var rows = getSelectedProdRows();
+  var picked = rows.map(function(r) { return currentProductsCache.find(function(c) { return c.rowIndex === r; }); }).filter(Boolean);
+  if (!picked.length) { toast('ยังไม่ได้เลือกสินค้า', 'error'); return; }
+  // Already made from a stock item: its stock lives there (use ↩ คืนคลัง instead)
+  var linked = picked.filter(function(p) { return p.sourceStockItemId; });
+  var todo = picked.filter(function(p) { return !p.sourceStockItemId; });
+  if (!todo.length) { toast('สินค้าที่เลือกเชื่อมกับคลังอยู่แล้ว — ใช้ "↩ คืนคลังที่เลือก" แทน', 'error'); return; }
+  if (linked.length) toast('ข้าม ' + linked.length + ' สินค้าที่เชื่อมกับคลังอยู่แล้ว', 'error');
+  openBulkStockModal(todo.map(function(p) {
+    return {
+      name: p.name, image: /^https?:\/\//.test(p.image || '') ? p.image : '',
+      price: p.price || '', deposit: p.deposit || '', yuan: p.yuan || '',
+      opts: (p.optionDetails && p.optionDetails.length ? p.optionDetails
+        : String(p.options || '').split(',').map(function(s) { return { name: s.split(':')[0].trim() }; }).filter(function(o) { return o.name; }))
+        .map(function(o) { return { name: o.name, image: /^https?:\/\//.test(o.image || '') ? o.image : '' }; })
+    };
+  }));
 }
 
 // ── Products multi-select (bulk return / delete / clear list) ──
@@ -4754,7 +4779,7 @@ function openCreateOrderListModal() {
   warn.innerHTML = '⚠️ ชีตต้องแชร์เป็น <strong>ทุกคนที่มีลิงก์ดูได้</strong> และมีแท็บชื่อ <strong>Products</strong> กับ <strong>Orders</strong> ชื่อรายการจะใช้ชื่อไฟล์ Spreadsheet โดยอัตโนมัติ';
 
   var info = document.createElement('div');
-  info.style.cssText = 'background:#f0efff;border:1.5px solid #c4c0f7;border-radius:var(--radius-sm);padding:8px 12px;font-size:0.76rem;color:#4A4190;margin-top:6px;display:none;';
+  info.style.cssText = 'background:var(--primary-light);border:1.5px solid var(--border-strong);border-radius:var(--radius-sm);padding:8px 12px;font-size:0.76rem;color:var(--primary-dark);margin-top:6px;display:none;';
   info.innerHTML = '✨ ระบบจะสร้างรายการว่างให้ทันที — เพิ่มสินค้าได้เลยหลังสร้าง แล้วค่อยเปิดรับออเดอร์เมื่อพร้อมค่ะ';
 
   var f1 = div('modal-field');
@@ -6278,9 +6303,18 @@ function resolveAllOptionImages(options, cb) {
 // ════════════════════════════════════════════════════════════
 // BULK ADD to STOCK
 // ════════════════════════════════════════════════════════════
-function openBulkStockModal() {
+// prefill: rows to start with (📦 ย้ายไปคลัง on the products page) —
+// [{ name, image, price, deposit, yuan, opts: [{ name, image }] }]; barcodes and
+// stock are left for the real scan / count. Without it the form starts empty.
+function openBulkStockModal(prefill) {
   var keySeq = 0;
-  var bulkSRows = [makeBulkSRow()];
+  if (!Array.isArray(prefill)) prefill = null; // also used as a click handler (gets the event)
+  var bulkSRows = prefill && prefill.length ? prefill.map(function(p) {
+    var r = makeBulkSRow({ name: p.name, image: p.image, price: p.price || '', deposit: p.deposit || '', yuan: p.yuan || '' });
+    (p.opts || []).forEach(function(o) { var so = makeBulkSOpt(); so.name = o.name || ''; so.image = o.image || ''; r.opts.push(so); });
+    if (r.opts.length) r.mode = 'options';
+    return r;
+  }) : [makeBulkSRow()];
 
   function makeBulkSRow(d) {
     return {
@@ -6332,6 +6366,44 @@ function openBulkStockModal() {
   }
 
   function rerender() { var sl = document.getElementById('bulkSList'); if (sl) renderBulkSRows(sl); }
+
+  // Row `from` becomes option(s) of row `to`: a plain product turns into one
+  // option (its photo, barcode and stock go along), an options product brings
+  // all its options. A plain `to` first becomes an options product whose first
+  // option is itself.
+  function rowAsOption(r) {
+    var o = makeBulkSOpt();
+    o.name = o.auto = o.full = r.name; o.id = r.id; o.idAuto = r.idAuto; o.stock = r.stock;
+    if (pendingImg[r.key]) pendingImg[o.key] = pendingImg[r.key]; else o.image = r.image || '';
+    return o;
+  }
+  function mergeAsOption(from, to) {
+    var src = bulkSRows[from], dst = bulkSRows[to];
+    if (!src || !dst || from === to || src.status === 'done' || dst.status === 'done') return;
+    if (dst.mode !== 'options') { dst.opts = [rowAsOption(dst)]; dst.mode = 'options'; dst.moreOpen = true; }
+    if (src.mode === 'options') src.opts.forEach(function(o) { dst.opts.push(o); });
+    else dst.opts.push(rowAsOption(src));
+    trimOptionNames(dst);
+    bulkSRows.splice(from, 1);
+    rerender();
+    toast('รวม "' + (src.name || 'สินค้า') + '" เป็นตัวเลือกของ "' + (dst.name || 'สินค้า') + '" แล้ว', 'success');
+  }
+  // Options made from whole products all start with the same words (the list or
+  // series name): keep only the part that tells them apart
+  // (from their full product names, every merge; a name edited by hand stays)
+  function trimOptionNames(r) {
+    var made = r.opts.filter(function(o) { return o.full; });
+    if (made.length < 2) return;
+    var words = made.map(function(o) { return o.full.trim().split(/\s+/); });
+    var n = 0;
+    while (words.every(function(w) { return w.length > n + 1 && w[n] === words[0][n]; })) n++;
+    made.forEach(function(o, i) {
+      if (o.name !== o.auto) return;
+      o.name = o.auto = words[i].slice(n).join(' ');
+    });
+  }
+  var dragFrom = null;
+
   function rowImage(r) { return pendingImg[r.key] || (r.image && !r.image.startsWith('__pending__') ? r.image : ''); }
   // Reuse the last row while it is still empty, else add one with its prices
   function takeBlankRow() {
@@ -6512,6 +6584,26 @@ function openBulkStockModal() {
       cdelBtn.innerHTML = '×'; cdelBtn.setAttribute('aria-label', 'ลบแถวนี้');
       cdelBtn.onclick = function() { if (bulkSRows.length > 1) { bulkSRows.splice(idx, 1); rerender(); } };
       top.appendChild(cdelBtn);
+      // Drag handle: drop this card on another to make it an option of that product
+      // (only the handle starts a drag, so typing and selecting text still work)
+      if (row.status !== 'done' && bulkSRows.length > 1) {
+        var grip = document.createElement('span'); grip.className = 'bcard-grip mouse-only';
+        grip.textContent = '⠿'; grip.title = 'ลากไปวางบนสินค้าอื่น เพื่อรวมเป็นตัวเลือกของสินค้านั้น';
+        grip.addEventListener('mousedown', function() { card.draggable = true; });
+        top.insertBefore(grip, top.firstChild);
+        card.addEventListener('dragstart', function(e) { dragFrom = idx; card.classList.add('dragging'); try { e.dataTransfer.setData('text/plain', 'row'); e.dataTransfer.effectAllowed = 'move'; } catch (x) {} });
+        card.addEventListener('dragend', function() { card.draggable = false; card.classList.remove('dragging'); dragFrom = null; container.querySelectorAll('.bcard.drop-on').forEach(function(c) { c.classList.remove('drop-on'); }); });
+      }
+      card.addEventListener('dragover', function(e) {
+        if (dragFrom === null || dragFrom === idx || row.status === 'done') return;
+        e.preventDefault(); card.classList.add('drop-on');
+      });
+      card.addEventListener('dragleave', function(e) { if (!card.contains(e.relatedTarget)) card.classList.remove('drop-on'); });
+      card.addEventListener('drop', function(e) {
+        e.preventDefault(); card.classList.remove('drop-on');
+        var f = dragFrom; dragFrom = null;
+        if (f !== null && f !== idx) mergeAsOption(f, idx);
+      });
       card.appendChild(top);
 
       var body = document.createElement('div'); body.className = 'bcard-body';
@@ -6573,6 +6665,21 @@ function openBulkStockModal() {
       };
       optTog.appendChild(optChk); optTog.appendChild(document.createTextNode(' สินค้ามีตัวเลือก (สี / แบบ / ไซส์)'));
       more.appendChild(optTog);
+      // Same as dragging this card onto another (for phones, where drag doesn't work)
+      var others = bulkSRows.filter(function(r) { return r !== row && r.status !== 'done'; });
+      if (others.length && row.status !== 'done') {
+        var mv = document.createElement('label'); mv.className = 'bcard-field bcard-merge';
+        mv.appendChild(div('bcard-label', 'รวมเป็นตัวเลือกของสินค้าอื่น'));
+        var mvSel = document.createElement('select'); mvSel.className = 'bcard-input';
+        var o0 = document.createElement('option'); o0.value = ''; o0.textContent = '— เลือกสินค้าหลัก —'; mvSel.appendChild(o0);
+        bulkSRows.forEach(function(r, j) {
+          if (r === row || r.status === 'done') return;
+          var op = document.createElement('option'); op.value = String(j); op.textContent = (j + 1) + '. ' + (r.name || '(ยังไม่มีชื่อ)'); mvSel.appendChild(op);
+        });
+        mvSel.onchange = function() { if (mvSel.value !== '') mergeAsOption(idx, Number(mvSel.value)); };
+        mv.appendChild(mvSel);
+        more.appendChild(mv);
+      }
       body.appendChild(more);
 
       // ── Variants: one compact line each (photo · name · AI · delete / stock · barcode) ──
@@ -6655,7 +6762,7 @@ function openBulkStockModal() {
 
   buildBulkSUI();
 
-  openModal('📋 เพิ่มสินค้าหลายรายการเข้าคลัง', '', function() {
+  openModal(prefill && prefill.length ? '📦 ย้ายสินค้าเข้าคลัง' : '📋 เพิ่มสินค้าหลายรายการเข้าคลัง', '', function() {
     var valid = true;
     bulkSRows.forEach(function(r,i) {
       if (!r.name.trim()) { toast('สินค้า '+(i+1)+': กรุณากรอกชื่อสินค้า','error'); valid=false; }
@@ -6694,7 +6801,7 @@ function openBulkStockModal() {
           .withSuccessHandler(function(r) {
             try { var res=JSON.parse(r); row.status=res.status==='Success'?'done':'error'; if(res.status==='Success') savedCount2++; } catch(e){ row.status='error'; }
             pending2--; var sl2=document.getElementById('bulkSList'); if(sl2) renderBulkSRows(sl2);
-            if(pending2===0){ sb2.disabled=false; sb2.textContent='บันทึกทั้งหมด'; toast('บันทึกแล้ว '+savedCount2+'/'+bulkSRows.length+' รายการ',savedCount2===bulkSRows.length?'success':'error'); if(savedCount2===bulkSRows.length) setTimeout(function(){closeModal();loadStock(renderStockContent);},800); }
+            if(pending2===0){ sb2.disabled=false; sb2.textContent='บันทึกทั้งหมด'; toast('บันทึกแล้ว '+savedCount2+'/'+bulkSRows.length+' รายการ',savedCount2===bulkSRows.length?'success':'error'); if(savedCount2===bulkSRows.length) setTimeout(function(){closeModal(); if(prefill && prefill.length) switchPanel('stock'); else loadStock(renderStockContent);},800); }
           })
           .withFailureHandler(function() {
             row.status='error'; pending2--; var sl3=document.getElementById('bulkSList'); if(sl3) renderBulkSRows(sl3);
@@ -7307,7 +7414,7 @@ function openImageActionPicker(trigger, cameraInput, fileInput, onUrl) {
 
   var cameraIcon = '<svg viewBox="0 0 48 48"><path d="M15 14l3-5h12l3 5h5a5 5 0 015 5v18a5 5 0 01-5 5H10a5 5 0 01-5-5V19a5 5 0 015-5h5z" fill="#ff5f91"/><circle cx="24" cy="28" r="10" fill="#fff"/><circle cx="24" cy="28" r="6" fill="#4777e8"/><circle cx="36" cy="20" r="2" fill="#fff"/></svg>';
   var filesIcon = '<svg viewBox="0 0 48 48"><path d="M5 14a5 5 0 015-5h10l4 5h14a5 5 0 015 5v3H5v-8z" fill="#79b7ff"/><path d="M6 19h36a4 4 0 014 5l-4 15a5 5 0 01-5 4H10a5 5 0 01-5-5V20l1-1z" fill="#3987ed"/></svg>';
-  var urlIcon = '<svg viewBox="0 0 48 48"><circle cx="24" cy="24" r="20" fill="#7656e8"/><path d="M20 29l-2 2a6 6 0 01-8-8l5-5a6 6 0 018 0" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"/><path d="M28 19l2-2a6 6 0 018 8l-5 5a6 6 0 01-8 0" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"/><path d="M18 30l12-12" stroke="#fff" stroke-width="4" stroke-linecap="round"/></svg>';
+  var urlIcon = '<svg viewBox="0 0 48 48"><circle cx="24" cy="24" r="20" fill="#E4639B"/><path d="M20 29l-2 2a6 6 0 01-8-8l5-5a6 6 0 018 0" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"/><path d="M28 19l2-2a6 6 0 018 8l-5 5a6 6 0 01-8 0" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"/><path d="M18 30l12-12" stroke="#fff" stroke-width="4" stroke-linecap="round"/></svg>';
   var firstAction = addAction('กล้อง', 'ถ่ายรูปใหม่', cameraIcon, function() {
     closeImageActionPicker(false);
     cameraInput.value = '';
