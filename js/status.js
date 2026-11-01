@@ -111,10 +111,25 @@
     return btn;
   }
 
+  // The sheet also lists orders placed on the website: each web order hides one
+  // sheet row of the same product, so an order placed twice still shows twice
+  function withoutWebOrders(legacy, orders) {
+    function norm(v) { return String(v || '').toLowerCase().replace(/\s+/g, ''); }
+    var web = {};
+    orders.forEach(function (o) { var k = norm(o.product); web[k] = (web[k] || 0) + 1; });
+    return legacy.filter(function (r) {
+      var k = norm(r.product);
+      if (!web[k]) return true;
+      web[k]--;
+      return false;
+    });
+  }
+
   // ── Results ───────────────────────────────────────────────
   function render(res) {
     var out = $('stResult'); out.textContent = '';
-    var orders = res.orders || [], pays = res.payments || [], legacy = res.legacy || [];
+    var orders = res.orders || [], pays = res.payments || [];
+    var legacy = withoutWebOrders(res.legacy || [], orders);
     if (!orders.length && !legacy.length) {
       out.appendChild(h('div', 'st-empty', 'ไม่พบคำสั่งซื้อของชื่อนี้ — ตรวจสอบตัวสะกดของชื่อ @ อีกครั้งนะคะ'));
       return;
