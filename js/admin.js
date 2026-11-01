@@ -2271,7 +2271,7 @@ function drawSlips(pays) {
 // ════════════════════════════════
 // STATUS MANAGER — bulk status for web orders and imported old-sheet rows
 // ════════════════════════════════
-var _stm = { stage: 'pay', list: '', round: '', cat: '', q: '', legacy: null, bills: null };
+var _stm = { stage: 'pay', list: '', shipSel: null, round: '', cat: '', q: '', legacy: null, bills: null };
 var STM_CAP = 400; // rows drawn at once; filters narrow the rest
 
 // Shipped / waiting / cancelled / custom label
@@ -2625,7 +2625,7 @@ function drawStages() {
   STAGES.forEach(function(s, i) {
     var b = makeBtn('stg-tab' + (s.id === _stm.stage ? ' on' : ''),
       '<span class="stg-num">' + (i + 1) + '</span><span>' + escapeHtml(s.label) + '</span><span class="stg-count">' + count(s.id) + '</span>',
-      function() { if (_stm.stage !== s.id) { _stm.stage = s.id; drawStages(); } });
+      function() { if (_stm.stage !== s.id) { _stm.stage = s.id; _stm.shipSel = null; drawStages(); } });
     b.type = 'button'; b.setAttribute('role', 'tab'); b.setAttribute('aria-selected', s.id === _stm.stage ? 'true' : 'false');
     tabs.appendChild(b);
   });
@@ -2990,55 +2990,58 @@ function drawStages() {
   }
 
   // ── 3. Bill sent: the one action is "deliver", which books iShip ──
-  // Like step 2, two columns built by drag and drop: left = on hold (the customer
-  // will add their next order, no second fee), right = goes out this round (🚚).
-  // A bill dropped on a column moves there; a bill or one item dropped on another
-  // bill of the same customer joins it, so they go out as one parcel.
+  // One list of paid bills. Held bills (⏸: the customer will add their next order,
+  // no second fee) come after the rest. "☑ เลือกหลายบิล" turns on select mode: tick
+  // bills, then a bar sends them as one parcel (same customer), holds or releases them.
   function drawShip() {
-    body.appendChild(tools());
+    var bar0 = tools();
+    var sel = _stm.shipSel; // null = normal mode, else { billId: true }
+    var pick = makeBtn('btn btn-sm ' + (sel ? 'btn-primary' : 'btn-ghost'), sel ? '&#x2715; ออกจากโหมดเลือก' : '&#x2611; เลือกหลายบิล', function() {
+      _stm.shipSel = sel ? null : {}; drawStages();
+    });
+    pick.type = 'button'; pick.title = 'เลือกหลายบิลเพื่อส่งรวมกล่องเดียว หรือพัก/ปล่อยพร้อมกัน';
+    bar0.insertBefore(pick, bar0.firstChild);
+    body.appendChild(bar0);
     var t = q();
     var bills = billsOf(S.ship).filter(function(x) { return !t || x.items.some(hit); });
-    if (!bills.length) return empty(STAGES[2].empty);
-    body.appendChild(div('slip-meta bill-help mouse-only',
-      'ลากบิลไปซ้าย = พักไว้รอรวมกับออเดอร์ถัดไป · ไปขวา = ส่งรอบนี้ · ลากบิล (หรือทีละชิ้น) ไปวางบนบิลอื่นของลูกค้าคนเดิม = รวมเป็นกล่องเดียว'));
-    var board = div('bill-board');
-    var left = div('bill-col'), right = div('bill-col bill-col-right');
-    board.appendChild(left); board.appendChild(right);
-    body.appendChild(board);
-    var held = bills.filter(function(x) { return x.b.holdAt; }), active = bills.filter(function(x) { return !x.b.holdAt; });
-    left.appendChild(div('bill-col-title', '&#x23F8;&#xFE0F; พักไว้ · รอส่งพร้อมออเดอร์ถัดไป (' + held.length + ')'));
-    if (!held.length) left.appendChild(div('state-empty', 'ลากบิลมาวางที่นี่ เมื่อลูกค้าขอรอส่งพร้อมออเดอร์ถัดไป'));
-    else left.appendChild(div('slip-meta', 'บิลใหม่ของลูกค้าคนเดิมที่มาถึงแท็บนี้ ลากมาวางบนบิลที่พักไว้เพื่อรวมเป็นกล่องเดียว · ถ้าไม่เก็บค่าส่งซ้ำ แก้ค่าส่งของบิลใหม่ก่อนส่งบิล'));
-    held.forEach(function(x) { left.appendChild(shipCard(x, true)); });
-    right.appendChild(div('bill-col-title', '&#x1F69A; ส่งรอบนี้ (' + active.length + ')'));
-    if (!active.length) right.appendChild(div('state-empty', 'ลากบิลมาวางที่นี่เพื่อส่งรอบนี้'));
-    active.slice(0, STAGE_CAP).forEach(function(x) { right.appendChild(shipCard(x, false)); });
-    if (active.length > STAGE_CAP) right.appendChild(div('slip-meta', 'แสดง ' + STAGE_CAP + ' จาก ' + active.length + ' — ค้นหาให้แคบลง'));
-    // Empty space of a column: the dropped bill moves there
-    dropZone(left, function(d) { if (d.from === 'shipbill' && !B.billById[d.bill].holdAt) holdBill(B.billById[d.bill], true); });
-    dropZone(right, function(d) { if (d.from === 'shipbill' && B.billById[d.bill].holdAt) holdBill(B.billById[d.bill], false); });
+    if (!bills.length) { _stm.shipSel = null; return empty(STAGES[2].empty); }
+    var active = bills.filter(function(x) { return !x.b.holdAt; }), held = bills.filter(function(x) { return x.b.holdAt; });
+    if (sel) body.appendChild(div('slip-meta bill-help', 'แตะบิลเพื่อเลือก · รวมกล่องเดียวได้เฉพาะบิลของลูกค้าคนเดียวกัน'));
+    var grid = div('stg-grid');
+    active.slice(0, STAGE_CAP).forEach(function(x) { grid.appendChild(shipCard(x, false)); });
+    body.appendChild(grid); more(active.length);
+    if (held.length) {
+      body.appendChild(div('stg-section-title', '&#x23F8;&#xFE0F; พักไว้ · รอส่งพร้อมออเดอร์ถัดไป <span class="stg-count">' + held.length + '</span>'));
+      var hg = div('stg-grid');
+      held.forEach(function(x) { hg.appendChild(shipCard(x, true)); });
+      body.appendChild(hg);
+    }
+    if (sel) body.appendChild(selectBar(bills));
   }
   function shipCard(x, held) {
-    var b = x.b;
-    var card = div('bill-card stg-bill' + (held ? ' held' : ''));
+    var b = x.b, sel = _stm.shipSel;
+    var card = div('bill-card stg-bill' + (held ? ' held' : '') + (sel ? ' pickable' : '') + (sel && sel[b.id] ? ' picked' : ''));
     var top = div('bill-order-top');
+    if (sel) top.appendChild(div('pick-box', sel[b.id] ? '&#x2713;' : ''));
     var nm = document.createElement('strong'); nm.textContent = billTitle(x); top.appendChild(nm);
     top.appendChild(div('slip-meta', escapeHtml(held ? 'พักไว้ ' + when(b.holdAt) : 'ส่งบิล ' + when(b.sentAt))));
     card.appendChild(top);
-    // One item at a time, or the whole bill, can be dragged onto another bill of this customer
-    itemList(card, x.items, function(line, o) {
-      dragSource(line, function() { return { ids: [o.id], cust: b.customer, from: 'shipitem', bill: b.id }; });
-    });
-    dragSource(card, function() { return { ids: ids(x.items), cust: b.customer, from: 'shipbill', bill: b.id }; });
-    dropZone(card, function(d) {
-      if (d.bill === b.id || !/^ship/.test(d.from || '')) return;
-      if (d.cust !== b.customer) { toast('รวมได้เฉพาะบิลของลูกค้าคนเดียวกัน', 'error'); return; }
-      joinBills(d, x);
-    });
+    itemList(card, x.items);
     card.appendChild(billSum(x));
     card.appendChild(paidButton(x));
     var extra = owedMore(x);
     if (extra > 0) card.appendChild(div('bill-owed', 'ลูกค้าต้องโอนเพิ่ม ' + escapeHtml(baht(extra)) + ' (มีสินค้าที่เพิ่มเข้ามาทีหลัง)'));
+    if (sel) {
+      // Select mode: the whole card is the checkbox
+      card.setAttribute('role', 'checkbox'); card.setAttribute('aria-checked', sel[b.id] ? 'true' : 'false'); card.tabIndex = 0;
+      card.onclick = function(e) {
+        if (e.target.closest('.bill-paid, .bill-more')) return; // slip viewer and "more items" still work
+        if (sel[b.id]) delete sel[b.id]; else sel[b.id] = true;
+        drawStages();
+      };
+      card.onkeydown = function(e) { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); card.onclick(e); } };
+      return card;
+    }
     var act = div('stg-actions');
     if (held) {
       var go1 = makeBtn('btn btn-primary btn-sm', '&#x25B6; พร้อมส่งแล้ว', function() { holdBill(b, false); });
@@ -3052,16 +3055,67 @@ function drawStages() {
     card.appendChild(act);
     return card;
   }
-  // A paid bill (or one item of it) dropped onto another bill of the same customer:
-  // its items join that bill and go out as one parcel. If the whole bill moves and it
-  // had its own payment, the customer paid that bill's fee too — the shop settles it.
-  function joinBills(d, x) {
-    var from = B.billById[d.bill], whole = d.from === 'shipbill';
-    var fromPaid = whole && B.payments.some(function(p) { return p.deliveryId === d.bill; });
-    askConfirm('ย้าย ' + (whole ? 'ทั้งบิล (' + d.ids.length + ' รายการ)' : '1 รายการ') + ' ไปรวมกับบิล ' + billTitle(x) + ' — ส่งเป็นกล่องเดียว' +
-      (fromPaid ? '\nบิลที่ย้ายมามีค่าส่งที่ลูกค้าโอนแล้ว ฿' + (Number(from.fee) || 0) + ' — คืนเงินหรือหักให้ลูกค้าเอง' : ''), 'รวมบิล').then(function(ok) {
-      // setBillNow: the "leaving a paid bill" question was just asked here
-      if (ok) setBillNow(d.ids, x.b.id, false, x.b.customer);
+  // Bottom bar of select mode: what to do with the ticked bills
+  function selectBar(bills) {
+    var picked = bills.filter(function(x) { return _stm.shipSel[x.b.id]; });
+    var custs = unique(picked.map(function(x) { return x.b.customer; }));
+    var bar = div('obar ship-sel-bar');
+    bar.appendChild(div('ship-sel-count', picked.length ? 'เลือก ' + picked.length + ' บิล' : 'แตะบิลเพื่อเลือก'));
+    var hold = makeBtn('btn btn-ghost btn-sm', '&#x23F8; พักไว้', function() { holdMany(picked, true); });
+    hold.type = 'button'; hold.disabled = !picked.some(function(x) { return !x.b.holdAt; });
+    var rel = makeBtn('btn btn-ghost btn-sm', '&#x25B6; พร้อมส่ง', function() { holdMany(picked, false); });
+    rel.type = 'button'; rel.disabled = !picked.some(function(x) { return x.b.holdAt; });
+    var join = makeBtn('btn btn-primary btn-sm', '&#x1F4E6; ส่งรวมกล่องเดียว', function() { combineBills(picked); });
+    join.type = 'button';
+    join.disabled = picked.length < 2 || custs.length > 1;
+    join.title = custs.length > 1 ? 'รวมได้เฉพาะบิลของลูกค้าคนเดียวกัน' : 'รวมสินค้าทุกบิลที่เลือกเป็นพัสดุเดียว';
+    bar.appendChild(hold); bar.appendChild(rel); bar.appendChild(join);
+    if (custs.length > 1) bar.appendChild(div('ship-sel-note', 'เลือกบิลของหลายลูกค้า — รวมกล่องเดียวไม่ได้'));
+    return bar;
+  }
+  // Ticked bills of one customer → the oldest bill keeps them all (one parcel, one fee).
+  // A bill that moves in had its own fee; if the customer paid it, the shop settles it.
+  function combineBills(picked) {
+    var list = picked.slice().sort(function(a, b) { return String(a.b.sentAt).localeCompare(String(b.b.sentAt)); });
+    var target = list[0], rest = list.slice(1);
+    var paidFees = rest.filter(function(x) { return x.pays.length; }).reduce(function(s, x) { return s + (Number(x.b.fee) || 0); }, 0);
+    var n = rest.reduce(function(s, x) { return s + x.items.length; }, target.items.length);
+    askConfirm('รวม ' + list.length + ' บิลของ ' + billTitle(target) + ' เป็นพัสดุเดียว (' + n + ' รายการ) — ใช้ค่าส่งของบิลแรก' +
+      (paidFees > 0 ? '\nบิลที่ถูกรวมมีค่าส่งที่ลูกค้าโอนแล้ว รวม ฿' + paidFees + ' — คืนเงินหรือหักให้ลูกค้าเอง' : ''), 'รวมบิล').then(function(ok) {
+      if (!ok) return;
+      body.classList.add('busy');
+      var chain = Promise.resolve({ status: 'Success' });
+      rest.forEach(function(x) {
+        chain = chain.then(function(r) {
+          if (r.status !== 'Success') return r;
+          return apiCall('adminSetDelivery', ids(x.items), target.b.id, false);
+        });
+      });
+      chain.then(function(r) {
+        body.classList.remove('busy');
+        if (r.status !== 'Success') toast(r.message || 'รวมบิลไม่สำเร็จ', 'error');
+        else toast('รวมเป็นพัสดุเดียวแล้ว', 'success');
+        _stm.shipSel = null;
+        renderStatusPanel();
+      });
+    });
+  }
+  function holdMany(picked, on) {
+    var todo = picked.filter(function(x) { return !!x.b.holdAt !== on; });
+    body.classList.add('busy');
+    var chain = Promise.resolve({ status: 'Success' });
+    todo.forEach(function(x) {
+      chain = chain.then(function(r) {
+        if (r.status !== 'Success') return r;
+        return apiCall('adminSetDeliveryHold', x.b.id, on).then(function(res) { if (res.status === 'Success') x.b.holdAt = res.holdAt; return res; });
+      });
+    });
+    chain.then(function(r) {
+      body.classList.remove('busy');
+      if (r.status !== 'Success') { toast(r.message || 'บันทึกไม่สำเร็จ', 'error'); return; }
+      toast(on ? 'พักบิลไว้แล้ว ' + todo.length + ' บิล' : 'ย้ายไปพร้อมส่งแล้ว ' + todo.length + ' บิล', 'success');
+      _stm.shipSel = {};
+      drawStages();
     });
   }
   // What the customer still owes on a bill: items added after they paid

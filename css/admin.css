@@ -220,6 +220,15 @@ button{font-family:var(--font);cursor:pointer;border:none;}
 .sync-last{margin:10px 0 14px;padding:10px 12px;border-radius:var(--radius-sm);background:var(--surface-2);font-size:0.82rem;color:var(--text-2);}
 .sync-bad{color:var(--error);font-weight:600;}
 a.btn{text-decoration:none;}
+/* รอจัดส่ง select mode: the card is the checkbox; the bar sticks to the bottom */
+.bill-card.pickable{cursor:pointer;user-select:none;}
+.bill-card.pickable:hover{box-shadow:0 0 0 3px var(--primary-light);}
+.bill-card.picked{border-color:var(--primary);border-style:solid;background:var(--primary-light);box-shadow:0 0 0 3px var(--primary-light);}
+.pick-box{flex:none;width:24px;height:24px;border-radius:50%;border:2px solid var(--border-strong);background:#fff;color:#fff;font-size:0.8rem;font-weight:800;display:flex;align-items:center;justify-content:center;}
+.bill-card.picked .pick-box{background:var(--primary);border-color:var(--primary);}
+.ship-sel-bar{flex-wrap:wrap;justify-content:flex-end;padding:10px 12px;background:var(--surface);border:1.5px solid var(--primary);border-radius:var(--radius-md);box-shadow:var(--shadow-md);}
+.ship-sel-count{margin-right:auto;font-weight:700;font-size:0.9rem;color:var(--primary);}
+.ship-sel-note{flex-basis:100%;text-align:right;font-size:0.76rem;color:var(--error);}
 .bill-card.held{border-style:dashed;border-color:var(--warning);background:var(--warning-light);}
 .bill-owed{margin-top:8px;padding:6px 10px;border-radius:8px;background:var(--error-light);color:var(--error);font-size:0.78rem;font-weight:700;}
 .label-sizes{display:grid;gap:8px;}
