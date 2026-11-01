@@ -918,20 +918,52 @@ function openBarcodeScanner() {
   status.textContent = 'กำลังเปิดกล้อง...';
 
   ensureScannerLib().then(function() {
-    if (_posScannerActive) return;
+    if (_posScannerActive || _posFastStop) return;
+    // Accept a value only after two identical consecutive reads — a
+    // misread almost never produces the same wrong value twice
+    var lastText = '', streak = 0, scanned = false;
+    function onCode(text) {
+      text = String(text || '').trim();
+      if (!text || scanned) return;
+      if (text === lastText) streak++;
+      else { lastText = text; streak = 1; }
+      if (streak < 2) return;
+      scanned = true;
+      try { playBeep(); } catch(e) {}
+      closeBarcodeScanner();
+      posHandleScannedCode(text);
+    }
+    // Full camera resolution when a detector exists; the old scanner otherwise
+    if (!window.FastScan || !FastScan.supported()) { startOldBarcodeScanner(status, onCode); return; }
+    _posFastStop = FastScan.start(document.getElementById('posScanReader'), {
+      box: posScanBox,
+      onRead: onCode,
+      onReady: function() { status.textContent = 'พร้อมสแกน · ถ้าภาพเบลอ ถือห่างขึ้นอีกนิด (~15 ซม.)'; },
+      onCameraError: function() { _posFastStop = null; status.textContent = 'ไม่สามารถเปิดกล้องได้ กรุณาอนุญาตการใช้กล้อง'; },
+      onBroken: function() { _posFastStop = null; startOldBarcodeScanner(status, onCode); }
+    });
+  }).catch(function() {
+    status.textContent = 'โหลดตัวสแกนไม่สำเร็จ กรุณาตรวจสอบอินเทอร์เน็ต';
+  });
+}
+
+var _posFastStop = null;
+// Slightly larger than the frame drawn in css/pos.css, so a code at its edge still counts
+function posScanBox(vw) {
+  var w = Math.min(300, Math.floor(vw * 0.8));
+  return { width: w, height: Math.floor(w * 0.6) };
+}
+
+function startOldBarcodeScanner(status, onCode) {
     if (!_posScanner) _posScanner = new Html5Qrcode('posScanReader');
     _posScannerActive = true;
-    var scanned = false;
 
     var config = {
       fps: 15,
       disableFlip: true,
       // Decode only inside the viewfinder box so stray patterns at the
       // edges of the frame can't produce bogus reads
-      qrbox: function(vw, vh) {
-        var w = Math.min(300, Math.floor(vw * 0.8));
-        return { width: w, height: Math.floor(w * 0.6) };
-      },
+      qrbox: posScanBox,
       // Native detector (Android Chrome) is faster and far more accurate
       // on 1D barcodes than the JS fallback
       experimentalFeatures: { useBarCodeDetectorIfSupported: true },
@@ -956,23 +988,10 @@ function openBarcodeScanner() {
       ];
     }
 
-    // Accept a value only after two identical consecutive reads — a
-    // misread almost never produces the same wrong value twice
-    var lastText = '', streak = 0;
     _posScanner.start(
       { facingMode: 'environment' },
       config,
-      function(text) {
-        text = String(text || '').trim();
-        if (!text || scanned) return;
-        if (text === lastText) streak++;
-        else { lastText = text; streak = 1; }
-        if (streak < 2) return;
-        scanned = true;
-        try { playBeep(); } catch(e) {}
-        closeBarcodeScanner();
-        posHandleScannedCode(text);
-      },
+      onCode,
       function() {}
     ).then(function() {
       status.textContent = 'พร้อมสแกน · ถ้าภาพเบลอ ถือห่างขึ้นอีกนิด (~15 ซม.)';
@@ -980,14 +999,12 @@ function openBarcodeScanner() {
       _posScannerActive = false;
       status.textContent = 'ไม่สามารถเปิดกล้องได้ กรุณาอนุญาตการใช้กล้อง';
     });
-  }).catch(function() {
-    status.textContent = 'โหลดตัวสแกนไม่สำเร็จ กรุณาตรวจสอบอินเทอร์เน็ต';
-  });
 }
 
 function closeBarcodeScanner() {
   var ov = document.getElementById('pos-scanner-overlay');
   if (ov) ov.classList.remove('open');
+  if (_posFastStop) { _posFastStop(); _posFastStop = null; }
   if (_posScanner && _posScannerActive) {
     _posScannerActive = false;
     try { _posScanner.stop().catch(function() {}); } catch(e) {}
