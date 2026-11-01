@@ -57,6 +57,10 @@ async function photosInUse(sb: SupabaseClient) {
     const opts = Array.isArray(r.option_details) ? r.option_details as { image?: string }[] : [];
     opts.forEach((o) => add(o && o.image));
   });
+  // Pictures of the Purchase Orders LOG sheet (sheets-sync remembers them here)
+  const po = await sb.from("app_settings").select("value").eq("key", "po_pictures").maybeSingle();
+  if (po.error) throw new Error(po.error.message);
+  Object.values((po.data?.value ?? {}) as Record<string, string>).forEach(add);
   return used;
 }
 

@@ -11,6 +11,8 @@
 // (GOOGLE_SERVICE_ACCOUNT = its JSON key) that the sheet is shared with as editor.
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { planSheet, quarterIndex, quarterKey, quote, tabKey, type Want } from "./plan.ts";
+import { unzipSync } from "npm:fflate@0.8.2";
+import { colLetter, isPoTab, parsePoTab, poCells, poColumns, poEditCells, poMergeParcel, poNextRow, poTabTitle, xlsxPictures, type PoField, type PoInput, type PoParcel } from "./po.ts";
 
 // The shop's sheet is app_settings 'sheets'.url (set by 📥 นำเข้าจากชีต); this is only the fallback
 const DEFAULT_SHEET_ID = Deno.env.get("STATUS_SHEET_ID") || "1tXcsJ-qNRGLXsPCSu4srsmuibxhYZZTRrALn5BVeIx8";
@@ -37,7 +39,7 @@ async function googleToken() {
   const enc = (o: unknown) => b64url(new TextEncoder().encode(JSON.stringify(o)));
   const now = Math.floor(Date.now() / 1000);
   const unsigned = enc({ alg: "RS256", typ: "JWT" }) + "." + enc({
-    iss: sa.client_email, scope: "https://www.googleapis.com/auth/spreadsheets",
+    iss: sa.client_email, scope: "https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.readonly",
     aud: "https://oauth2.googleapis.com/token", iat: now, exp: now + 3600,
   });
   const der = Uint8Array.from(atob(sa.private_key.replace(/-----[^-]+-----/g, "").replace(/\s/g, "")), (c) => c.charCodeAt(0));
@@ -157,6 +159,180 @@ async function sync(db: SupabaseClient, dry = false) {
   return { added, updated, matched, created, orders: orders.length, at: new Date().toISOString() };
 }
 
+// ── Purchase Orders LOG (admin only): this sheet is the record, nothing is kept in the database ──
+const PO_SHEET_ID = Deno.env.get("PO_SHEET_ID") || "1-kYU7kYBfW0ht22AFwYhUOInsUdaFDasO4zhkgSj9uY";
+async function poApi() {
+  const { token, email } = await googleToken();
+  return (path: string, init?: RequestInit) => sheets(PO_SHEET_ID, token, email, path, init);
+}
+const poMeta = async (api: Awaited<ReturnType<typeof poApi>>) =>
+  ((await api("?fields=sheets.properties(title,sheetId,gridProperties.rowCount)")).sheets ?? []).map((s: any) => s.properties) as
+    { title: string; sheetId: number; gridProperties: { rowCount: number } }[];
+
+// Small records kept beside the sheet: iCargo status per tracking number, uploaded pictures
+async function poSetting<T>(db: SupabaseClient, key: string, fallback: T): Promise<T> {
+  const { data } = await db.from("app_settings").select("value").eq("key", key).maybeSingle();
+  return (data?.value ?? fallback) as T;
+}
+const poSave = (db: SupabaseClient, key: string, value: unknown) =>
+  db.from("app_settings").upsert({ key, value, updated_at: new Date().toISOString() });
+
+async function poList(db: SupabaseClient) {
+  const api = await poApi();
+  const tabs = (await poMeta(api)).filter((t) => isPoTab(t.title));
+  const ranges = tabs.map((t) => "ranges=" + encodeURIComponent(quote(t.title))).join("&");
+  const [shown, formulas] = tabs.length
+    ? await Promise.all([api("/values:batchGet?" + ranges), api("/values:batchGet?valueRenderOption=FORMULA&" + ranges)])
+    : [{}, {}];
+  // Newest year's tab first, newest row first
+  const rows = tabs.flatMap((t, i) => parsePoTab(t.title, shown.valueRanges?.[i]?.values ?? [], formulas.valueRanges?.[i]?.values ?? [])
+    .map((r) => ({ ...r, sheetId: t.sheetId })));
+  return { rows: rows.reverse(), tabs: tabs.map((t) => t.title), sheetId: PO_SHEET_ID,
+    tracking: await poSetting<Record<string, PoParcel>>(db, "po_tracking", {}) };
+}
+
+// A picture the site uploaded for the sheet: the Cloudinary cleanup keeps what's listed here
+async function poRememberPicture(db: SupabaseClient, url: string) {
+  const known = await poSetting<Record<string, string>>(db, "po_pictures", {});
+  await poSave(db, "po_pictures", { ...known, ["url:" + url]: url });
+}
+
+// Same accounts and upload preset as the site's other photos (public values, see js/config.js)
+const PO_UPLOADS = [{ cloud: "dk5f1v2ro", preset: "gas_cover_img" }, { cloud: "dkjqjkc6", preset: "gas_cover_img" }];
+async function poUpload(bytes: Uint8Array, name: string) {
+  for (const a of PO_UPLOADS) {
+    const form = new FormData();
+    form.append("file", new Blob([bytes]), name);
+    form.append("upload_preset", a.preset);
+    const r = await fetch(`https://api.cloudinary.com/v1_1/${a.cloud}/image/upload`, { method: "POST", body: form });
+    const j = await r.json().catch(() => ({}));
+    if (j.secure_url) return j.secure_url as string;
+  }
+  throw new Error("อัปโหลดรูปจากชีตไม่สำเร็จ");
+}
+
+// Pictures pasted into cells: taken from the sheet's Excel export. Each is uploaded once
+// (remembered by its content) so the site can show it. Returns "tab|row" → address.
+async function poPictures(db: SupabaseClient) {
+  const { token } = await googleToken();
+  const r = await fetch(`https://docs.google.com/spreadsheets/d/${PO_SHEET_ID}/export?format=xlsx`, { headers: { Authorization: "Bearer " + token } });
+  if (!r.ok) throw new Error("ดาวน์โหลดรูปจากชีตไม่ได้ (" + r.status + ")");
+  const files = unzipSync(new Uint8Array(await r.arrayBuffer()));
+  const known = await poSetting<Record<string, string>>(db, "po_pictures", {});
+  const pictures: Record<string, string> = {};
+  let added = false;
+  for (const p of xlsxPictures(files)) {
+    const bytes = files[p.media];
+    if (!isPoTab(p.tab) || !bytes) continue;
+    const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))).map((b) => b.toString(16).padStart(2, "0")).join("");
+    if (!known[hash]) { known[hash] = await poUpload(bytes, p.media.split("/").pop()!); added = true; }
+    pictures[p.tab + "|" + p.row] = known[hash];
+  }
+  if (added) await poSave(db, "po_pictures", known);
+  return { pictures };
+}
+
+// One edit: the row must still hold the product the admin opened, in case rows moved in the sheet
+async function poUpdate(db: SupabaseClient, input: { tab?: string; row?: number; product?: string; changes?: PoInput }) {
+  const row = Number(input.row);
+  if (!input.tab || !isPoTab(input.tab) || !Number.isInteger(row) || row < 2) throw new Error("ไม่พบแถวนี้");
+  const cells = poEditCells(input.changes ?? {});
+  const api = await poApi();
+  const got = await api("/values/" + encodeURIComponent(quote(input.tab)));
+  const values = (got.values ?? []) as unknown[][];
+  const col = poColumns(values[0] ?? []);
+  const now = String(values[row - 1]?.[col.product] ?? "").trim().replace(/\s+/g, " ");
+  if (col.product < 0 || now !== String(input.product ?? "").trim().replace(/\s+/g, " ")) {
+    throw new Error("แถวนี้ในชีตเปลี่ยนไปแล้ว — กดรีเฟรชแล้วลองใหม่");
+  }
+  const data = (Object.keys(cells) as PoField[]).filter((f) => col[f] >= 0 && cells[f] !== undefined)
+    .map((f) => ({ range: `${quote(input.tab!)}!${colLetter(col[f])}${row}`, values: [[cells[f]]] }));
+  if (data.length) await api("/values:batchUpdate", { method: "POST", body: JSON.stringify({ valueInputOption: "USER_ENTERED", data }) });
+  if (input.changes?.picture) await poRememberPicture(db, input.changes.picture);
+  return poList(db);
+}
+
+// ── iCargo: where each parcel is. No public API: this signs in as the shop, the same
+// way portal.icargothai.com does (secrets ICARGO_USERNAME, ICARGO_PASSWORD).
+const ICARGO = "https://api.icargothai.com";
+const ICARGO_QUERY = `query ($search: String) { trackings(first: 5, offset: 0, type: "-2", search: $search) {
+  trackings { tracking_number status status_txt trace { warehouse outchina thai payment export } } } }`;
+async function icargoToken() {
+  const username = Deno.env.get("ICARGO_USERNAME"), password = Deno.env.get("ICARGO_PASSWORD");
+  if (!username || !password) throw new Error("ยังไม่ได้ตั้งค่า ICARGO_USERNAME / ICARGO_PASSWORD ใน Supabase secrets");
+  const r = await fetch(ICARGO + "/api/v1/auth/local", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password }) });
+  const j = await r.json().catch(() => ({}));
+  if (!j.success || !j.token) throw new Error("เข้าสู่ระบบ iCargo ไม่สำเร็จ" + (j.message ? ": " + j.message : ""));
+  return j.token as string;
+}
+
+// Checks every parcel not yet in Thailand; a first arrival is stamped once, which is
+// what the admin's notifications read. Numbers iCargo doesn't know yet are skipped.
+async function poTrack(db: SupabaseClient) {
+  const { rows } = await poList(db);
+  const parcels = await poSetting<Record<string, PoParcel>>(db, "po_tracking", {});
+  const todo = new Map<string, string>();
+  for (const r of rows) {
+    const no = String(r.tracking ?? "");
+    if (no && !parcels[no]?.arrivedAt) todo.set(no, String(r.product ?? ""));
+  }
+  const arrived: string[] = [];
+  let checked = 0;
+  if (todo.size) {
+    const token = await icargoToken();
+    const now = new Date().toISOString();
+    for (const [no, product] of todo) {
+      const r = await fetch(ICARGO + "/graphql", { method: "POST",
+        headers: { "Content-Type": "application/json", "x-access-token": token },
+        body: JSON.stringify({ query: ICARGO_QUERY, variables: { search: no } }) });
+      const j = await r.json().catch(() => ({}));
+      if (j.errors?.length) throw new Error("iCargo: " + (j.errors[0].message ?? r.status));
+      const list = (j.data?.trackings?.trackings ?? []) as { tracking_number?: string }[];
+      const found = list.find((t) => String(t.tracking_number ?? "").trim() === no);
+      checked++;
+      if (!found) continue;
+      const { parcel, isNew } = poMergeParcel(parcels[no], found, product, now);
+      parcels[no] = parcel;
+      if (isNew) arrived.push(no);
+    }
+    await poSave(db, "po_tracking", parcels);
+  }
+  return { tracking: parcels, checked, arrived };
+}
+
+// Goes in the tab of the order date's year; a new year's tab is a copy of Template
+async function poAdd(db: SupabaseClient, input: PoInput) {
+  const cells = poCells(input);
+  const year = Number(String(input.orderDate ?? "").slice(0, 4)) || new Date(Date.now() + 7 * 3600 * 1000).getUTCFullYear();
+  const api = await poApi();
+  const all = await poMeta(api);
+  const wanted = tabKey(poTabTitle(year));
+  let tab = all.find((t) => isPoTab(t.title) && tabKey(t.title) === wanted);
+  if (!tab) {
+    const template = all.find((t) => /^template$/i.test(t.title.trim()));
+    if (!template) throw new Error(`ไม่พบแท็บ "${wanted}" และแท็บ Template ในชีต`);
+    await api(":batchUpdate", { method: "POST", body: JSON.stringify({
+      requests: [{ duplicateSheet: { sourceSheetId: template.sheetId, newSheetName: wanted } }],
+    }) });
+    tab = (await poMeta(api)).find((t) => t.title === wanted)!;
+  }
+  const got = await api("/values/" + encodeURIComponent(quote(tab.title)));
+  const values = (got.values ?? []) as unknown[][];
+  const col = poColumns(values[0] ?? []);
+  if (col.product < 0) throw new Error(`แท็บ "${tab.title}" ไม่มีคอลัมน์ Product Name ในแถวแรก`);
+  const row = poNextRow(values, col, cells);
+  if (row >= tab.gridProperties.rowCount) {
+    await api(":batchUpdate", { method: "POST", body: JSON.stringify({
+      requests: [{ appendDimension: { sheetId: tab.sheetId, dimension: "ROWS", length: 50 } }],
+    }) });
+  }
+  const data = (Object.keys(cells) as PoField[]).filter((f) => col[f] >= 0)
+    .map((f) => ({ range: `${quote(tab!.title)}!${colLetter(col[f])}${row + 1}`, values: [[cells[f]]] }));
+  await api("/values:batchUpdate", { method: "POST", body: JSON.stringify({ valueInputOption: "USER_ENTERED", data }) });
+  if (input.picture) await poRememberPicture(db, input.picture);
+  return { ...(await poList(db)), added: { tab: tab.title, row: row + 1 } };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   // The schedule sends the sync key; admins send their login
@@ -169,8 +345,23 @@ Deno.serve(async (req) => {
     if (isAdmin !== true) return reply({ error: "Forbidden — ต้องเข้าสู่ระบบแอดมิน" }, 403);
   }
   const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-  let input: { action?: string } = {};
+  let input: { action?: string; po?: any } = {};
   try { input = await req.json(); } catch { /* sync */ }
+  // The schedule may only run the iCargo check; the rest needs an admin login
+  if (input.action === "po-track") {
+    try { return reply(await poTrack(db)); } catch (e) { return reply({ error: (e as Error).message }); }
+  }
+  if (!byCron && String(input.action ?? "").startsWith("po-")) {
+    try {
+      if (input.action === "po-list") return reply(await poList(db));
+      if (input.action === "po-add") return reply(await poAdd(db, input.po ?? {}));
+      if (input.action === "po-update") return reply(await poUpdate(db, input.po ?? {}));
+      if (input.action === "po-pictures") return reply(await poPictures(db));
+      return reply({ error: "ไม่รู้จักคำสั่งนี้" });
+    } catch (e) { return reply({ error: (e as Error).message }); }
+  }
+  // A request this version doesn't know must never turn into a sheet update
+  if (input.action && input.action !== "sync" && input.action !== "preview") return reply({ error: "ไม่รู้จักคำสั่งนี้" });
   // A preview changes nothing, not even the "last run" record
   if (input.action === "preview" && !byCron) {
     try { return reply(await sync(db, true)); } catch (e) { return reply({ error: (e as Error).message }); }

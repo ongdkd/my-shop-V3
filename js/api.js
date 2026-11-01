@@ -1247,6 +1247,15 @@
           events.push({ type: 'delivered', at: r.delivered_at, id: r.id, customer: r.customer,
             courier: r.courier || '', tracking: r.tracking || '' });
         });
+        // Purchase orders iCargo reported at its Thai warehouse (sheets-sync keeps this)
+        var pt = await sb.from('app_settings').select('value').eq('key', 'po_tracking').maybeSingle();
+        var parcels = (!pt.error && pt.data && pt.data.value) || {};
+        Object.keys(parcels).forEach(function (no) {
+          var t = parcels[no];
+          if (t.arrivedAt && new Date(t.arrivedAt) > new Date(from)) {
+            events.push({ type: 'po_arrived', at: t.arrivedAt, id: no, tracking: no, product: t.product || '' });
+          }
+        });
         events.sort(function (a, b) { return new Date(b.at) - new Date(a.at); });
         return ok({ events: events.slice(0, 60), now: new Date().toISOString() });
       } catch (e) { return e.__json || err(e.message || e); }
@@ -2000,6 +2009,21 @@
           var st = r.error.context && r.error.context.status;
           if (st === 404) return err('ยังไม่ได้ deploy ฟังก์ชัน sheets-sync');
           return err('อัปเดตชีตไม่สำเร็จ' + (st ? ' (' + st + ')' : '') + ' — ลองใหม่อีกครั้ง');
+        }
+        var d = r.data || {};
+        return d.error ? err(d.error) : ok(d);
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
+    // Purchase Orders LOG (supabase/functions/sheets-sync): the Google Sheet is the record
+    // action: list · add · update · pictures · track
+    adminPurchaseOrders: async function (action, po) {
+      try {
+        requireSb(); await requireAdmin();
+        var r = await sb.functions.invoke('sheets-sync', { body: { action: 'po-' + action, po: po } });
+        if (r.error) {
+          var st = r.error.context && r.error.context.status;
+          return err('เชื่อมต่อชีตไม่สำเร็จ' + (st ? ' (' + st + ')' : ''));
         }
         var d = r.data || {};
         return d.error ? err(d.error) : ok(d);
