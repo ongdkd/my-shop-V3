@@ -1974,6 +1974,7 @@ var SLIP_RE = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+\/]+=*$/;
 // opts (status manager): noPick — apply to all items without a checklist;
 // api — server call (old-sheet rows use adminSetLegacyStatus); labels —
 // custom labels to offer; after — redraw instead of the order cards.
+var STATUS_FIXED = { 'จัดส่งแล้ว': 1, 'กำลังมาไทย': 1, 'ถึงไทยแล้ว': 1, 'ฝากของ': 1, 'คืนเงิน': 1, 'มีปัญหา': 1, 'ยกเลิก': 1 };
 function openStatusModal(items, opts) {
   opts = opts || {};
   var pending = items.filter(isWaiting);
@@ -2000,18 +2001,21 @@ function openStatusModal(items, opts) {
 
   var custom = {};
   (opts.labels || ((_ordLast && _ordLast.orders) || []).map(function(o) { return o.status; }))
-    .forEach(function(l) { if (l && l !== 'ยกเลิก' && l !== 'จัดส่งแล้ว' && l !== ARRIVED_LABEL) custom[l] = true; });
+    .concat(picked.map(function(o) { return o.status; }))
+    .forEach(function(l) { var g = statusGroup(l); if (g && g !== 'รอจัดส่ง' && !STATUS_FIXED[g]) custom[g] = true; });
   var sf = div('modal-field');
   var sl = document.createElement('label'); sl.htmlFor = 'stSelect'; sl.textContent = 'สถานะ'; sf.appendChild(sl);
   var sel = document.createElement('select'); sel.id = 'stSelect';
-  [['shipped', '📦 จัดส่งแล้ว'], ['', 'ยังไม่ส่ง'], [ARRIVED_LABEL, '🇹🇭 ' + ARRIVED_LABEL], ['ยกเลิก', '✕ ยกเลิก']]
+  [['shipped', '📦 จัดส่งแล้ว'], ['', 'ยังไม่ส่ง'], ['กำลังมาไทย', '✈️ กำลังมาไทย'], [ARRIVED_LABEL, '🇹🇭 ' + ARRIVED_LABEL], ['ฝากของ', '🗃️ ฝากของ'],
+   ['คืนเงิน', '💸 คืนเงิน'], ['มีปัญหา', '⚠️ มีปัญหา'], ['ยกเลิก', '✕ ยกเลิก']]
     .concat(Object.keys(custom).sort().map(function(c) { return [c, c]; }))
     .concat([['__new', '+ เพิ่มสถานะใหม่…']])
     .forEach(function(op) { var e = document.createElement('option'); e.value = op[0]; e.textContent = op[1]; sel.appendChild(e); });
   // Items still waiting → suggest "shipped"; otherwise show what they share
   var p0 = picked[0];
   var same = picked.every(function(o) { return !!o.shippedAt === !!p0.shippedAt && o.status === p0.status; });
-  sel.value = pending.length && !p0.status ? 'shipped' : same ? (p0.shippedAt ? 'shipped' : p0.status) : 'shipped';
+  var g0 = statusGroup(p0.status);
+  sel.value = pending.length && !g0 ? 'shipped' : same ? (p0.shippedAt || g0 === 'จัดส่งแล้ว' ? 'shipped' : g0) : 'shipped';
   if (opts.preset !== undefined) sel.value = opts.preset; // e.g. the 📦 ship buttons
   sf.appendChild(sel);
   var newInp = document.createElement('input'); newInp.placeholder = 'เช่น ถึงไทย'; newInp.maxLength = 40;
@@ -2301,8 +2305,27 @@ var STM_CAP = 400; // rows drawn at once; filters narrow the rest
 
 // Shipped / waiting / cancelled / custom label
 function stmCat(o) {
-  if (o.shippedAt || /^จัดส่งแล้ว/.test(o.status || '')) return 'จัดส่งแล้ว';
-  return o.status || 'รอจัดส่ง';
+  if (o.shippedAt) return 'จัดส่งแล้ว';
+  return statusGroup(o.status) || 'รอจัดส่ง';
+}
+
+// The sheet's many hand-typed labels, summed up for the status lists and filters.
+// Only the lists use this: each order keeps its own wording until its status is changed.
+// A label that fits no group (a new one typed by the shop) stays as itself.
+var STATUS_GROUPS = [
+  ['จัดส่งแล้ว', /จัดส่งแล้ว/],
+  ['', /สั่งซื้อแล้ว|^พรี$|รอจัดส่ง/],
+  ['ถึงไทยแล้ว', /^ถึ+งไทย/],
+  ['คืนเงิน', /คืน|หมด|ไม่มีของ/],
+  ['ยกเลิก', /ยกเลิก|cancel|cancle|ยึดมัดจำ/i],
+  ['ฝากของ', /ฝากของ/],
+  ['กำลังมาไทย', /กำลังมาไทย|ส่งเรือ|ถึงโกดัง|หิ้ว|แอค.*บิน|ติดด่าน|ตรุษจีน/],
+  ['มีปัญหา', /หาแอคไม่เจอ|ส่งผิด/]
+];
+function statusGroup(label) {
+  var v = String(label || '').trim();
+  for (var i = 0; i < STATUS_GROUPS.length; i++) if (STATUS_GROUPS[i][1].test(v)) return STATUS_GROUPS[i][0];
+  return v;
 }
 
 // Sheet history → website orders: pair each web order with its sheet row by
