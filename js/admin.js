@@ -1022,23 +1022,31 @@ function renderOrderLists() {
     return;
   }
  
-  // FIX 1: Sort — Open & visible first, Closed next, Hidden last
-  var sortedLists = allLists.slice().sort(function(a, b) {
-    var aHidden = ['hidden','hide','false','no'].indexOf(String(a.display).toLowerCase()) !== -1;
-    var bHidden = ['hidden','hide','false','no'].indexOf(String(b.display).toLowerCase()) !== -1;
-    if (aHidden !== bHidden) return aHidden ? 1 : -1;           // hidden sinks to bottom
-    if (a.status !== b.status) return a.status === 'Open' ? -1 : 1; // Open floats to top
-    return 0;
+  // Two sections: lists shown in the shop (open first, then closed) and hidden ones
+  function listHidden(l) { return ['hidden','hide','false','no'].indexOf(String(l.display).toLowerCase()) !== -1; }
+  var byStatus = function(a, b) { return a.status === b.status ? 0 : (a.status === 'Open' ? -1 : 1); };
+  var shownLists = allLists.filter(function(l) { return !listHidden(l); }).sort(byStatus);
+  var hiddenLists = allLists.filter(listHidden).sort(byStatus);
+  var sections = [
+    { title: '&#x1F3EA; แสดงในร้าน <span class="ol-section-sub">เปิด / ปิดรับ</span>', lists: shownLists, empty: 'ไม่มีรายการที่แสดงในร้าน' },
+    { title: '&#x1F576;&#xFE0F; ซ่อนจากร้าน', lists: hiddenLists, empty: 'ไม่มีรายการที่ซ่อนอยู่' }
+  ];
+  sections.forEach(function(sec) {
+    var head = div('ol-section-title', sec.title + ' <span class="ol-section-count">' + sec.lists.length + '</span>');
+    wrap.appendChild(head);
+    sec.grid = div('ol-grid');
+    if (!sec.lists.length) sec.grid.appendChild(div('ol-section-empty', sec.empty));
+    wrap.appendChild(sec.grid);
   });
- 
-  var grid = div('ol-grid'); grid.id = 'olGrid';
-  for (var i = 0; i < sortedLists.length; i++) {
-    var item = sortedLists[i];
+
+  for (var i = 0; i < allLists.length; i++) {
+    var item = i < shownLists.length ? shownLists[i] : hiddenLists[i - shownLists.length];
+    var grid = i < shownLists.length ? sections[0].grid : sections[1].grid;
     var isOpen = item.status === 'Open';
-    var isHidden = ['hidden','hide','false','no'].indexOf(String(item.display).toLowerCase()) !== -1;
+    var isHidden = listHidden(item);
  
     var card = div('ol-card'); card.setAttribute('data-row', item.rowIndex);
-    if (isHidden) card.style.opacity = '0.55';
+    if (isHidden) card.classList.add('ol-card-hidden');
  
     var img = document.createElement('img');
     img.src = cdnThumb(item.cover || item.image, 600) || PLACEHOLDER; img.className = 'ol-card-img';
@@ -1123,26 +1131,31 @@ function renderOrderLists() {
     grid.appendChild(card);
   }
  
-  wrap.appendChild(grid);
   el('content').innerHTML = ''; el('content').appendChild(wrap);
 
-  // Order of the cards = order customers see on the shop page
-  enableReorder(grid.children, sortedLists.map(function(l) { return l.rowIndex; }), function(order) {
-    grid.classList.add('busy');
-    apiCall('adminReorderOrderLists', order).then(function(res) {
-      grid.classList.remove('busy');
-      if (res.status !== 'Success') { toast(res.message || 'จัดลำดับไม่สำเร็จ', 'error'); return; }
-      toast('บันทึกลำดับแล้ว', 'success'); loadAllLists(renderOrderLists);
-    });
-  }, function(card) { var bar = div('reorder-bar'); card.appendChild(bar); return bar; });
+  // Order of the cards = order customers see on the shop page. Each section is
+  // reordered on its own; the saved order is always shown lists, then hidden.
+  var rowsOf = function(ls) { return ls.map(function(l) { return l.rowIndex; }); };
+  sections.forEach(function(sec, si) {
+    if (!sec.lists.length) return;
+    enableReorder(sec.grid.children, rowsOf(sec.lists), function(order) {
+      var full = si === 0 ? order.concat(rowsOf(hiddenLists)) : rowsOf(shownLists).concat(order);
+      wrap.classList.add('busy');
+      apiCall('adminReorderOrderLists', full).then(function(res) {
+        wrap.classList.remove('busy');
+        if (res.status !== 'Success') { toast(res.message || 'จัดลำดับไม่สำเร็จ', 'error'); return; }
+        toast('บันทึกลำดับแล้ว', 'success'); loadAllLists(renderOrderLists);
+      });
+    }, function(card) { var bar = div('reorder-bar'); card.appendChild(bar); return bar; });
+  });
 
-  grid.onchange = function(e) {
+  wrap.onchange = function(e) {
     var tog = e.target.closest('.ol-tog'); if (!tog) return;
     var row = parseInt(tog.getAttribute('data-row'), 10);
     var lbl2 = tog.closest('.toggle-wrap').querySelector('.tlbl');
     toggleListStatus(row, tog, lbl2);
   };
-  grid.onclick = function(e) {
+  wrap.onclick = function(e) {
     var hb = e.target.closest('.ol-hide');
     if (hb) {
       var row = parseInt(hb.getAttribute('data-row'), 10);
@@ -2280,6 +2293,127 @@ function stmCat(o) {
   return o.status || 'รอจัดส่ง';
 }
 
+// Sheet history → website orders: pair each web order with its sheet row by
+// customer + product (repeats pair oldest with oldest) and list what would change.
+// Never touches POS orders, orders on a delivery bill, or ones already shipped/cancelled.
+function planStatusFromSheet(orders, rows) {
+  function norm(v) { return String(v || '').toLowerCase().replace(/\s+/g, ''); }
+  function key(o) { return norm(o.customer) + '|' + norm(o.product); }
+  var byKey = {};
+  rows.slice().sort(function(a, b) { return (a.sort || 0) - (b.sort || 0); }).forEach(function(r) {
+    (byKey[key(r)] = byKey[key(r)] || []).push(r);
+  });
+  var plan = { groups: {}, total: 0, noMatch: 0, done: 0, onBill: 0, same: 0 };
+  orders.filter(function(o) { return o.remark !== 'POS'; })
+    .sort(function(a, b) { return String(a.timestamp).localeCompare(String(b.timestamp)); })
+    .forEach(function(o) {
+      var list = byKey[key(o)], r = list && list.shift();
+      if (!r) { plan.noMatch++; return; }
+      if (o.shippedAt || o.status === 'ยกเลิก') { plan.done++; return; }
+      if (o.deliveryId) { plan.onBill++; return; }
+      var st = String(r.status || '').trim();
+      var shipped = /^จัดส่งแล้ว/.test(st);
+      // Every spelling of "arrived" in the sheet goes to the one ถึงไทย tab
+      var label = shipped ? 'จัดส่งแล้ว' : /^ถึ+งไทย/.test(st) ? ARRIVED_LABEL : st;
+      // Blank, "ordered" and "waiting" are what an unshipped web order already means
+      if (!st || st === 'สั่งซื้อแล้ว' || st === 'รอจัดส่ง' || (!shipped && label === o.status)) { plan.same++; return; }
+      var g = plan.groups[label] = plan.groups[label] || { label: label, shipped: shipped, items: [] };
+      g.items.push({ id: o.id, customer: o.customer, product: o.product, from: o.status, tracking: shipped ? String(r.tracking || '').trim() : '' });
+      plan.total++;
+    });
+  return plan;
+}
+
+function openStatusFromSheet() {
+  var body = el('modalBody'); body.innerHTML = ''; body.appendChild(makeSpinner());
+  openModal('&#x1F504; อัปเดตสถานะเว็บจากชีต', '', null);
+  Promise.all([apiCall('adminGetAllOrders'), apiCall('adminGetLegacy')]).then(function(r) {
+    if (r[0].status !== 'Success' || r[1].status !== 'Success') {
+      body.innerHTML = ''; body.appendChild(div('state-empty', escapeHtml(r[0].message || r[1].message || 'โหลดไม่สำเร็จ'))); return;
+    }
+    drawStatusFromSheet(planStatusFromSheet(r[0].orders || [], r[1].rows || []));
+  });
+}
+
+function drawStatusFromSheet(plan) {
+  var body = el('modalBody'); body.innerHTML = '';
+  var groups = Object.keys(plan.groups).map(function(k) { return plan.groups[k]; })
+    .sort(function(a, b) { return b.items.length - a.items.length; });
+  if (!groups.length) body.appendChild(div('state-empty', 'สถานะตรงกับชีตแล้ว ไม่มีอะไรต้องอัปเดตค่ะ'));
+  else body.appendChild(div('slip-meta', 'ยังไม่มีอะไรเปลี่ยนจนกว่าจะกดอัปเดต · เอาเครื่องหมายออกจากกลุ่มที่ไม่ต้องการได้ · ' +
+    'รายการ "จัดส่งแล้ว" จะขึ้นวันที่ส่งเป็นวันนี้ เพราะชีตไม่มีวันที่ส่ง'));
+  groups.forEach(function(g) {
+    var box = div('sfs-group');
+    var head = document.createElement('label'); head.className = 'sfs-head';
+    var chk = document.createElement('input'); chk.type = 'checkbox'; chk.checked = true;
+    chk.onchange = function() { g.off = !chk.checked; refresh(); };
+    head.appendChild(chk);
+    var name = document.createElement('span'); name.textContent = g.label; head.appendChild(name);
+    var n = document.createElement('b'); n.textContent = g.items.length + ' รายการ'; head.appendChild(n);
+    box.appendChild(head);
+    var more = document.createElement('details');
+    var sum = document.createElement('summary'); sum.textContent = 'ดูรายการ'; more.appendChild(sum);
+    more.addEventListener('toggle', function() {
+      if (!more.open || more.querySelector('.sfs-items')) return;
+      var ul = div('sfs-items');
+      g.items.forEach(function(it) {
+        var line = div('sfs-item');
+        line.textContent = it.customer + ' · ' + it.product + (it.from ? ' (เดิม: ' + it.from + ')' : '') + (it.tracking ? ' → ' + it.tracking : '');
+        ul.appendChild(line);
+      });
+      more.appendChild(ul);
+    });
+    box.appendChild(more);
+    body.appendChild(box);
+  });
+  body.appendChild(div('slip-meta', 'ข้าม: ไม่พบในชีต ' + plan.noMatch + ' · ส่งแล้ว/ยกเลิกแล้ว ' + plan.done +
+    ' · อยู่ในบิลค่าส่ง ' + plan.onBill + ' · ชีตว่างหรือตรงกันอยู่แล้ว ' + plan.same));
+  if (!groups.length) return;
+  var save = el('modalSave');
+  function picked() { return groups.filter(function(g) { return !g.off; }); }
+  function refresh() {
+    var n = picked().reduce(function(t, g) { return t + g.items.length; }, 0);
+    save.textContent = 'อัปเดต ' + n + ' รายการ'; save.disabled = !n; return n;
+  }
+  openModal('&#x1F504; อัปเดตสถานะเว็บจากชีต', '', function() {
+    var n = refresh(); if (!n) return;
+    askConfirm('อัปเดตสถานะออเดอร์เว็บ ' + n + ' รายการตามชีต?', 'อัปเดต').then(function(yes) {
+      if (yes) applyStatusFromSheet(picked(), n);
+    });
+  });
+  refresh();
+}
+
+// One call per distinct status + tracking; four at a time
+function applyStatusFromSheet(groups, total) {
+  var save = el('modalSave'), jobs = {}, done = 0, failed = 0, firstError = '';
+  groups.forEach(function(g) {
+    g.items.forEach(function(it) {
+      var k = g.label + '|' + it.tracking;
+      (jobs[k] = jobs[k] || { shipped: g.shipped, label: g.label, tracking: it.tracking, ids: [] }).ids.push(it.id);
+    });
+  });
+  var queue = Object.keys(jobs).map(function(k) { return jobs[k]; });
+  save.disabled = true; el('modalCancel').disabled = true;
+  function next() {
+    var j = queue.shift();
+    if (!j) return Promise.resolve();
+    var call = j.shipped ? apiCall('adminSetOrderStatus', j.ids, 'shipped', j.tracking, '') : apiCall('adminSetOrderStatus', j.ids, j.label, '', '');
+    return call.then(function(res) {
+      if (res.status === 'Success') done += j.ids.length;
+      else { failed += j.ids.length; firstError = firstError || res.message || ''; }
+      save.textContent = 'กำลังอัปเดต ' + (done + failed) + '/' + total;
+      return next();
+    });
+  }
+  Promise.all([next(), next(), next(), next()]).then(function() {
+    el('modalCancel').disabled = false;
+    closeModal();
+    if (failed) toast('อัปเดตแล้ว ' + done + ' · ไม่สำเร็จ ' + failed + (firstError ? ' — ' + firstError : ''), 'error');
+    else toast('อัปเดตสถานะแล้ว ' + done + ' รายการ', 'success');
+  });
+}
+
 // Website orders → the status Google Sheet (supabase/functions/sheets-sync): runs
 // every 15 minutes by itself; this shows the last run and runs it now
 function openSheetsSync() {
@@ -2372,6 +2506,7 @@ function renderHistoryPanel() {
   setTopbar('ประวัติจากชีต', 'สถานะออเดอร์เก่าที่นำเข้าจาก Google Sheet');
   el('topbarActions').innerHTML = '';
   el('topbarActions').appendChild(makeBtn('btn btn-ghost btn-sm', '&#x1F4E5; นำเข้าจากชีต', openImportStatusSheet));
+  el('topbarActions').appendChild(makeBtn('btn btn-ghost btn-sm', '&#x1F504; สถานะเว็บจากชีต', openStatusFromSheet));
   el('topbarActions').appendChild(makeBtn('btn btn-primary btn-sm', '&#x1F4E4; อัปเดตชีต', openSheetsSync));
   el('content').innerHTML = ''; el('content').appendChild(makeSpinner());
   if (_stm.legacy) { drawStatusManager(); return; }
