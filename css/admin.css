@@ -91,6 +91,7 @@ button{font-family:var(--font);cursor:pointer;border:none;}
 .ol-section-count{margin-left:auto;font-size:0.74rem;font-weight:700;color:var(--text-2);background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:1px 9px;}
 .ol-section-empty{grid-column:1/-1;padding:18px;text-align:center;font-size:0.8rem;color:var(--text-3);border:1.5px dashed var(--border);border-radius:var(--radius-md);}
 .ol-card-hidden{opacity:0.6;}
+.slip-del{color:var(--error);}
 .sfs-group{border:1.5px solid var(--border);border-radius:var(--radius-md);padding:9px 12px;margin:8px 0;}
 .sfs-head{display:flex;align-items:center;gap:8px;font-size:0.84rem;font-weight:600;cursor:pointer;}
 .sfs-head b{margin-left:auto;font-size:0.76rem;color:var(--text-2);}

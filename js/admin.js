@@ -2271,6 +2271,18 @@ function drawSlips(pays) {
         row.classList.add('picked');
       });
       mv.type = 'button'; mv.title = 'ย้ายสลิปไปรายการ/บิลอื่น'; side.appendChild(mv);
+      var rm = makeBtn('btn btn-ghost btn-sm slip-del', 'ลบ', function(e) {
+        e.stopPropagation();
+        askConfirm('ลบสลิปของ ' + p.customer + ' ' + baht(p.amount) + '?\nกู้คืนไม่ได้ · ถ้าเป็นสลิปเดียวของรายการนี้ ออเดอร์จะกลับไปขั้นรอชำระเงิน', 'ลบสลิป').then(function(ok) {
+          if (!ok) return;
+          rm.disabled = true;
+          apiCall('adminDeletePayment', p.id).then(function(res) {
+            if (res.status !== 'Success') { rm.disabled = false; toast(res.message || 'ลบไม่สำเร็จ', 'error'); return; }
+            toast('ลบสลิปแล้ว', 'success'); _slipTargets = null; renderSlipsPanel();
+          });
+        });
+      });
+      rm.type = 'button'; rm.title = 'ลบสลิปนี้'; side.appendChild(rm);
       row.appendChild(side);
       row.onclick = function() { openPaymentsModal([p], p.customer); };
       row.onkeydown = function(e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); row.onclick(); } };
@@ -2675,8 +2687,12 @@ function isDelivered(b) {
 function stageOf(o, B) {
   if (o.status === 'ยกเลิก') return 'done';
   var b = o.deliveryId ? B.billById[o.deliveryId] : null;
-  // Parcels booked with iShip stay in tracking until iShip says delivered
-  if (o.shippedAt) return b && b.tracking && !isDelivered(b) ? 'track' : 'done';
+  // A bill's parcel stays in tracking until delivered: iShip reports that for parcels it
+  // booked (a hand-typed number on another bill shares the report); the rest use ✓ ส่งสำเร็จ.
+  if (o.shippedAt) {
+    var tr = b && (b.tracking || o.tracking);
+    return tr && !isDelivered(b) && !isDelivered(B.billByTracking[tr] || b) ? 'track' : 'done';
+  }
   // A sent bill waits in step 2 until the customer pays it
   if (b) return b.sentAt && B.billPaid[b.id] ? 'ship' : 'arrive';
   return B.paid[o.listId + '|' + normCust(o.customer)] || PAID_RE.test(o.status || '') ? 'arrive' : 'pay';
@@ -2710,7 +2726,8 @@ function drawStages() {
     wrap.appendChild(div('state-empty', 'ต้องรันไฟล์ supabase/migrations/2026-10-29c-delivery-bills.sql ใน SQL Editor ก่อน'));
     return;
   }
-  B.billById = {}; B.deliveries.forEach(function(b) { B.billById[b.id] = b; });
+  B.billById = {}; B.billByTracking = {};
+  B.deliveries.forEach(function(b) { B.billById[b.id] = b; if (b.tracking) B.billByTracking[b.tracking] = b; });
   B.paid = {}; B.billPaid = {};
   B.payments.forEach(function(p) {
     if (p.deliveryId) B.billPaid[p.deliveryId] = true;
@@ -2795,7 +2812,7 @@ function drawStages() {
     var b = o.deliveryId ? B.billById[o.deliveryId] : null;
     if (o.status === 'ยกเลิก') return div('oitem-ship cancel', 'ยกเลิก');
     if (o.shippedAt) {
-      var t = (b && b.tracking && isDelivered(b) ? '✓ ส่งถึงแล้ว' : '📦 ส่งแล้ว') + (o.tracking ? ' · ' + (o.courier ? Couriers.name(o.courier) + ' ' : '') + o.tracking : '');
+      var t = (b && (isDelivered(b) || isDelivered(B.billByTracking[o.tracking] || b)) ? '✓ ส่งถึงแล้ว' : '📦 ส่งแล้ว') + (o.tracking ? ' · ' + (o.courier ? Couriers.name(o.courier) + ' ' : '') + o.tracking : '');
       var s = div('oitem-ship'); s.textContent = t; return s;
     }
     var w = div('oitem-ship ' + (o.status ? 'custom' : 'waiting')); w.textContent = o.status || 'รอสินค้า'; return w;
@@ -3274,32 +3291,39 @@ function drawStages() {
   // ── 4. Booked with iShip, not delivered yet ──
   function drawTrack() {
     var t = q();
-    var bills = billsOf(S.track).filter(function(x) { return !t || x.items.some(hit) || (x.b.tracking || '').toLowerCase().indexOf(t) !== -1; });
+    var bills = billsOf(S.track).filter(function(x) { return !t || x.items.some(hit) || parcelOf(x).tracking.toLowerCase().indexOf(t) !== -1; });
     if (!bills.length) return empty(STAGES[3].empty);
     var bar = div('bill-tools');
-    var all = makeBtn('btn btn-ghost btn-sm', '&#x1F504; เช็คสถานะทั้งหมด (' + bills.length + ')', function() { refreshAll(bills, all); });
-    all.type = 'button'; bar.appendChild(all);
+    // iShip only knows the parcels it booked; two bills can share one parcel
+    var known = {};
+    bills.forEach(function(x) { var p = parcelOf(x); if (p.main) known[p.tracking] = true; });
+    var numbers = Object.keys(known);
+    if (numbers.length) {
+      var all = makeBtn('btn btn-ghost btn-sm', '&#x1F504; เช็คสถานะทั้งหมด (' + numbers.length + ')', function() { refreshAll(numbers, all); });
+      all.type = 'button'; bar.appendChild(all);
+    }
     var pk = makeBtn('btn btn-ghost btn-sm', '&#x1F69A; เรียกรถเข้ารับ', openPickupModal); pk.type = 'button'; bar.appendChild(pk);
     body.appendChild(bar);
     var grid = div('stg-grid');
     bills.slice(0, STAGE_CAP).forEach(function(x) {
-      var b = x.b;
+      var p = parcelOf(x), b = p.main;
       var card = div('bill-card stg-bill');
       var top = div('bill-order-top');
       var nm = document.createElement('strong'); nm.textContent = billTitle(x); top.appendChild(nm);
       card.appendChild(top);
       var tr = div('stg-track');
-      var a = document.createElement('a'); a.href = Couriers.trackUrl(b.courier, b.tracking); a.target = '_blank'; a.rel = 'noopener';
-      a.textContent = Couriers.name(b.courier) + ' · ' + b.tracking; tr.appendChild(a);
-      var st = div('stg-track-st' + (/cancel|return|fail/i.test(b.ishipCode || '') ? ' bad' : ''));
-      st.textContent = (b.ishipStatus || 'รอเข้ารับพัสดุ') + (b.ishipStatusAt ? ' · ' + when(b.ishipStatusAt) : '');
+      var a = document.createElement('a'); a.href = Couriers.trackUrl(p.courier, p.tracking); a.target = '_blank'; a.rel = 'noopener';
+      a.textContent = (Couriers.name(p.courier) ? Couriers.name(p.courier) + ' · ' : '') + p.tracking; tr.appendChild(a);
+      var st = div('stg-track-st' + (b && /cancel|return|fail/i.test(b.ishipCode || '') ? ' bad' : ''));
+      st.textContent = b ? (b.ishipStatus || 'รอเข้ารับพัสดุ') + (b.ishipStatusAt ? ' · ' + when(b.ishipStatusAt) : '') : 'กรอกเลขพัสดุเอง — iShip ไม่ได้ติดตาม';
       tr.appendChild(st);
       card.appendChild(tr);
       itemList(card, x.items);
       var act = div('stg-actions');
-      [['&#x1F5A8; ใบปะหน้า', function() { openIshipLabel(b.tracking); }],
-       ['&#x1F4CD; เช็คสถานะ', function() { openIshipTrace(b.tracking, b.courier, renderStatusPanel); }]].forEach(function(p) {
-        var bt = makeBtn('btn btn-ghost btn-sm', p[0], p[1]); bt.type = 'button'; act.appendChild(bt);
+      (b ? [['&#x1F5A8; ใบปะหน้า', function() { openIshipLabel(p.tracking); }],
+            ['&#x1F4CD; เช็คสถานะ', function() { openIshipTrace(p.tracking, p.courier, renderStatusPanel); }]]
+         : [['&#x2713; ส่งสำเร็จ', function() { markDelivered(x); }]]).forEach(function(pair) {
+        var bt = makeBtn('btn btn-ghost btn-sm', pair[0], pair[1]); bt.type = 'button'; act.appendChild(bt);
       });
       card.appendChild(act);
       grid.appendChild(card);
@@ -3307,14 +3331,35 @@ function drawStages() {
     body.appendChild(grid); more(bills.length);
   }
   // Asks iShip for each parcel's latest step (saved by the function), then reloads
-  function refreshAll(bills, btn) {
+  function refreshAll(numbers, btn) {
     btn.disabled = true;
     var i = 0;
     (function next() {
-      if (i >= bills.length) { toast('อัปเดตสถานะพัสดุแล้ว', 'success'); renderStatusPanel(); return; }
-      btn.textContent = '🔄 กำลังเช็ค ' + (i + 1) + '/' + bills.length;
-      apiCall('adminIship', 'trace', { tracking: bills[i++].b.tracking }).then(next);
+      if (i >= numbers.length) { toast('อัปเดตสถานะพัสดุแล้ว', 'success'); renderStatusPanel(); return; }
+      btn.textContent = '🔄 กำลังเช็ค ' + (i + 1) + '/' + numbers.length;
+      apiCall('adminIship', 'trace', { tracking: numbers[i++] }).then(next);
     })();
+  }
+  // The number on the bill, or the one typed by hand on its shipped items.
+  // main: the bill iShip reports on for that number, if any.
+  function parcelOf(x) {
+    var shipped = x.items.filter(function(o) { return o.shippedAt && o.tracking; })[0];
+    var tracking = x.b.tracking || (shipped ? shipped.tracking : '');
+    var main = B.billByTracking[tracking] || null;
+    return { tracking: tracking, main: main, courier: (main && main.courier) || x.b.courier || (shipped ? shipped.courier : '') };
+  }
+  function markDelivered(x) {
+    askConfirm('พัสดุของ ' + billTitle(x) + ' ถึงลูกค้าแล้ว — ย้ายไปขั้น "สำเร็จแล้ว"?', 'ส่งสำเร็จ').then(function(ok) {
+      if (!ok) return;
+      body.classList.add('busy');
+      apiCall('adminSetDeliveryDelivered', x.b.id).then(function(res) {
+        body.classList.remove('busy');
+        if (res.status !== 'Success') { toast(res.message || 'บันทึกไม่สำเร็จ', 'error'); return; }
+        x.b.deliveredAt = res.deliveredAt;
+        toast('ย้ายไป "สำเร็จแล้ว" แล้ว', 'success');
+        drawStages();
+      });
+    });
   }
 
   // ── 5. Delivered, shipped outside iShip, or cancelled ──

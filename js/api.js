@@ -1358,6 +1358,18 @@
     },
 
     // Paid bill the customer wants shipped with their next order: on = hold it
+    // Parcels iShip can't report on: the shop says when they arrived
+    adminSetDeliveryDelivered: async function (deliveryId) {
+      try {
+        requireSb(); await requireAdmin();
+        var at = new Date().toISOString();
+        var r = await sb.from('deliveries').update({ delivered_at: at }).eq('id', deliveryId).select('id');
+        if (r.error) return err(r.error.message);
+        if (!r.data || !r.data.length) return err('ไม่พบบิลนี้');
+        return ok({ deliveredAt: at });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
     adminSetDeliveryHold: async function (deliveryId, on) {
       try {
         requireSb(); await requireAdmin();
@@ -1417,6 +1429,17 @@
       try {
         requireSb(); await requireAdmin();
         return ok({ payments: await fetchPayments(null) });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
+    // Removes a slip for good, photo included
+    adminDeletePayment: async function (paymentId) {
+      try {
+        requireSb(); await requireAdmin();
+        var r = await sb.from('payments').delete().eq('id', paymentId).select('id');
+        if (r.error) return err(r.error.message);
+        if (!r.data || !r.data.length) return err('ไม่พบสลิปนี้');
+        return ok({});
       } catch (e) { return e.__json || err(e.message || e); }
     },
 
