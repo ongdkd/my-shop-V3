@@ -12,7 +12,7 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { planSheet, quarterIndex, quarterKey, quote, tabKey, type Want } from "./plan.ts";
 import { unzipSync } from "npm:fflate@0.8.2";
-import { colLetter, isPoTab, parsePoTab, poCells, poColumns, poEditCells, poMergeParcel, poNextRow, poTabTitle, xlsxPictures, type PoField, type PoInput, type PoParcel } from "./po.ts";
+import { colLetter, isPoTab, parsePoTab, PO_ORDER_SHOT_HEAD, poCells, poColumns, poEditCells, poMergeParcel, poNextRow, poShotPlace, poStatusText, poTabTitle, xlsxPictures, type PoField, type PoInput, type PoParcel } from "./po.ts";
 
 // The shop's sheet is app_settings 'sheets'.url (set by 📥 นำเข้าจากชีต); this is only the fallback
 const DEFAULT_SHEET_ID = Deno.env.get("STATUS_SHEET_ID") || "1tXcsJ-qNRGLXsPCSu4srsmuibxhYZZTRrALn5BVeIx8";
@@ -166,8 +166,23 @@ async function poApi() {
   return (path: string, init?: RequestInit) => sheets(PO_SHEET_ID, token, email, path, init);
 }
 const poMeta = async (api: Awaited<ReturnType<typeof poApi>>) =>
-  ((await api("?fields=sheets.properties(title,sheetId,gridProperties.rowCount)")).sheets ?? []).map((s: any) => s.properties) as
-    { title: string; sheetId: number; gridProperties: { rowCount: number } }[];
+  ((await api("?fields=sheets.properties(title,sheetId,gridProperties(rowCount,columnCount))")).sheets ?? []).map((s: any) => s.properties) as
+    { title: string; sheetId: number; gridProperties: { rowCount: number; columnCount: number } }[];
+
+type PoApi = Awaited<ReturnType<typeof poApi>>;
+// The Order Screenshot column doesn't exist until the first one is saved; goes after the last column
+async function poEnsureOrderShot(api: PoApi, tab: { title: string; sheetId: number; gridProperties: { columnCount: number } }, header: unknown[], col: Record<PoField, number>) {
+  if (col.orderShot >= 0) return;
+  const at = header.length;
+  if (at >= tab.gridProperties.columnCount) {
+    await api(":batchUpdate", { method: "POST", body: JSON.stringify({
+      requests: [{ appendDimension: { sheetId: tab.sheetId, dimension: "COLUMNS", length: 1 } }],
+    }) });
+  }
+  await api("/values:batchUpdate", { method: "POST", body: JSON.stringify({ valueInputOption: "RAW",
+    data: [{ range: `${quote(tab.title)}!${colLetter(at)}1`, values: [[PO_ORDER_SHOT_HEAD]] }] }) });
+  col.orderShot = at;
+}
 
 // Small records kept beside the sheet: iCargo status per tracking number, uploaded pictures
 async function poSetting<T>(db: SupabaseClient, key: string, fallback: T): Promise<T> {
@@ -221,15 +236,34 @@ async function poPictures(db: SupabaseClient) {
   const known = await poSetting<Record<string, string>>(db, "po_pictures", {});
   const pictures: Record<string, string> = {};
   let added = false;
+  const api = await poApi();
+  const tabs = (await poMeta(api)).filter((t) => isPoTab(t.title));
+  const heads = tabs.length ? await api("/values:batchGet?" + tabs.map((t) => "ranges=" + encodeURIComponent(quote(t.title) + "!1:1")).join("&")) : {};
+  const colsOf = new Map(tabs.map((t, i) => [t.title, poColumns(heads.valueRanges?.[i]?.values?.[0] ?? [])]));
   for (const p of xlsxPictures(files)) {
-    const bytes = files[p.media];
-    if (!isPoTab(p.tab) || !bytes) continue;
+    const bytes = files[p.media], col = colsOf.get(p.tab);
+    if (!col || !bytes || p.col !== col.picture) continue;
     const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))).map((b) => b.toString(16).padStart(2, "0")).join("");
     if (!known[hash]) { known[hash] = await poUpload(bytes, p.media.split("/").pop()!); added = true; }
     pictures[p.tab + "|" + p.row] = known[hash];
   }
   if (added) await poSave(db, "po_pictures", known);
   return { pictures };
+}
+
+// An order screenshot goes to the shop's Drive folder through its Apps Script
+// (scripts/po-drive-upload.gs): the service account can't own files in a personal Drive
+async function poSaveShot(input: { image?: string; orderDate?: string; product?: string }) {
+  const url = Deno.env.get("PO_DRIVE_URL"), key = Deno.env.get("PO_DRIVE_KEY");
+  if (!url || !key) throw new Error("ยังไม่ได้ตั้งค่าการอัปโหลดไป Google Drive (PO_DRIVE_URL, PO_DRIVE_KEY)");
+  const m = String(input.image ?? "").match(/^data:(image\/[a-z+]+);base64,(.+)$/);
+  if (!m) throw new Error("ไฟล์นี้ไม่ใช่รูปภาพ");
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(String(input.orderDate)) ? String(input.orderDate) : new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10);
+  const r = await fetch(url, { method: "POST", headers: { "Content-Type": "text/plain" },
+    body: JSON.stringify({ key, mime: m[1], base64: m[2], ...poShotPlace(date, input.product, m[1]) }) });
+  const j = await r.json().catch(() => ({}));
+  if (!j.url) throw new Error("อัปโหลดไป Google Drive ไม่สำเร็จ" + (j.error ? ": " + j.error : ""));
+  return { url: j.url as string };
 }
 
 // One edit: the row must still hold the product the admin opened, in case rows moved in the sheet
@@ -244,6 +278,10 @@ async function poUpdate(db: SupabaseClient, input: { tab?: string; row?: number;
   const now = String(values[row - 1]?.[col.product] ?? "").trim().replace(/\s+/g, " ");
   if (col.product < 0 || now !== String(input.product ?? "").trim().replace(/\s+/g, " ")) {
     throw new Error("แถวนี้ในชีตเปลี่ยนไปแล้ว — กดรีเฟรชแล้วลองใหม่");
+  }
+  if (cells.orderShot) {
+    const tab = (await poMeta(api)).find((t) => t.title === input.tab);
+    if (tab) await poEnsureOrderShot(api, tab, (values[0] ?? []) as unknown[], col);
   }
   const data = (Object.keys(cells) as PoField[]).filter((f) => col[f] >= 0 && cells[f] !== undefined)
     .map((f) => ({ range: `${quote(input.tab!)}!${colLetter(col[f])}${row}`, values: [[cells[f]]] }));
@@ -262,8 +300,11 @@ async function icargoToken() {
   if (!username || !password) throw new Error("ยังไม่ได้ตั้งค่า ICARGO_USERNAME / ICARGO_PASSWORD ใน Supabase secrets");
   const r = await fetch(ICARGO + "/api/v1/auth/local", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password }) });
   const j = await r.json().catch(() => ({}));
-  if (!j.success || !j.token) throw new Error("เข้าสู่ระบบ iCargo ไม่สำเร็จ" + (j.message ? ": " + j.message : ""));
-  return j.token as string;
+  // The portal keeps both from j.user and sends both with every request
+  const token = j.user?.token as string | undefined;
+  if (!j.success) throw new Error("เข้าสู่ระบบ iCargo ไม่สำเร็จ" + (j.message ? ": " + j.message : ""));
+  if (!token) throw new Error("iCargo เปลี่ยนรูปแบบการเข้าสู่ระบบ (ไม่พบ token)");
+  return { "x-access-token": token, "x-refresh-token": String(j.user?.refreshToken ?? "") };
 }
 
 // Checks every parcel not yet in Thailand; a first arrival is stamped once, which is
@@ -277,13 +318,13 @@ async function poTrack(db: SupabaseClient) {
     if (no && !parcels[no]?.arrivedAt) todo.set(no, String(r.product ?? ""));
   }
   const arrived: string[] = [];
-  let checked = 0;
+  let checked = 0, statusWrites = 0;
   if (todo.size) {
-    const token = await icargoToken();
+    const auth = await icargoToken();
     const now = new Date().toISOString();
     for (const [no, product] of todo) {
       const r = await fetch(ICARGO + "/graphql", { method: "POST",
-        headers: { "Content-Type": "application/json", "x-access-token": token },
+        headers: { "Content-Type": "application/json", ...auth },
         body: JSON.stringify({ query: ICARGO_QUERY, variables: { search: no } }) });
       const j = await r.json().catch(() => ({}));
       if (j.errors?.length) throw new Error("iCargo: " + (j.errors[0].message ?? r.status));
@@ -295,9 +336,24 @@ async function poTrack(db: SupabaseClient) {
       parcels[no] = parcel;
       if (isNew) arrived.push(no);
     }
+    // Each step reached is written to Status once: anything the shop types afterwards stays
+    const data: { range: string; values: string[][] }[] = [];
+    const api = await poApi();
+    const heads = new Map<string, Record<PoField, number>>();
+    for (const r of rows) {
+      const no = String(r.tracking ?? ""), p = parcels[no], text = poStatusText(p?.trace);
+      if (!no || !text || p.sheetStatus === text) continue;
+      const tab = String(r.tab);
+      if (!heads.has(tab)) heads.set(tab, poColumns((await api("/values/" + encodeURIComponent(quote(tab) + "!1:1"))).values?.[0] ?? []));
+      const c = heads.get(tab)!.status;
+      if (c >= 0) data.push({ range: `${quote(tab)}!${colLetter(c)}${r.row}`, values: [["'" + text]] });
+    }
+    if (data.length) await api("/values:batchUpdate", { method: "POST", body: JSON.stringify({ valueInputOption: "USER_ENTERED", data }) });
+    for (const no of todo.keys()) { const t = poStatusText(parcels[no]?.trace); if (t) parcels[no].sheetStatus = t; }
     await poSave(db, "po_tracking", parcels);
+    statusWrites = data.length;
   }
-  return { tracking: parcels, checked, arrived };
+  return { tracking: parcels, checked, arrived, statusWrites, ...(statusWrites ? await poList(db) : {}) };
 }
 
 // Goes in the tab of the order date's year; a new year's tab is a copy of Template
@@ -320,6 +376,7 @@ async function poAdd(db: SupabaseClient, input: PoInput) {
   const values = (got.values ?? []) as unknown[][];
   const col = poColumns(values[0] ?? []);
   if (col.product < 0) throw new Error(`แท็บ "${tab.title}" ไม่มีคอลัมน์ Product Name ในแถวแรก`);
+  if (cells.orderShot) await poEnsureOrderShot(api, tab, (values[0] ?? []) as unknown[], col);
   const row = poNextRow(values, col, cells);
   if (row >= tab.gridProperties.rowCount) {
     await api(":batchUpdate", { method: "POST", body: JSON.stringify({
@@ -357,6 +414,7 @@ Deno.serve(async (req) => {
       if (input.action === "po-add") return reply(await poAdd(db, input.po ?? {}));
       if (input.action === "po-update") return reply(await poUpdate(db, input.po ?? {}));
       if (input.action === "po-pictures") return reply(await poPictures(db));
+      if (input.action === "po-shot") return reply(await poSaveShot(input.po ?? {}));
       return reply({ error: "ไม่รู้จักคำสั่งนี้" });
     } catch (e) { return reply({ error: (e as Error).message }); }
   }

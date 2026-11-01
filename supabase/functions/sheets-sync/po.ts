@@ -23,7 +23,10 @@ export const PO_COLUMNS = [
   { id: "saleUnit", find: "sale price (unit)" },
   { id: "saleBox", find: "sale price (box)" },
   { id: "saleShopee", find: "sale on shopee" },
+  // Link to the order screenshot in Drive. Not in the sheet to begin with: added at the end the first time one is saved
+  { id: "orderShot", find: "order screenshot" },
 ] as const;
+export const PO_ORDER_SHOT_HEAD = "Order Screenshot";
 export type PoField = typeof PO_COLUMNS[number]["id"];
 export type PoInput = Partial<Record<PoField, string>>;
 
@@ -62,6 +65,7 @@ export function parsePoTab(title: string, values: unknown[][], formulas: unknown
     const row: Record<string, string | number> = { tab: title, row: i + 1 };
     for (const c of PO_COLUMNS) row[c.id] = col[c.id] >= 0 ? clean(r[col[c.id]]) : "";
     row.picture = col.picture >= 0 ? pictureUrl(formulas[i]?.[col.picture]) : "";
+    row.orderShot = col.orderShot >= 0 ? pictureUrl(formulas[i]?.[col.orderShot]) : "";
     rows.push(row);
   }
   return rows;
@@ -89,9 +93,9 @@ export function poCells(input: PoInput) {
       const d = poDate(v);
       if (!d) throw new Error(`"${c.find}" วันที่ไม่ถูกต้อง`);
       cells[c.id] = d;
-    } else if (c.id === "picture") {
+    } else if (c.id === "picture" || c.id === "orderShot") {
       if (!/^https:\/\/[^"'\s]+$/.test(v)) throw new Error("ลิงก์รูปไม่ถูกต้อง");
-      cells[c.id] = `=IMAGE("${v}")`;
+      cells[c.id] = c.id === "picture" ? `=IMAGE("${v}")` : `=HYPERLINK("${v}","ภาพคำสั่งซื้อ")`;
     } else {
       cells[c.id] = "'" + v;
     }
@@ -123,12 +127,28 @@ export function poEditCells(changes: PoInput) {
   return { ...poCells({ product: "x", ...filled }), ...blanks, ...("product" in filled ? {} : { product: undefined }) };
 }
 
+// Where an order screenshot goes in Drive: the month's folder ("November 2026"), named
+// by date and product. date: the order date, else today, as YYYY-MM-DD.
+export function poShotPlace(date: string, product: unknown, mime: string) {
+  const [y, m] = date.split("-");
+  const long = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  const ext = mime === "image/png" ? "png" : mime === "image/webp" ? "webp" : mime === "image/gif" ? "gif" : "jpg";
+  const safe = clean(product).replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim().slice(0, 80);
+  return { month: long[Number(m) - 1] + " " + y, name: date + (safe ? " " + safe : "") + "." + ext };
+}
+
+// What the sheet's Status says for a parcel at iCargo; "" before it reaches the China warehouse
+export function poStatusText(trace: Record<string, unknown> | undefined) {
+  return trace?.thai ? "ถึงไทยแล้ว" : trace?.outchina ? "กำลังมาไทย" : trace?.warehouse ? "ถึงโกดังจีน" : "";
+}
+
 // iCargo's steps: a date in trace.thai means it reached the Thai warehouse
-export type PoParcel = { status?: unknown; statusTxt?: string; trace?: Record<string, string | null>; product?: string; checkedAt?: string; arrivedAt?: string };
+export type PoParcel = { status?: unknown; statusTxt?: string; trace?: Record<string, string | null>; product?: string; checkedAt?: string; arrivedAt?: string; sheetStatus?: string };
 export function poMergeParcel(old: PoParcel | undefined, found: { status?: unknown; status_txt?: string; trace?: Record<string, string | null> }, product: string, now: string) {
   const arrived = !!found.trace?.thai;
   const next: PoParcel = { status: found.status, statusTxt: found.status_txt ?? "", trace: found.trace ?? {}, product, checkedAt: now };
   next.arrivedAt = old?.arrivedAt || (arrived ? now : undefined);
+  next.sheetStatus = old?.sheetStatus;
   return { parcel: next, isNew: arrived && !old?.arrivedAt };
 }
 

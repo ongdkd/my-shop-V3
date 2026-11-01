@@ -2620,8 +2620,11 @@ function poCheckTracking(btn) {
   apiCall('adminPurchaseOrders', 'track').then(function(res) {
     btn.disabled = false; btn.innerHTML = '&#x1F4E6; เช็คสถานะ iCargo';
     if (res.status !== 'Success') { toast(res.message || 'เช็คสถานะไม่สำเร็จ', 'error'); return; }
-    if (_po.data) _po.data.tracking = res.tracking || {};
-    toast('เช็คแล้ว ' + (res.checked || 0) + ' รายการ' + (res.arrived && res.arrived.length ? ' · ถึงไทยใหม่ ' + res.arrived.length : ''), 'success');
+    if (_po.data) {
+      if (res.rows) _po.data.rows = res.rows; // Status changed in the sheet
+      _po.data.tracking = res.tracking || {};
+    }
+    toast('เช็คแล้ว ' + (res.checked || 0) + ' รายการ' + (res.arrived && res.arrived.length ? ' · ถึงไทยใหม่ ' + res.arrived.length : '') + (res.statusWrites ? ' · อัปเดตสถานะในชีต ' + res.statusWrites + ' แถว' : ''), 'success');
     if (currentPanel === 'po' && _po.data) drawPoPanel();
   });
 }
@@ -2733,10 +2736,10 @@ function poTimeline(r) {
 
 function openPoDetail(r) {
   var body = el('modalBody'); body.innerHTML = '';
-  var pic = poPicture(r), hero = div('po-hero');
-  if (pic) {
-    var a = document.createElement('a'); a.href = pic; a.target = '_blank'; a.rel = 'noopener'; a.className = 'po-hero-img';
-    var img = document.createElement('img'); img.alt = 'ภาพคำสั่งซื้อ'; img.src = cdnThumb(pic, 900);
+  var hero = div('po-hero');
+  if (poPicture(r)) {
+    var a = document.createElement('a'); a.href = poPicture(r); a.target = '_blank'; a.rel = 'noopener'; a.className = 'po-hero-img';
+    var img = document.createElement('img'); img.alt = 'รูปสินค้า'; img.src = cdnThumb(poPicture(r), 900);
     a.appendChild(img); hero.appendChild(a);
   }
   var side = div('po-hero-side');
@@ -2747,6 +2750,11 @@ function openPoDetail(r) {
     var t = div('po-track'); t.textContent = '📦 ' + r.tracking; side.appendChild(t);
     var info = poTrackOf(r);
     if (info && info.statusTxt) { var st = div('po-sub'); st.textContent = 'iCargo: ' + info.statusTxt; side.appendChild(st); }
+  }
+  // Screenshots stay private in the shop's Drive, so this opens there instead of showing here
+  if (r.orderShot) {
+    var shot = document.createElement('a'); shot.className = 'po-sheet-link'; shot.href = r.orderShot; shot.target = '_blank'; shot.rel = 'noopener';
+    shot.textContent = '🧾 ดูภาพคำสั่งซื้อใน Drive'; side.appendChild(shot);
   }
   hero.appendChild(side);
   body.appendChild(hero);
@@ -2769,6 +2777,33 @@ function openPoDetail(r) {
   link.textContent = 'เปิดแถวนี้ในชีต (' + poTabName(r.tab) + ' แถว ' + r.row + ')';
   body.appendChild(link);
   openModal(escapeHtml(r.product), '', function() { openPoForm(r); }, 'แก้ไข');
+}
+
+// A picture box: click then Ctrl+V like a sheet cell, or choose a file
+function poImageZone(parent, id, label, current, linkOnly) {
+  var f = div('modal-field'), l = document.createElement('label');
+  l.textContent = label; f.appendChild(l);
+  var zone = { id: id, photo: null, current: current, box: div('po-zone') };
+  var box = zone.box; box.tabIndex = 0; box.setAttribute('role', 'button');
+  box.setAttribute('aria-label', label + ' — กดแล้ววางรูป (Ctrl+V) หรือเลือกไฟล์');
+  var showing = current && !linkOnly; // A Drive file is private: it can't be shown here
+  var img = document.createElement('img'); img.alt = ''; img.hidden = !showing;
+  if (showing) img.src = cdnThumb(current, 500);
+  box.appendChild(img);
+  var hint = div('po-zone-hint', current ? (linkOnly ? 'มีภาพใน Drive แล้ว · ' : '') + 'วางรูปใหม่เพื่อเปลี่ยน (Ctrl+V)' : 'กดตรงนี้แล้ววางรูป (Ctrl+V)'); box.appendChild(hint);
+  var pick = makeBtn('btn btn-ghost btn-sm', 'เลือกไฟล์'); pick.type = 'button';
+  var file = document.createElement('input'); file.type = 'file'; file.accept = 'image/*'; file.hidden = true;
+  pick.onclick = function(e) { e.stopPropagation(); file.click(); };
+  box.appendChild(pick); box.appendChild(file);
+  box.onclick = function() { box.focus(); };
+  zone.read = function(blob) {
+    var rd = new FileReader();
+    rd.onload = function(e) { zone.photo = e.target.result; img.src = zone.photo; img.hidden = false; hint.textContent = 'รูปใหม่ · ยังไม่ได้บันทึก'; };
+    rd.readAsDataURL(blob);
+  };
+  file.onchange = function() { if (file.files && file.files[0]) zone.read(file.files[0]); };
+  f.appendChild(box); parent.appendChild(f);
+  return zone;
 }
 
 // r: the row to edit; null adds a new one. Editing writes only the cells that changed.
@@ -2806,7 +2841,7 @@ function openPoForm(r) {
   field(g1, 'supplier', 'Supplier', 'text', uniq('supplier'));
   field(g1, 'amount', 'Amount', 'number');
   field(g1, 'price', 'Price (Yuan)', 'number');
-  field(g1, 'total', 'Total Price (คิดให้จาก Amount × Price · แก้ได้)', 'number');
+  field(g1, 'total', 'Total Price (คิดให้จาก Amount × Price)', 'number');
   var od = field(g1, 'orderDate', 'Order Date', 'date');
   if (!r) od.value = new Date(Date.now() + 7 * 36e5).toISOString().slice(0, 10);
   field(g1, 'shipDate', 'Ship Date', 'date');
@@ -2814,22 +2849,21 @@ function openPoForm(r) {
   field(g1, 'tracking', 'Tracking Number', 'text');
   field(g1, 'rate', 'Exch. Rate (THB)', 'number');
 
-  // Picture: uploaded like product photos, the sheet shows it with =IMAGE()
-  var pf = div('modal-field'), pl = document.createElement('label');
-  pl.htmlFor = 'po_file'; pl.textContent = 'Picture ภาพคำสั่งซื้อ (แคปหน้าจอ)' + (r && poPicture(r) ? ' · เลือกไฟล์ใหม่เพื่อเปลี่ยนรูป' : ''); pf.appendChild(pl);
-  var file = document.createElement('input'); file.type = 'file'; file.id = 'po_file'; file.accept = 'image/*'; pf.appendChild(file);
-  var prev = document.createElement('img'); prev.className = 'po-detail-img'; prev.alt = '';
-  if (r && poPicture(r)) prev.src = cdnThumb(poPicture(r), 600); else prev.hidden = true;
-  pf.appendChild(prev);
-  body.appendChild(pf);
-  var photo = null;
-  file.onchange = function() {
-    var f = file.files && file.files[0];
-    photo = null;
-    if (!f) return;
-    var rd = new FileReader();
-    rd.onload = function(e) { photo = e.target.result; prev.src = photo; prev.hidden = false; };
-    rd.readAsDataURL(f);
+  // Pasted or chosen. The product picture is uploaded like product photos and shown in the
+  // sheet with =IMAGE(); the order screenshot goes to the shop's Drive, the sheet keeps its link.
+  var g3 = div('po-pic-grid'); body.appendChild(g3);
+  var zones = [
+    poImageZone(g3, 'picture', 'Picture รูปสินค้า', r ? poPicture(r) : ''),
+    poImageZone(g3, 'orderShot', 'ภาพคำสั่งซื้อ (แคปหน้าจอ) · เก็บใน Google Drive', r ? r.orderShot : '', true)
+  ];
+  // Ctrl+V anywhere in this form: the box last clicked, else the first still empty
+  body.onpaste = function(e) {
+    var items = (e.clipboardData && e.clipboardData.items) || [], blob = null;
+    for (var i = 0; i < items.length && !blob; i++) if (items[i].type.indexOf('image/') === 0) blob = items[i].getAsFile();
+    if (!blob || !document.body.contains(zones[0].box)) return;
+    e.preventDefault();
+    var target = zones.filter(function(z) { return z.box === document.activeElement; })[0] || zones.filter(function(z) { return !z.photo && !z.current; })[0] || zones[0];
+    target.read(blob);
   };
 
   field(body, 'note', 'Note', 'textarea');
@@ -2863,12 +2897,18 @@ function openPoForm(r) {
       else if (v !== opened[k]) { po[k] = v; changed++; }
     });
     if (!inputs.product.value.trim()) { toast('กรุณากรอกชื่อสินค้า', 'error'); inputs.product.focus(); return; }
-    if (r && !changed && !photo) { closeModal(); return; }
+    var photos = zones.filter(function(z) { return z.photo; });
+    if (r && !changed && !photos.length) { closeModal(); return; }
     var btn = el('modalSave'); btn.disabled = true; btn.textContent = 'กำลังบันทึก...';
     function fail(msg) { btn.disabled = false; btn.textContent = saveLabel; toast(msg, 'error'); }
-    (photo ? apiCall('adminUploadImage', photo) : Promise.resolve(null)).then(function(up) {
-      if (up && up.status !== 'Success') { fail(up.message || 'อัปโหลดรูปไม่สำเร็จ'); return; }
-      if (up) po.picture = up.url;
+    Promise.all(photos.map(function(z) {
+      return z.id === 'orderShot'
+        ? apiCall('adminPurchaseOrders', 'shot', { image: z.photo, orderDate: inputs.orderDate.value, product: inputs.product.value.trim() })
+        : apiCall('adminUploadImage', z.photo);
+    })).then(function(ups) {
+      var bad = ups.filter(function(u) { return u.status !== 'Success'; })[0];
+      if (bad) { fail(bad.message || 'อัปโหลดรูปไม่สำเร็จ'); return; }
+      ups.forEach(function(u, i) { po[photos[i].id] = u.url; });
       var call = r ? apiCall('adminPurchaseOrders', 'update', { tab: r.tab, row: r.row, product: r.product, changes: po })
                    : apiCall('adminPurchaseOrders', 'add', po);
       return call.then(function(res) {
