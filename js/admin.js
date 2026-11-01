@@ -2454,7 +2454,7 @@ function applyStatusFromSheet(groups, total) {
 function openSheetsSync() {
   var body = el('modalBody'); body.innerHTML = '';
   body.appendChild(div('slip-meta', 'เขียนออเดอร์จากเว็บลงชีตสถานะ แท็บละ 3 เดือนตามวันที่สั่ง (ขึ้นไตรมาสใหม่จะสร้างแท็บใหม่ให้) พร้อมสถานะและเลขพัสดุล่าสุด · ' +
-    'แถวที่พิมพ์เองในชีตจะไม่ถูกแตะ · แถวจากเว็บ (มีรหัสในคอลัมน์ "รหัสเว็บ") ถ้าแก้ในชีตจะถูกเขียนทับรอบถัดไป · ระบบอัปเดตเองทุก 15 นาที'));
+    'ออเดอร์ที่พิมพ์ไว้ในชีตแล้ว (ชื่อแอค + สินค้าตรงกัน) จะจับคู่กับแถวเดิม ไม่เพิ่มแถวซ้ำ และคงข้อความเดิมไว้ · แถวที่ระบบเพิ่มเอง ถ้าแก้ในชีตจะถูกเขียนทับรอบถัดไป · ระบบอัปเดตเองทุก 15 นาที'));
   var sheet = div('slip-meta', ''); body.appendChild(sheet);
   var last = div('sync-last', 'กำลังโหลด...'); body.appendChild(last);
   var ff = div('modal-field');
@@ -2485,7 +2485,7 @@ function openSheetsSync() {
     last.innerHTML = !v.at ? 'ยังไม่เคยอัปเดตชีต'
       : 'อัปเดตล่าสุด ' + escapeHtml(new Date(v.at).toLocaleString('th-TH', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })) +
         (v.by === 'auto' ? ' (อัตโนมัติ)' : '') + ' · ' +
-        (v.error ? '<span class="sync-bad">' + escapeHtml(v.error) + '</span>' : 'เพิ่ม ' + v.added + ' · แก้ ' + v.updated + ' แถว' + (v.created && v.created.length ? ' · แท็บใหม่ ' + escapeHtml(v.created.join(', ')) : ''));
+        (v.error ? '<span class="sync-bad">' + escapeHtml(v.error) + '</span>' : 'เพิ่ม ' + v.added + ' · จับคู่ ' + (v.matched || 0) + ' · แก้ ' + v.updated + ' แถว' + (v.created && v.created.length ? ' · แท็บใหม่ ' + escapeHtml(v.created.join(', ')) : ''));
   });
   openModal('&#x1F4E4; อัปเดตชีตสถานะ', '', function() {
     el('modalSave').disabled = true; el('modalSave').textContent = 'กำลังอัปเดต...';
@@ -2497,7 +2497,7 @@ function openSheetsSync() {
       el('modalSave').disabled = false; el('modalSave').textContent = 'อัปเดตชีตตอนนี้';
       if (res.status !== 'Success') { toast(res.message || 'อัปเดตชีตไม่สำเร็จ', 'error'); return; }
       closeModal();
-      toast('อัปเดตชีตแล้ว · เพิ่ม ' + res.added + ' · แก้ ' + res.updated + ' แถว' + (res.created && res.created.length ? ' · แท็บใหม่ ' + res.created.join(', ') : ''), 'success');
+      toast('อัปเดตชีตแล้ว · เพิ่ม ' + res.added + ' · จับคู่ ' + (res.matched || 0) + ' · แก้ ' + res.updated + ' แถว' + (res.created && res.created.length ? ' · แท็บใหม่ ' + res.created.join(', ') : ''), 'success');
     }).catch(function(e) {
       el('modalSave').disabled = false; el('modalSave').textContent = 'อัปเดตชีตตอนนี้';
       toast(e.message || 'บันทึกไม่สำเร็จ', 'error');
@@ -2508,15 +2508,15 @@ function openSheetsSync() {
 // What "อัปเดตชีตตอนนี้" would do: new tabs, rows to add, cells to change
 function drawSyncPreview(out, res) {
   var p = res.preview || { rows: [], cells: [], headers: [] };
-  out.appendChild(div('sync-sum', 'จะ<strong>เพิ่ม ' + res.added + ' แถว</strong> · <strong>แก้ ' + res.updated + ' แถว</strong>' +
+  out.appendChild(div('sync-sum', 'จะ<strong>เพิ่ม ' + res.added + ' แถว</strong> · <strong>จับคู่แถวเดิม ' + (res.matched || 0) + ' แถว</strong> · <strong>แก้ ' + res.updated + ' แถว</strong>' +
     (res.created && res.created.length ? ' · สร้างแท็บใหม่ <strong>' + escapeHtml(res.created.join(', ')) + '</strong>' : '') +
     ' (จากออเดอร์เว็บ ' + (res.orders || 0) + ' ชิ้น)'));
   // Per tab first (newest quarter on top), so every quarter is visible even when the rows are many
   if (p.tabs && p.tabs.length) {
-    table('แยกตามแท็บ', [['tab', 'แท็บ'], ['state', ''], ['orders', 'ออเดอร์เว็บ'], ['added', 'เพิ่ม'], ['updated', 'แก้']],
-      p.tabs.map(function(t) { return { tab: t.tab, state: t.isNew ? 'แท็บใหม่' : '', orders: String(t.orders), added: String(t.added), updated: String(t.updated) }; }), p.tabs.length);
+    table('แยกตามแท็บ', [['tab', 'แท็บ'], ['state', ''], ['orders', 'ออเดอร์เว็บ'], ['added', 'เพิ่ม'], ['matched', 'จับคู่'], ['updated', 'แก้']],
+      p.tabs.map(function(t) { return { tab: t.tab, state: t.isNew ? 'แท็บใหม่' : '', orders: String(t.orders), added: String(t.added), matched: String(t.matched || 0), updated: String(t.updated) }; }), p.tabs.length);
   }
-  if (!res.added && !res.updated) { out.appendChild(div('slip-meta', '✓ ชีตตรงกับเว็บแล้ว ไม่มีอะไรต้องอัปเดต')); return; }
+  if (!res.added && !res.updated && !res.matched) { out.appendChild(div('slip-meta', '✓ ชีตตรงกับเว็บแล้ว ไม่มีอะไรต้องอัปเดต')); return; }
   if (p.headers.length) out.appendChild(div('slip-meta', 'เพิ่มหัวคอลัมน์: ' + escapeHtml(p.headers.join(' · '))));
   function table(title, heads, rows, total) {
     if (!rows.length) return;
@@ -2533,6 +2533,7 @@ function drawSyncPreview(out, res) {
     wrap.appendChild(t); out.appendChild(wrap);
   }
   table('แถวที่จะเพิ่ม', [['tab', 'แท็บ'], ['row', 'แถว'], ['name', 'ชื่อแอค'], ['product', 'สินค้า'], ['qty', 'จำนวน'], ['pay', 'ชำระ'], ['status', 'สถานะ'], ['tracking', 'เลขพัสดุ']], p.rows, res.added);
+  table('แถวเดิมที่จะจับคู่ (ไม่เพิ่มแถวใหม่)', [['tab', 'แท็บ'], ['row', 'แถว'], ['name', 'ชื่อแอค'], ['product', 'สินค้า']], p.matched || [], res.matched || 0);
   table('ช่องที่จะแก้', [['tab', 'แท็บ'], ['row', 'แถว'], ['name', 'ชื่อแอค'], ['field', 'คอลัมน์'], ['from', 'เดิม', 'sync-from'], ['to', 'ใหม่', 'sync-to']], p.cells, p.cells.length);
 }
 

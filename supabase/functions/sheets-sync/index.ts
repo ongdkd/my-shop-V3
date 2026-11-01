@@ -2,13 +2,15 @@
 // one row per item, in the tab of the quarter it was ordered in
 // ("เดือนตุลาคม-ธันวาคม 2026"; a new quarter gets a new tab), with its current
 // status and tracking number. Rows are found again by the order id in the
-// "รหัสเว็บ" column, so later runs update them; rows typed by hand are never
-// touched. Edits made in the sheet to synced rows are overwritten.
+// "รหัสเว็บ" column, so later runs update them. A row typed by hand for the same
+// customer + product is claimed instead of adding a second one (see plan.ts).
+// Edits made in the sheet to rows this function added are overwritten.
 //
 // Called by admin (📤 in ประวัติจากชีต) or every 15 minutes by pg_cron with the
 // x-sync-key header (SHEETS_SYNC_KEY). Google access is a service account
 // (GOOGLE_SERVICE_ACCOUNT = its JSON key) that the sheet is shared with as editor.
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { planSheet, quarterIndex, quarterKey, quote, tabKey, type Want } from "./plan.ts";
 
 // The shop's sheet is app_settings 'sheets'.url (set by 📥 นำเข้าจากชีต); this is only the fallback
 const DEFAULT_SHEET_ID = Deno.env.get("STATUS_SHEET_ID") || "1tXcsJ-qNRGLXsPCSu4srsmuibxhYZZTRrALn5BVeIx8";
@@ -63,32 +65,6 @@ async function sheets(sheetId: string, token: string, email: string, path: strin
   return j;
 }
 
-// ── Quarters and tab names ──
-const MONTHS = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"];
-// Thai time (UTC+7) decides the quarter
-function quarterKey(iso: string) {
-  const d = new Date(new Date(iso).getTime() + 7 * 3600 * 1000);
-  const q = Math.floor(d.getUTCMonth() / 3);
-  return MONTHS[q * 3] + "-" + MONTHS[q * 3 + 2] + " " + d.getUTCFullYear();
-}
-// "เดือนตุลาคม-ธันวาคม 2026" and "ตุลาคม-ธันวาคม 2026" are the same quarter
-const tabKey = (title: string) => title.trim().replace(/^เดือน\s*/, "").replace(/\s+/g, " ");
-function colA1(i: number) { let s = ""; for (i++; i > 0; i = Math.floor((i - 1) / 26)) s = String.fromCharCode(65 + (i - 1) % 26) + s; return s; }
-const quote = (t: string) => "'" + t.replace(/'/g, "''") + "'";
-
-// Columns, found by header text like the importer; added at the end when missing
-const FIELDS = [
-  { id: "name", find: ["ชื่อแอค"], head: "ชื่อแอค" },
-  { id: "channel", find: ["ช่องทาง"], head: "ช่องทาง" },
-  { id: "product", find: ["ชื่อสินค้า"], head: "ชื่อสินค้า" },
-  { id: "qty", find: ["จำนวน"], head: "จำนวน" },
-  { id: "pay", find: ["สถานะชำระ"], head: "สถานะชำระ" },
-  { id: "status", find: ["สถานะของ"], head: "สถานะของ" },
-  { id: "tracking", find: ["เลขพัสดุ", "หมายเหตุ"], head: "เลขพัสดุ" },
-  { id: "web", find: ["รหัสเว็บ"], head: "รหัสเว็บ (ห้ามแก้)" },
-] as const;
-type Field = typeof FIELDS[number]["id"];
-
 async function allRows(db: SupabaseClient, table: string, cols: string, filter?: (q: any) => any) {
   let out: Record<string, any>[] = [];
   for (let from = 0; ; from += 1000) {
@@ -104,7 +80,7 @@ const norm = (s: unknown) => String(s ?? "").trim().toLowerCase().replace(/^@+/,
 const num = (v: unknown) => Number(v) || 0;
 
 // The row the sheet shows for one order item
-function rowFor(o: Record<string, any>, listPaid: boolean, bill: Record<string, any> | undefined, billPaid: boolean): Record<Field, string> {
+function rowFor(o: Record<string, any>, listPaid: boolean, bill: Record<string, any> | undefined, billPaid: boolean): Want {
   let status: string;
   if (o.status === "ยกเลิก") status = "ยกเลิก";
   else if (o.shipped_at) status = "จัดส่งแล้ว";
@@ -121,7 +97,6 @@ function rowFor(o: Record<string, any>, listPaid: boolean, bill: Record<string, 
 
 // dry: work out every change but write nothing (no new tabs either) — the
 // result lists the rows to add and the cells to change, for the admin to check
-const PREVIEW_MAX = 2000;
 async function sync(db: SupabaseClient, dry = false) {
   const { data: setting } = await db.from("app_settings").select("value").eq("key", "sheets").maybeSingle();
   const conf = (setting?.value ?? {}) as { from?: string; url?: string };
@@ -138,13 +113,13 @@ async function sync(db: SupabaseClient, dry = false) {
   const billById = new Map(bills.map((b) => [b.id, b]));
 
   // Orders by quarter
-  const byQuarter = new Map<string, Record<Field, string>[]>();
+  const byQuarter = new Map<string, Want[]>();
   for (const o of orders) {
     const k = quarterKey(o.created_at);
     if (!byQuarter.has(k)) byQuarter.set(k, []);
     byQuarter.get(k)!.push(rowFor(o, listPaid.has(o.list_id + "|" + norm(o.customer)), billById.get(o.delivery_id), billPaid.has(o.delivery_id)));
   }
-  if (!byQuarter.size) return { added: 0, updated: 0, created: [] as string[], preview: { rows: [], cells: [], headers: [] } };
+  if (!byQuarter.size) return { added: 0, updated: 0, matched: 0, created: [] as string[], preview: { rows: [], cells: [], matched: [], headers: [] } };
 
   const { token, email } = await googleToken();
   const api = (path: string, init?: RequestInit) => sheets(sheetId, token, email, path, init);
@@ -163,66 +138,23 @@ async function sync(db: SupabaseClient, dry = false) {
   // A preview treats a missing tab as a new, empty one
   missing.forEach((k) => { titleOf.set(k, "เดือน" + k); created.push("เดือน" + k); });
 
-  // Newest quarter first, so a long preview starts with the current orders
-  const quarters = [...byQuarter.keys()].reverse();
-  const reading = quarters.filter((k) => !(dry && missing.includes(k)));
+  // Every quarter tab is read: a typed row can sit in the tab next to its order's
+  const reading = titles.filter((t) => quarterIndex(tabKey(t)) >= 0);
   const got = reading.length
-    ? await api("/values:batchGet?" + reading.map((k) => "ranges=" + encodeURIComponent(quote(titleOf.get(k)!))).join("&"))
+    ? await api("/values:batchGet?" + reading.map((t) => "ranges=" + encodeURIComponent(quote(t))).join("&"))
     : {};
-  const data: { range: string; values: string[][] }[] = [];
-  let added = 0, updated = 0;
-  const preview = { rows: [] as Record<string, string>[], cells: [] as Record<string, string>[], headers: [] as string[],
-    tabs: [] as { tab: string; orders: number; added: number; updated: number; isNew: boolean }[] };
+  const tabs = reading.map((t, i) => ({ title: t, values: (got.valueRanges?.[i]?.values ?? []) as string[][], isNew: false }));
+  missing.forEach((k) => tabs.push({ title: titleOf.get(k)!, values: [], isNew: true }));
 
-  quarters.forEach((k) => {
-    const title = titleOf.get(k)!;
-    const ri = reading.indexOf(k);
-    const values: string[][] = (ri < 0 ? [] : got.valueRanges?.[ri]?.values ?? []) as string[][];
-    const head = (values[0] ?? []).map((h) => String(h ?? ""));
-    let width = Math.max(head.length, ...values.map((r) => r.length), 0);
-    const col = {} as Record<Field, number>;
-    for (const f of FIELDS) {
-      let i = head.findIndex((h) => f.find.some((w) => h.includes(w)));
-      if (i < 0) {
-        i = width++; data.push({ range: `${quote(title)}!${colA1(i)}1`, values: [[f.head]] });
-        if (!missing.includes(k)) preview.headers.push(`${title} · ${colA1(i)}1 "${f.head}"`);
-      }
-      col[f.id] = i;
-    }
-    // Synced rows already in the tab, by order id
-    const rowOf = new Map<string, number>();
-    values.forEach((r, i) => { const id = String(r[col.web] ?? "").trim(); if (i > 0 && id) rowOf.set(id, i); });
-    let next = Math.max(values.length, 1); // first free row (0-based)
-    const before = { added, updated };
-    for (const want of byQuarter.get(k)!) {
-      const i = rowOf.get(want.web);
-      if (i === undefined) {
-        const r = next++;
-        for (const f of FIELDS) data.push({ range: `${quote(title)}!${colA1(col[f.id])}${r + 1}`, values: [[want[f.id]]] });
-        added++;
-        if (preview.rows.length < PREVIEW_MAX) preview.rows.push({ tab: title, row: String(r + 1), ...want });
-        continue;
-      }
-      // Only the cells that changed
-      let changed = false;
-      for (const f of FIELDS) {
-        const was = String(values[i][col[f.id]] ?? "");
-        if (was === want[f.id]) continue;
-        data.push({ range: `${quote(title)}!${colA1(col[f.id])}${i + 1}`, values: [[want[f.id]]] });
-        if (preview.cells.length < PREVIEW_MAX) preview.cells.push({ tab: title, row: String(i + 1), name: want.name, field: f.head, from: was, to: want[f.id] });
-        changed = true;
-      }
-      if (changed) updated++;
-    }
-    preview.tabs.push({ tab: title, orders: byQuarter.get(k)!.length, added: added - before.added,
-      updated: updated - before.updated, isNew: missing.includes(k) });
-  });
+  // Newest quarter first, so a long preview starts with the current orders
+  const wants = new Map([...byQuarter.entries()].reverse());
+  const { data, added, updated, matched, preview } = planSheet(tabs, wants);
 
-  if (dry) return { added, updated, created, orders: orders.length, sheetId, preview };
+  if (dry) return { added, updated, matched, created, orders: orders.length, sheetId, preview };
   for (let i = 0; i < data.length; i += 2000) {
     await api("/values:batchUpdate", { method: "POST", body: JSON.stringify({ valueInputOption: "RAW", data: data.slice(i, i + 2000) }) });
   }
-  return { added, updated, created, orders: orders.length, at: new Date().toISOString() };
+  return { added, updated, matched, created, orders: orders.length, at: new Date().toISOString() };
 }
 
 Deno.serve(async (req) => {
