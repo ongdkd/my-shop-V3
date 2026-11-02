@@ -694,7 +694,9 @@ function renderHubCards(lists){
     html+='<div class="hub-card-footer">'+badge+arrow+'</div></div></div>';
   }
   grid.innerHTML=html;
-  grid.onclick=function(e){var c=e.target.closest('.hub-card');if(c&&!c.classList.contains('closed'))selectOrderList(c.getAttribute('data-shid'));};
+  // A closed round says so (and where to check orders) instead of doing nothing
+  function closedNote(){showMessage('รอบนี้ปิดรับออเดอร์แล้วค่ะ — ดูสถานะคำสั่งซื้อได้ที่ "เช็คสถานะ / แจ้งโอน"','error');}
+  grid.onclick=function(e){var c=e.target.closest('.hub-card');if(!c)return;if(c.classList.contains('closed'))closedNote();else selectOrderList(c.getAttribute('data-shid'));};
   grid.onkeydown=function(e){
     if(e.key!=='Enter'&&e.key!==' ')return;
     var c=e.target.closest('.hub-card');

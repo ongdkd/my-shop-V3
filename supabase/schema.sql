@@ -1411,7 +1411,8 @@ begin
       select jsonb_agg(jsonb_build_object('id', d.id, 'fee', d.fee, 'createdAt', d.sent_at,
                          'courier', d.courier, 'tracking', d.tracking,
                          'ishipStatus', d.iship_status_text, 'ishipStatusAt', d.iship_status_at,
-                         'holdAt', d.hold_at, 'paidMarkAt', d.paid_mark_at)
+                         'holdAt', d.hold_at, 'paidMarkAt', d.paid_mark_at,
+                         'deliveredAt', d.delivered_at)
                        order by d.sent_at desc)
       from public.deliveries d where d.customer = v and d.sent_at is not null), '[]'::jsonb),
     'payments', coalesce((

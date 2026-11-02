@@ -59,7 +59,7 @@
     var row = h('div', 'st-item');
     var main = h('div', 'st-item-main');
     main.appendChild(h('div', 'st-item-name', name));
-    main.appendChild(h('span', 'st-pill ' + st.cls, st.text));
+    if (st) main.appendChild(h('span', 'st-pill ' + st.cls, st.text));
     if (tracking) main.appendChild(trackingLine(tracking, courier, trackStatus));
     if (note) main.appendChild(h('div', 'st-note-line', note));
     row.appendChild(main);
@@ -75,13 +75,22 @@
     { id: 'pay', label: 'รอชำระเงิน', empty: 'ไม่มีรายการที่รอชำระเงิน' },
     { id: 'arrive', label: 'รอสินค้าถึงไทย', empty: 'ไม่มีรายการที่รอสินค้าถึงไทย' },
     { id: 'balance', label: 'ชำระส่วนที่เหลือ / ค่าส่ง', empty: 'ยังไม่มีบิลค่าส่ง — ร้านจะสรุปยอดให้เมื่อสินค้าถึงไทย' },
-    { id: 'done', label: 'สำเร็จแล้ว', empty: 'ยังไม่มีรายการที่จัดส่งแล้ว' }
+    { id: 'ship', label: 'กำลังจัดส่ง', empty: 'ไม่มีพัสดุที่กำลังเดินทาง' },
+    { id: 'done', label: 'สำเร็จแล้ว', empty: 'ยังไม่มีรายการที่ส่งถึงแล้ว' }
   ];
   var ARRIVED = /ถึงไทย/;
   // The shop can mark items paid without a slip ("ชำระแล้ว", e.g. paid in cash); arrived items are paid too
   var PAID = /ชำระแล้ว|ถึงไทย/;
-  function webStage(o, paidList) {
-    if (o.shippedAt || o.status === 'ยกเลิก') return 'done';
+  // Same rule as the admin's steps: a parcel of a bill stays "on the way" until
+  // it's delivered (iShip says so, or the shop marks it); hand-shipped items are done
+  var DELIVERED = /นำจ่ายสำเร็จ|จัดส่งสำเร็จ|ส่งสำเร็จ|ผู้รับได้รับ|เซ็นรับ/;
+  function isDelivered(b) { return !!(b && (b.deliveredAt || DELIVERED.test(b.ishipStatus || ''))); }
+  function webStage(o, paidList, bills) {
+    if (o.status === 'ยกเลิก') return 'done';
+    if (o.shippedAt) {
+      var b = o.deliveryId ? bills[o.deliveryId] : null;
+      return b && (b.tracking || o.tracking) && !isDelivered(b) ? 'ship' : 'done';
+    }
     if (o.deliveryId) return 'balance';
     return paidList[o.listId] || PAID.test(o.status || '') ? 'arrive' : 'pay';
   }
@@ -137,15 +146,15 @@
 
     var paidList = {};
     pays.forEach(function (p) { if (!p.deliveryId) paidList[p.listId] = true; });
-    var groups = {};
-    TABS.forEach(function (t) { groups[t.id] = { orders: [], legacy: [] }; });
-    orders.forEach(function (o) { groups[webStage(o, paidList)].orders.push(o); });
-    legacy.forEach(function (r) { groups[legacyStage(r.status)].legacy.push(r); });
     var ctx = { pays: pays, bills: {}, trackStatus: {} };
     (res.deliveries || []).forEach(function (d) {
       ctx.bills[d.id] = d;
       if (d.tracking && d.ishipStatus) ctx.trackStatus[d.tracking] = d.ishipStatus; // kept fresh by iShip
     });
+    var groups = {};
+    TABS.forEach(function (t) { groups[t.id] = { orders: [], legacy: [] }; });
+    orders.forEach(function (o) { groups[webStage(o, paidList, ctx.bills)].orders.push(o); });
+    legacy.forEach(function (r) { groups[legacyStage(r.status)].legacy.push(r); });
 
     // One per checkout (its rows are written in one transaction, so they
     // share created_at); in the bills tab, one per bill
@@ -214,7 +223,7 @@
     }
   }
 
-  // Tabs 1, 2, 4: one card per order list (newest first)
+  // Tabs 1, 2, 4, 5: one card per order list (newest first)
   function renderLists(out, tab, orders, ctx, hasLegacy) {
     var lists = [], byList = {};
     orders.forEach(function (o) {
@@ -234,13 +243,23 @@
       });
       var mine = ctx.pays.filter(function (p) { return p.listId === l.id && !p.deliveryId; });
       var sent = mine.length ? '✓ ส่งสลิปแล้ว ' + mine.length + ' ครั้ง' : 'ยังไม่ได้ส่งสลิป';
-      head.appendChild(h('div', 'st-card-meta' + (mine.length ? ' ok' : ''), tab.id === 'done' ? pcs + ' ชิ้น · ' + baht(sum) : sent));
+      head.appendChild(h('div', 'st-card-meta' + (mine.length ? ' ok' : ''), tab.id === 'done' || tab.id === 'ship' ? pcs + ' ชิ้น · ' + baht(sum) : sent));
       card.appendChild(head);
+      // One parcel for the whole card: its status and tracking show once, under the items
+      var parcels = {};
+      l.items.forEach(function (o) { parcels[o.shippedAt ? o.tracking || '-' : ''] = true; });
+      var keys = Object.keys(parcels), oneParcel = keys.length === 1 && keys[0] !== '' && keys[0] !== '-';
       l.items.forEach(function (o) {
-        var st = webStatus(o);
+        var st = oneParcel ? null : webStatus(o);
         if (tab.id === 'arrive' && ARRIVED.test(o.status)) st = { text: 'ถึงไทยแล้ว · รอร้านสรุปค่าส่ง', cls: 'custom' };
-        card.appendChild(itemRow(itemName(o), o.qty, st, o.shippedAt ? o.tracking : '', '', o.courier, ctx.trackStatus[o.tracking]));
+        card.appendChild(itemRow(itemName(o), o.qty, st, o.shippedAt && !oneParcel ? o.tracking : '', '', o.courier, ctx.trackStatus[o.tracking]));
       });
+      if (oneParcel) {
+        var o0 = l.items[0], parcel = h('div', 'st-parcel');
+        parcel.appendChild(h('span', 'st-pill shipped', (tab.id === 'done' ? '✓ จัดส่งแล้ว ' : '📦 จัดส่งแล้ว ') + day(o0.shippedAt)));
+        parcel.appendChild(trackingLine(o0.tracking, o0.courier, tab.id === 'ship' ? ctx.trackStatus[o0.tracking] || 'รอเข้ารับพัสดุ' : ''));
+        card.appendChild(parcel);
+      }
 
       var foot = h('div', 'st-card-foot');
       if (tab.id === 'pay') {
@@ -450,6 +469,14 @@
   });
 
   $('payCancel').onclick = function () { $('payDialog').close(); };
+  // Tap an account number to copy it (digits only, ready to paste in a bank app)
+  Array.prototype.forEach.call(document.querySelectorAll('.st-copy'), function (b) {
+    b.onclick = function () {
+      var done = function () { b.classList.add('done'); setTimeout(function () { b.classList.remove('done'); }, 2000); };
+      if (navigator.clipboard) navigator.clipboard.writeText(b.getAttribute('data-copy')).then(done, function () { toast('คัดลอกไม่สำเร็จ', 'error'); });
+      else toast(b.getAttribute('data-copy'));
+    };
+  });
 
   // ── Delivery address fields ───────────────────────────────
   var ADDR = { name: 'payName', phone: 'payPhone', address: 'payLine', district: 'payDistrict', amphoe: 'payAmphoe', province: 'payProvince', zipcode: 'payZip' };

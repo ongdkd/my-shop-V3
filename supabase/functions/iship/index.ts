@@ -8,6 +8,8 @@
 //   pickup    → asks a courier to collect from the shop
 // iShip also calls this function (…/iship?hook=<ISHIP_WEBHOOK_KEY>) with
 // status updates, which are saved on the bill for the customer page.
+// A schedule calls …/iship?trace=<ISHIP_WEBHOOK_KEY> to re-check every parcel
+// not delivered yet, in case a webhook never arrives.
 // The iShip token stays in Supabase secrets; the browser never sees it.
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 
@@ -86,6 +88,23 @@ async function markDelivered(db: SupabaseClient, tracking: string, code: string,
     .eq("tracking", tracking).is("delivered_at", null);
 }
 
+// Newest step of one parcel → saved on its bill(s); returns iShip's trace data
+async function traceOne(db: SupabaseClient, tracking: string) {
+  const j = await callJson("/api/traces", { track_no: tracking });
+  const data = (j.data ?? {}) as { trace_routes?: Record<string, unknown>[] };
+  const last = (data.trace_routes ?? []).at(-1);
+  if (tracking && last) {
+    const ts = Date.parse(String(last.timestamp ?? ""));
+    const code = String(last.status ?? ""), text = String(last.status_text ?? last.status_desc ?? last.status ?? "");
+    await db.from("deliveries").update({
+      iship_status: code, iship_status_text: text,
+      iship_status_at: Number.isFinite(ts) ? new Date(ts).toISOString() : new Date().toISOString(),
+    }).eq("tracking", tracking);
+    await markDelivered(db, tracking, code, text);
+  }
+  return data;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   const url = new URL(req.url);
@@ -109,6 +128,25 @@ Deno.serve(async (req) => {
     if (error) return reply({ error: error.message }, 500);
     await markDelivered(admin, tracking, String(patch.iship_status), String(patch.iship_status_text));
     return reply({ ok: true });
+  }
+
+  // ── Schedule: re-check parcels booked in the last 45 days that aren't delivered ──
+  if (url.searchParams.has("trace")) {
+    if (!HOOK_KEY || url.searchParams.get("trace") !== HOOK_KEY) return reply({ error: "forbidden" }, 403);
+    if (!TOKEN) return reply({ error: "no ISHIP_TOKEN" }, 500);
+    const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const since = new Date(Date.now() - 45 * 864e5).toISOString();
+    const { data, error } = await admin.from("deliveries").select("tracking")
+      .neq("iship_ref", "").neq("tracking", "").is("delivered_at", null).gte("sent_at", since).limit(60);
+    if (error) return reply({ error: error.message }, 500);
+    const numbers = [...new Set((data ?? []).map((d) => String(d.tracking)))];
+    let ok = 0;
+    const failed: string[] = [];
+    // One at a time: iShip is a small API and the schedule isn't in a hurry
+    for (const t of numbers) {
+      try { await traceOne(admin, t); ok++; } catch { failed.push(t); }
+    }
+    return reply({ checked: ok, failed });
   }
 
   // ── Admin actions ──
@@ -196,23 +234,9 @@ Deno.serve(async (req) => {
         });
       }
 
-      case "trace": {
-        const tracking = String(input.tracking ?? "");
-        const j = await callJson("/api/traces", { track_no: tracking });
-        const data = (j.data ?? {}) as { trace_routes?: Record<string, unknown>[] };
-        // Save the newest step, so the bill's status is fresh even without the webhook
-        const last = (data.trace_routes ?? []).at(-1);
-        if (tracking && last) {
-          const ts = Date.parse(String(last.timestamp ?? ""));
-          const code = String(last.status ?? ""), text = String(last.status_text ?? last.status_desc ?? last.status ?? "");
-          await sb.from("deliveries").update({
-            iship_status: code, iship_status_text: text,
-            iship_status_at: Number.isFinite(ts) ? new Date(ts).toISOString() : new Date().toISOString(),
-          }).eq("tracking", tracking);
-          await markDelivered(sb, tracking, code, text);
-        }
-        return reply(data);
-      }
+      case "trace":
+        // Saves the newest step too, so the bill's status is fresh even without the webhook
+        return reply(await traceOne(sb, String(input.tracking ?? "")));
 
       case "pickup": {
         const { data: setting } = await sb.from("app_settings").select("value").eq("key", "iship").maybeSingle();

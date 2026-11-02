@@ -3189,7 +3189,7 @@ function drawStages() {
   STAGES.forEach(function(s, i) {
     var b = makeBtn('stg-tab' + (s.id === _stm.stage ? ' on' : ''),
       '<span class="stg-num">' + (i + 1) + '</span><span>' + escapeHtml(s.label) + '</span><span class="stg-count">' + count(s.id) + '</span>',
-      function() { if (_stm.stage !== s.id) { _stm.stage = s.id; _stm.shipSel = null; drawStages(); } });
+      function() { if (_stm.stage !== s.id) { _stm.stage = s.id; _stm.shipSel = null; _stm.paySel = null; drawStages(); } });
     b.type = 'button'; b.setAttribute('role', 'tab'); b.setAttribute('aria-selected', s.id === _stm.stage ? 'true' : 'false');
     tabs.appendChild(b);
   });
@@ -3387,12 +3387,55 @@ function drawStages() {
   }
 
   // ── 1. Waiting for payment: no slip for the list yet ──
+  // "☑ เลือกหลายรายการ" turns on select mode: tap cards (or select all after
+  // filtering by order list), then mark them all paid in one go
   function drawPay() {
     var gs = checkouts(S.pay.filter(hit));
-    if (!gs.length) return empty(STAGES[0].empty);
+    if (!gs.length) { _stm.paySel = null; return empty(STAGES[0].empty); }
+    var sel = _stm.paySel; // null = normal mode, else { checkoutKey: true }
+    var bar0 = div('bill-tools');
+    var pick = makeBtn('btn btn-sm ' + (sel ? 'btn-primary' : 'btn-ghost'), sel ? '&#x2715; ออกจากโหมดเลือก' : '&#x2611; เลือกหลายรายการ', function() {
+      _stm.paySel = sel ? null : {}; drawStages();
+    });
+    pick.type = 'button'; pick.title = 'เลือกหลายออเดอร์เพื่อบันทึกว่าชำระแล้วพร้อมกัน';
+    bar0.appendChild(pick); body.appendChild(bar0);
+    if (sel) body.appendChild(div('slip-meta bill-help', 'แตะการ์ดเพื่อเลือก · เลือกรายการสั่งซื้อด้านบนแล้วกด "เลือกทั้งหมด" เพื่อบันทึกทั้งรอบ'));
     var grid = div('stg-grid');
+    var bar = sel ? div('obar ship-sel-bar') : null;
+    function refreshBar() {
+      var n = gs.filter(function(g) { return sel[ckKey(g[0])]; });
+      bar.innerHTML = '';
+      bar.appendChild(div('ship-sel-count', n.length ? 'เลือก ' + n.length + ' ออเดอร์' : 'แตะการ์ดเพื่อเลือก'));
+      var allOn = n.length === gs.length;
+      var all = makeBtn('btn btn-ghost btn-sm', allOn ? 'ยกเลิกเลือกทั้งหมด' : 'เลือกทั้งหมด (' + gs.length + ')', function() {
+        gs.forEach(function(g) { if (allOn) delete sel[ckKey(g[0])]; else sel[ckKey(g[0])] = true; });
+        grid.querySelectorAll('.ocard').forEach(function(c) { mark(c, !allOn); });
+        refreshBar();
+      });
+      all.type = 'button'; bar.appendChild(all);
+      var go = makeBtn('btn btn-primary btn-sm', '&#x2713; ชำระแล้ว' + (n.length ? ' (' + n.length + ')' : ''), function() {
+        markPaid([].concat.apply([], n), n.length);
+      });
+      go.type = 'button'; go.disabled = !n.length; bar.appendChild(go);
+    }
+    function mark(c, on) {
+      c.classList.toggle('picked', on); c.setAttribute('aria-checked', on ? 'true' : 'false');
+      c.querySelector('.pick-box').innerHTML = on ? '&#x2713;' : '';
+    }
     gs.slice(0, STAGE_CAP).forEach(function(g) {
       var c = orderCard(g);
+      if (sel) {
+        // Select mode: the whole card is the checkbox; toggled in place so the page doesn't jump
+        var key = ckKey(g[0]);
+        c.classList.add('pickable');
+        c.querySelector('.ocard-head').insertBefore(div('pick-box'), c.querySelector('.ocard-head').firstChild);
+        c.setAttribute('role', 'checkbox'); c.tabIndex = 0;
+        mark(c, !!sel[key]);
+        c.onclick = function() { if (sel[key]) delete sel[key]; else sel[key] = true; mark(c, !!sel[key]); refreshBar(); };
+        c.onkeydown = function(e) { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); c.onclick(); } };
+        grid.appendChild(c);
+        return;
+      }
       var act = div('ocard-ship');
       act.appendChild(div('ocard-ship-info stg-wait', 'ยังไม่ได้รับสลิป'));
       var ed = makeBtn('btn btn-ghost btn-sm', 'แก้ไขสถานะ', function() { openStatusModal(g, { after: renderStatusPanel }); });
@@ -3404,6 +3447,7 @@ function drawStages() {
       grid.appendChild(c);
     });
     body.appendChild(grid); more(gs.length);
+    if (sel) { refreshBar(); body.appendChild(bar); }
   }
 
   // ── 2. Paid: mark arrival, build bills by drag and drop, send them ──
@@ -3783,15 +3827,32 @@ function drawStages() {
     body.appendChild(grid); more(gs.length);
   }
 
-  function markPaid(items) {
-    askConfirm('ยังไม่ได้รับสลิปของ ' + custName(items) + ' — ถือว่าชำระแล้ว และย้ายไปขั้น "ถึงไทย / ส่งบิล"?', 'ชำระแล้ว').then(function(ok) {
+  // n: how many checkouts (select mode); one checkout names its customer
+  function markPaid(items, n) {
+    var custs = unique(items.map(function(o) { return normCust(o.customer); })).length;
+    var who = n > 1 ? n + ' ออเดอร์ (' + custs + ' ลูกค้า)' : custName(items);
+    askConfirm('ยังไม่ได้รับสลิปของ ' + who + ' — ถือว่าชำระแล้ว และย้ายไปขั้น "ถึงไทย / ส่งบิล"?', 'ชำระแล้ว').then(function(ok) {
       if (!ok) return;
       body.classList.add('busy');
-      apiCall('adminSetOrderStatus', ids(items), PAID_LABEL, '').then(function(res) {
+      // Batches of 100 ids keep each request short; a failed batch stops the rest
+      var chain = Promise.resolve({ status: 'Success' }), done = [];
+      for (var i = 0; i < items.length; i += 100) (function(part) {
+        chain = chain.then(function(r) {
+          if (r.status !== 'Success') return r;
+          return apiCall('adminSetOrderStatus', ids(part), PAID_LABEL, '').then(function(res) {
+            if (res.status === 'Success') part.forEach(function(o) { o.status = res.orderStatus || PAID_LABEL; done.push(o); });
+            return res;
+          });
+        });
+      })(items.slice(i, i + 100));
+      chain.then(function(res) {
         body.classList.remove('busy');
-        if (res.status !== 'Success') { toast(res.message || 'บันทึกไม่สำเร็จ', 'error'); return; }
-        items.forEach(function(o) { o.status = res.orderStatus || PAID_LABEL; });
-        toast('ย้ายไปขั้น "ถึงไทย / ส่งบิล" แล้ว', 'success');
+        if (res.status !== 'Success') {
+          toast((done.length ? 'บันทึกได้ ' + done.length + '/' + items.length + ' รายการ — ' : '') + (res.message || 'บันทึกไม่สำเร็จ'), 'error');
+          drawStages(); return;
+        }
+        _stm.paySel = null;
+        toast((n > 1 ? 'บันทึก ' + n + ' ออเดอร์แล้ว — ' : '') + 'ย้ายไปขั้น "ถึงไทย / ส่งบิล" แล้ว', 'success');
         drawStages();
       });
     });
@@ -4161,8 +4222,31 @@ function openIshipSettings() {
   });
 }
 
-// Book one delivery bill: recipient, courier prices → tracking number
+// What's still owed on a bill: the rest of deposit items + fee, minus slips.
+// Marked paid by the shop (no slip) counts as settled.
+function billOwed(b, x) {
+  if (b.paidMarkAt && !x.pays.length) return 0;
+  var due = Number(b.fee) || 0, paid = 0;
+  x.items.forEach(function(o) { if (o.payType === 'Deposit') due += Math.max(0, o.totalFull - o.total); });
+  x.pays.forEach(function(p) { paid += Number(p.amount) || 0; });
+  return Math.round((due - paid) * 100) / 100;
+}
+
+// Book one delivery bill: recipient, courier prices → tracking number.
+// Asks first when the bill isn't fully paid, so nothing ships on credit by accident.
 function openIshipModal(b, x, after) {
+  var owed = billOwed(b, x);
+  if (owed > 0) {
+    var none = !x.pays.length && !b.paidMarkAt;
+    var paid = x.pays.reduce(function(s, p) { return s + (Number(p.amount) || 0); }, 0);
+    askConfirm((none ? 'บิลนี้ยังไม่ได้รับชำระ' : 'บิลนี้ยังขาดอีก ' + baht(owed)) +
+      ' (ยอดบิล ' + baht(owed + paid) + ')\nจัดส่งเลยไหม?', 'จัดส่งเลย')
+      .then(function(ok) { if (ok) openIshipModalNow(b, x, after); });
+    return;
+  }
+  openIshipModalNow(b, x, after);
+}
+function openIshipModalNow(b, x, after) {
   var who = x.items.length ? x.items[0].customer : '@' + b.customer;
   el('modalBody').innerHTML = '';
   var toBox = div('iship-to'); toBox.textContent = 'กำลังโหลดที่อยู่ผู้รับและราคาขนส่ง...';
