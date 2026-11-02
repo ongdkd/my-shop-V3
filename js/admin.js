@@ -2796,9 +2796,14 @@ function poImageZone(parent, id, label, current, linkOnly) {
   pick.onclick = function(e) { e.stopPropagation(); file.click(); };
   box.appendChild(pick); box.appendChild(file);
   box.onclick = function() { box.focus(); };
+  // Screenshots can be many MB as PNG: shrunk here, long enough to still read the small print
   zone.read = function(blob) {
     var rd = new FileReader();
-    rd.onload = function(e) { zone.photo = e.target.result; img.src = zone.photo; img.hidden = false; hint.textContent = 'รูปใหม่ · ยังไม่ได้บันทึก'; };
+    rd.onload = function(e) {
+      shrinkImage(e.target.result, linkOnly ? 2600 : 1600, function(small) {
+        zone.photo = small; img.src = small; img.hidden = false; hint.textContent = 'รูปใหม่ · ยังไม่ได้บันทึก';
+      });
+    };
     rd.readAsDataURL(blob);
   };
   file.onchange = function() { if (file.files && file.files[0]) zone.read(file.files[0]); };
@@ -2901,18 +2906,25 @@ function openPoForm(r) {
     if (r && !changed && !photos.length) { closeModal(); return; }
     var btn = el('modalSave'); btn.disabled = true; btn.textContent = 'กำลังบันทึก...';
     function fail(msg) { btn.disabled = false; btn.textContent = saveLabel; toast(msg, 'error'); }
-    Promise.all(photos.map(function(z) {
-      return z.id === 'orderShot'
+    // A dropped connection gets one more try; the error says which step failed
+    function upload(z, again) {
+      var call = z.id === 'orderShot'
         ? apiCall('adminPurchaseOrders', 'shot', { image: z.photo, orderDate: inputs.orderDate.value, product: inputs.product.value.trim() })
         : apiCall('adminUploadImage', z.photo);
-    })).then(function(ups) {
+      return call.then(function(res) {
+        if (res.status !== 'Success' && again && /fetch/i.test(res.message || '')) return upload(z, false);
+        if (res.status !== 'Success') res.message = (z.id === 'orderShot' ? 'อัปโหลดภาพคำสั่งซื้อไม่สำเร็จ: ' : 'อัปโหลดรูปสินค้าไม่สำเร็จ: ') + (res.message || '');
+        return res;
+      });
+    }
+    Promise.all(photos.map(function(z) { return upload(z, true); })).then(function(ups) {
       var bad = ups.filter(function(u) { return u.status !== 'Success'; })[0];
-      if (bad) { fail(bad.message || 'อัปโหลดรูปไม่สำเร็จ'); return; }
+      if (bad) { fail(bad.message); return; }
       ups.forEach(function(u, i) { po[photos[i].id] = u.url; });
       var call = r ? apiCall('adminPurchaseOrders', 'update', { tab: r.tab, row: r.row, product: r.product, changes: po })
                    : apiCall('adminPurchaseOrders', 'add', po);
       return call.then(function(res) {
-        if (res.status !== 'Success') { fail(res.message || 'บันทึกลงชีตไม่สำเร็จ'); return; }
+        if (res.status !== 'Success') { fail('บันทึกลงชีตไม่สำเร็จ: ' + (res.message || '')); return; }
         _po.data = res;
         closeModal();
         toast(r ? 'บันทึกลงชีตแล้ว' : 'เพิ่มลงชีตแล้ว · ' + poTabName(res.added.tab) + ' แถว ' + res.added.row, 'success');
