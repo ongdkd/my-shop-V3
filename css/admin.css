@@ -1124,3 +1124,40 @@ a.ocard-phone{text-decoration:underline;text-decoration-color:var(--border-stron
 .iship-sec{margin:14px 0 8px;padding-bottom:6px;border-bottom:1px solid var(--border);font-size:0.86rem;font-weight:700;color:var(--text);}
 .iship-sec:first-child{margin-top:0;}
 .iship-sec small{display:block;font-weight:500;font-size:0.74rem;color:var(--text-3);margin-top:2px;}
+
+/* ── Phones and small tablets ── */
+@media(max-width:850px){
+  /* Topbar buttons: one swipeable line instead of stacking and pushing the page down */
+  .topbar-actions{flex-wrap:nowrap;overflow-x:auto;width:calc(100% + 28px);margin:0 -14px;padding:0 14px 2px;scrollbar-width:none;-webkit-overflow-scrolling:touch;}
+  .topbar-actions::-webkit-scrollbar{display:none;}
+  .topbar-actions button{flex:0 0 auto;white-space:nowrap;}
+  .modal-box{max-height:92dvh;}
+}
+@media(max-width:560px){
+  .topbar-sub{display:none;}
+  /* Stat boxes: three to a row (two when there are four), low instead of tall */
+  .stat-row{gap:6px;margin-bottom:10px;}
+  .stat-chip{flex:1 1 28%;min-width:28%;padding:8px 10px;}
+  .stat-chip:first-child:nth-last-child(4),.stat-chip:first-child:nth-last-child(4)~.stat-chip{flex-basis:40%;min-width:40%;}
+  .stat-chip-label{font-size:0.66rem;letter-spacing:0;text-transform:none;margin-bottom:1px;}
+  .stat-chip-value{font-size:1.02rem;overflow-wrap:anywhere;}
+  .section-card{padding:12px;margin-bottom:12px;}
+  .modal-box{padding:16px;}
+  .modal-actions{margin-top:12px;}
+  .modal-actions .btn{flex:1 1 0;justify-content:center;}
+  /* Product cards: the stepper and move buttons wrap instead of running off the screen */
+  .pcard{min-width:0;}
+  .pcard-bottom{flex-wrap:wrap;justify-content:flex-start;}
+  .pcard-top{min-width:0;}
+  .rst-row{grid-template-columns:1fr!important;}
+  .po-grid,.ol-grid{grid-template-columns:minmax(0,1fr);}
+  .po-thumb{width:76px;height:76px;}
+}
+/* Fingers need bigger targets than a mouse */
+@media(hover:none),(pointer:coarse){
+  .reorder-btn{width:36px;height:36px;font-size:0.72rem;}
+  .view-btn{width:42px;height:38px;}
+  .po-chip,.tpl-key,.bulk-ai-btn{min-height:38px;}
+  .bcard-del{width:40px;height:40px;}
+  .stg-track a{display:inline-block;padding:7px 0;}
+}

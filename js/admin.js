@@ -7879,7 +7879,7 @@ function renderRestockPanel() {
   var card = div('section-card');
   card.appendChild(div('section-card-header', '<div class="section-card-title">&#x1F6D2; ตั้งค่าการแจ้งเตือน</div>'));
 
-  var row1 = document.createElement('div'); row1.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;';
+  var row1 = document.createElement('div'); row1.className = 'rst-row'; row1.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;';
 
   var shopWrap = div('modal-field'); shopWrap.style.margin = '0';
   var shopLbl = document.createElement('label'); shopLbl.textContent = 'รายการสั่งซื้อ';
@@ -7917,7 +7917,7 @@ function renderRestockPanel() {
   emailBox.innerHTML = '<span style="font-size:0.8rem;color:var(--text-3);">กำลังโหลดรายชื่อ...</span>';
   emailSection.appendChild(emailLbl); emailSection.appendChild(emailBox); card.appendChild(emailSection);
 
-  var optRow = document.createElement('div'); optRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:12px 0;';
+  var optRow = document.createElement('div'); optRow.className = 'rst-row'; optRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:12px 0;';
 
   var calCard = div('section-card'); calCard.style.cssText = 'padding:14px;margin:0;';
   var calHeader = document.createElement('div'); calHeader.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:6px;';

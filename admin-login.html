@@ -214,6 +214,8 @@
 
   .divider { width: 100%; height: 1.5px; background: var(--border); margin: 2px 0; }
   .card-footer { padding: 0 32px 20px; text-align: center; font-size: 0.7rem; color: var(--text-3); }
+  /* iPhone zooms the page when a field's text is under 16px */
+  @media (max-width: 600px) { .text-input, .pw-input { font-size: 16px; } }
 </style>
 </head>
 <body>

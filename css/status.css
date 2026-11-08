@@ -111,3 +111,5 @@
 /* Five tabs: on phones the last one takes a full row */
 .st-tabs { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 @media (max-width: 520px) { .st-tabs { grid-template-columns: 1fr 1fr; } .st-tabs .st-tab:last-child { grid-column: 1 / -1; } }
+
+@media (hover: none), (pointer: coarse) { .st-back { padding: 8px 0; margin-bottom: 4px; } }

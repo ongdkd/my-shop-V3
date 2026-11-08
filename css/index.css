@@ -377,3 +377,5 @@ button.option-chip{font-family:var(--font);font-size:0.8rem;display:inline-flex;
 .gift-earned .gift-title { color: #007A5A; margin-bottom: 4px; }
 .gift-earned-item { font-size: 0.86rem; font-weight: 600; color: var(--text); }
 .gift-earned-item::before { content: "\2713  "; color: #007A5A; }
+
+@media (hover: none), (pointer: coarse) { .cart-clear-btn { min-height: 38px; } .side-menu-close { width: 38px; height: 38px; } }
