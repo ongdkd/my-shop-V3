@@ -1,0 +1,16 @@
+{
+  "id": "admin.html",
+  "name": "Order Hub Admin",
+  "short_name": "Order Hub",
+  "description": "จัดการระบบสั่งซื้อ Kagayaku",
+  "lang": "th",
+  "start_url": "admin.html",
+  "scope": "admin",
+  "display": "standalone",
+  "background_color": "#FFF5F9",
+  "theme_color": "#E4639B",
+  "icons": [
+    { "src": "img/logo-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "img/logo-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

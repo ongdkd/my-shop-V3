@@ -22,6 +22,36 @@ google.script.run.withSuccessHandler(function(email) {
   document.getElementById('userAvatar').textContent = (email || _au || '?').charAt(0).toUpperCase();
 }).getAdminEmail();
 
+// Install the admin page as an app. Chrome/Edge offer a real install prompt; iPhone
+// Safari has none, so the button shows the steps instead. Hidden once running as the app.
+(function() {
+  var btn = document.getElementById('installBtn'), prompt = null;
+  if (!btn) return;
+  function installed() { return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true; }
+  function refresh() { btn.style.display = installed() ? 'none' : ''; }
+  window.addEventListener('beforeinstallprompt', function(e) { e.preventDefault(); prompt = e; });
+  window.addEventListener('appinstalled', function() { prompt = null; toast('ติดตั้งแอปแล้ว', 'success'); btn.style.display = 'none'; });
+  function showSteps() {
+    var ua = navigator.userAgent;
+    var ios = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    var inApp = /FBAN|FBAV|FB_IAB|Messenger|Instagram|Line\//i.test(ua);
+    var steps = inApp ? ['เปิดหน้านี้ใน ' + (ios ? 'Safari' : 'Chrome') + ' ก่อน (แอปแชทติดตั้งไม่ได้)', 'กด "ติดตั้งแอป" อีกครั้ง']
+      : ios ? ['กดปุ่มแชร์ (สี่เหลี่ยมมีลูกศรขึ้น) ที่แถบเบราว์เซอร์', 'เลือก "เพิ่มไปยังหน้าจอโฮม"', 'กด "เพิ่ม"']
+      : ['เปิดเมนูของเบราว์เซอร์ (⋮)', 'เลือก "ติดตั้งแอป" หรือ "เพิ่มลงในหน้าจอหลัก"', 'ถ้าไม่มีตัวเลือกนี้ ให้เปิดหน้านี้ด้วย Chrome หรือ Edge'];
+    var ol = document.createElement('ol'); ol.className = 'install-steps';
+    steps.forEach(function(s) { var li = document.createElement('li'); li.textContent = s; ol.appendChild(li); });
+    var body = el('modalBody'); body.innerHTML = ''; body.appendChild(ol);
+    openModal('&#x1F4F2; ติดตั้งแอป', '', null);
+  }
+  btn.onclick = function() {
+    if (!prompt) { showSteps(); return; }
+    var p = prompt; prompt = null; // Each prompt can only be shown once
+    p.prompt();
+  };
+  refresh();
+  window.matchMedia('(display-mode: standalone)').addEventListener('change', refresh);
+})();
+
 var logoutBtn = document.getElementById('logoutBtn');
 if (logoutBtn) {
   logoutBtn.onclick = function() {

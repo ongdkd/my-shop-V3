@@ -5,11 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="icon" type="image/png" href="img/logo-64.png">
 <link rel="apple-touch-icon" href="img/logo-180.png">
+<link rel="manifest" href="admin.webmanifest">
+<meta name="theme-color" content="#E4639B">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Order Hub">
 <title>Admin — Order Hub</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&family=Sora:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-<link rel="stylesheet" href="css/admin.css?v=20261103a">
+<link rel="stylesheet" href="css/admin.css?v=20261108a">
 </head>
 <body>
 <div id="toast" role="status" aria-live="polite"></div>
@@ -78,6 +83,9 @@
         <div class="user-email" id="userEmail">กำลังโหลด...</div>
       </div>
 
+      <button id="installBtn" class="logout-btn install-btn" type="button" style="display:none">
+        📲 ติดตั้งแอป
+      </button>
       <button id="logoutBtn" class="logout-btn">
         🚪 ออกจากระบบ
       </button>
@@ -123,6 +131,6 @@ if (window.__sb) {
 
 <script src="js/couriers.js?v=20261031a"></script>
 <script src="js/thai-address.js?v=20261031c"></script>
-<script src="js/admin.js?v=20261103b"></script>
+<script src="js/admin.js?v=20261108a"></script>
 </body>
 </html>
