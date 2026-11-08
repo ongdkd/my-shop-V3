@@ -8,7 +8,7 @@
 //   pickup    → asks a courier to collect from the shop
 // iShip also calls this function (…/iship?hook=<ISHIP_WEBHOOK_KEY>) with
 // status updates, which are saved on the bill for the customer page.
-// A schedule calls …/iship?trace=<ISHIP_WEBHOOK_KEY> to re-check every parcel
+// A schedule calls …/iship?trace=1 with the x-sync-key header to re-check every parcel
 // not delivered yet, in case a webhook never arrives.
 // The iShip token stays in Supabase secrets; the browser never sees it.
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
@@ -16,6 +16,8 @@ import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 const BASE = (Deno.env.get("ISHIP_BASE_URL") || "https://app.iship.cloud").replace(/\/+$/, "");
 const TOKEN = Deno.env.get("ISHIP_TOKEN") ?? "";
 const HOOK_KEY = Deno.env.get("ISHIP_WEBHOOK_KEY") ?? "";
+// The schedules share one key (the x-sync-key header), the same as sheets-sync
+const SYNC_KEY = Deno.env.get("SHEETS_SYNC_KEY") ?? "";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -132,7 +134,9 @@ Deno.serve(async (req) => {
 
   // ── Schedule: re-check parcels booked in the last 45 days that aren't delivered ──
   if (url.searchParams.has("trace")) {
-    if (!HOOK_KEY || url.searchParams.get("trace") !== HOOK_KEY) return reply({ error: "forbidden" }, 403);
+    const bySchedule = !!SYNC_KEY && req.headers.get("x-sync-key") === SYNC_KEY;
+    const byHookKey = !!HOOK_KEY && url.searchParams.get("trace") === HOOK_KEY;
+    if (!bySchedule && !byHookKey) return reply({ error: "forbidden" }, 403);
     if (!TOKEN) return reply({ error: "no ISHIP_TOKEN" }, 500);
     const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const since = new Date(Date.now() - 45 * 864e5).toISOString();
