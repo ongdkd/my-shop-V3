@@ -14,7 +14,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&family=Sora:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-<link rel="stylesheet" href="css/admin.css?v=20261108b">
+<link rel="stylesheet" href="css/admin.css?v=20261111a">
 </head>
 <body>
 <div id="toast" role="status" aria-live="polite"></div>
@@ -72,6 +72,10 @@
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><polyline points="12 7 12 12 15 14"/></svg>
         ประวัติจากชีต
       </button>
+      <button class="nav-item" data-panel="tags">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+        แท็ก
+      </button>
       <button class="nav-item" data-panel="po">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="13" y2="16"/></svg>
         Purchase Orders LOG
@@ -119,7 +123,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.7/dist/umd/supabase.min.js" integrity="sha384-BmlQlKlDvXvKoxkn5OQuUo/aJQCTXeB+Kls6EccBmG4Kf8AXvp89RtO9MtPxP/r5" crossorigin="anonymous"></script>
 <script src="js/config.js?v=20261031u"></script>
-<script src="js/api.js?v=20261102d"></script>
+<script src="js/api.js?v=20261111a"></script>
 <script>
 // Guard: must be signed in to view the admin panel
 if (window.__sb) {
@@ -131,6 +135,7 @@ if (window.__sb) {
 
 <script src="js/couriers.js?v=20261031a"></script>
 <script src="js/thai-address.js?v=20261031c"></script>
-<script src="js/admin.js?v=20261108b"></script>
+<script src="js/tags.js?v=20261111a"></script>
+<script src="js/admin.js?v=20261111a"></script>
 </body>
 </html>

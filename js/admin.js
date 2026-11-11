@@ -108,7 +108,7 @@ document.addEventListener('keydown', function(e) {
 });
 // ── Hash routing — the URL mirrors the open panel (#/products, #/orders …)
 // so a refresh keeps your place and the back button navigates panels ──
-var VALID_PANELS = ['orderlists', 'orders', 'products', 'status', 'slips', 'restock', 'stock', 'history', 'po'];
+var VALID_PANELS = ['orderlists', 'orders', 'products', 'status', 'slips', 'restock', 'stock', 'history', 'po', 'tags'];
 function panelFromHash() {
   var h = (location.hash || '').replace(/^#\/?/, '');
   return VALID_PANELS.indexOf(h) !== -1 ? h : 'orderlists';
@@ -842,6 +842,7 @@ function switchPanel(panel) {
   else if (panel === 'stock')      renderStockPanel();
   else if (panel === 'history')    renderHistoryPanel();
   else if (panel === 'po')         renderPoPanel();
+  else if (panel === 'tags')       renderTagsPanel();
 }
 function loadAllLists(cb) {
   google.script.run.withSuccessHandler(function(r) {
@@ -2965,6 +2966,189 @@ function openPoForm(r) {
   }
   openModal(r ? '&#x270F;&#xFE0F; แก้ไขรายการสั่งซื้อ' : '&#x2B; เพิ่มรายการสั่งซื้อ', '', save, saveLabel);
   inputs.product.focus();
+}
+
+// ════════════════════════════════
+// TAGS — what each product is about (series, character, item type, brand, how it's
+// sold), read from names with a dictionary of spellings (js/tags.js, tag_terms).
+// Shows what sells by tag, finds every product under one tag, and edits the dictionary.
+// ════════════════════════════════
+var _tg = { terms: null, orders: null, kind: 'char', open: '', q: '' };
+
+function renderTagsPanel() {
+  setTopbar('แท็ก', 'จัดกลุ่มสินค้าตามเรื่อง ตัวละคร และประเภท');
+  el('topbarActions').innerHTML = '';
+  el('topbarActions').appendChild(makeBtn('btn btn-primary btn-sm', '&#x2B; เพิ่มคำ', function() { openTagTermModal(null); }));
+  el('topbarActions').appendChild(makeBtn('btn btn-ghost btn-sm', '&#x21BB; รีเฟรช', function() { _tg.terms = null; _tg.orders = null; renderTagsPanel(); }));
+  if (_tg.terms && _tg.orders) { drawTagsPanel(); return; }
+  el('content').innerHTML = ''; el('content').appendChild(makeSpinner());
+  Promise.all([apiCall('adminGetTagTerms'), _tg.orders ? Promise.resolve({ status: 'Success', orders: _tg.orders }) : apiCall('adminGetAllOrders')]).then(function(r) {
+    if (currentPanel !== 'tags') return;
+    var bad = r[0].status !== 'Success' ? r[0] : r[1].status !== 'Success' ? r[1] : null;
+    if (bad) { el('content').innerHTML = ''; el('content').appendChild(div('state-empty', '&#x26A0;&#xFE0F; ' + escapeHtml(bad.message || 'โหลดไม่สำเร็จ'))); return; }
+    _tg.terms = r[0].terms || [];
+    _tg.orders = r[1].orders || [];
+    drawTagsPanel();
+  });
+}
+
+// Each order's text is its list's name + the product: the list usually names the series
+function tagOrderText(o) {
+  var name = '';
+  for (var i = 0; i < allLists.length; i++) if (allLists[i].sheetId === o.listId) { name = allLists[i].name; break; }
+  return (name || o.shopName || '') + ' ' + o.product;
+}
+
+function drawTagsPanel() {
+  var matcher = Tags.compile(_tg.terms), wrap = document.createElement('div');
+  var orders = _tg.orders.filter(function(o) { return o.remark !== 'POS' && o.status !== 'ยกเลิก'; });
+  // Totals per tag of the chosen kind: pieces sold and how many products
+  var byTag = {}, missing = {};
+  orders.forEach(function(o) {
+    var t = Tags.tagsOf(tagOrderText(o), matcher);
+    (t[_tg.kind] || []).forEach(function(tag) {
+      var b = byTag[tag] = byTag[tag] || { qty: 0, orders: 0, products: {} };
+      b.qty += Number(o.qty) || 1; b.orders++; b.products[o.product] = (b.products[o.product] || 0) + (Number(o.qty) || 1);
+    });
+    if (!t.series && !t.brand || !t.type) missing[o.product] = (missing[o.product] || 0) + 1;
+  });
+
+  // Try any text: what would it be tagged as?
+  var tryCard = div('section-card');
+  tryCard.appendChild(div('section-card-title', '&#x1F50E; ลองพิมพ์ชื่อสินค้า'));
+  var sw = div('search-row'); sw.innerHTML = SVG_SEARCH;
+  var inp = document.createElement('input'); inp.placeholder = 'เช่น LND Mar26 โปสเตอร์ (ซาเวีย)'; inp.value = _tg.q;
+  inp.setAttribute('aria-label', 'ลองพิมพ์ชื่อสินค้า'); sw.appendChild(inp); tryCard.appendChild(sw);
+  var shown = div('tag-row'); tryCard.appendChild(shown);
+  function showTry() {
+    shown.innerHTML = '';
+    var t = Tags.tagsOf(inp.value, matcher);
+    Tags.KINDS.forEach(function(k) { (t[k.id] || []).forEach(function(tag) { shown.appendChild(tagChip(k, tag)); }); });
+    if (inp.value.trim() && !shown.children.length) shown.appendChild(div('slip-meta', 'ยังไม่มีคำในพจนานุกรมที่ตรงกับชื่อนี้'));
+  }
+  inp.oninput = function() { _tg.q = inp.value; showTry(); };
+  showTry();
+  wrap.appendChild(tryCard);
+
+  // What sells, by the chosen kind of tag
+  var sales = div('section-card');
+  sales.appendChild(div('section-card-title', '&#x1F4CA; ยอดขายตามแท็ก <span class="slip-meta">ไม่รวม POS และรายการที่ยกเลิก</span>'));
+  var kinds = div('po-chips');
+  Tags.KINDS.forEach(function(k) {
+    var b = makeBtn('po-chip' + (_tg.kind === k.id ? ' on' : ''), escapeHtml(k.label), function() { _tg.kind = k.id; _tg.open = ''; drawTagsPanel(); });
+    b.type = 'button'; b.setAttribute('aria-pressed', _tg.kind === k.id ? 'true' : 'false'); kinds.appendChild(b);
+  });
+  sales.appendChild(kinds);
+  var tags = Object.keys(byTag).sort(function(a, b) { return byTag[b].qty - byTag[a].qty; });
+  if (!tags.length) sales.appendChild(div('state-empty', 'ยังไม่มีออเดอร์ที่เข้ากับแท็กประเภทนี้'));
+  var top = tags.length ? byTag[tags[0]].qty : 1;
+  tags.forEach(function(tag) {
+    var b = byTag[tag], row = document.createElement('button'); row.type = 'button'; row.className = 'tag-bar' + (_tg.open === tag ? ' open' : '');
+    row.setAttribute('aria-expanded', _tg.open === tag ? 'true' : 'false');
+    var name = document.createElement('span'); name.className = 'tag-bar-name'; name.textContent = tag; row.appendChild(name);
+    var track = document.createElement('span'); track.className = 'tag-bar-track';
+    var fill = document.createElement('span'); fill.className = 'tag-bar-fill'; fill.style.width = Math.max(4, Math.round(b.qty / top * 100)) + '%';
+    track.appendChild(fill); row.appendChild(track);
+    var n = document.createElement('span'); n.className = 'tag-bar-n'; n.textContent = b.qty + ' ชิ้น'; row.appendChild(n);
+    row.onclick = function() { _tg.open = _tg.open === tag ? '' : tag; drawTagsPanel(); };
+    sales.appendChild(row);
+    if (_tg.open === tag) {
+      var list = div('tag-products');
+      Object.keys(b.products).sort(function(x, y) { return b.products[y] - b.products[x]; }).forEach(function(p) {
+        var line = div('tag-product'); var nm = document.createElement('span'); nm.textContent = p; line.appendChild(nm);
+        var q = document.createElement('b'); q.textContent = '×' + b.products[p]; line.appendChild(q); list.appendChild(line);
+      });
+      sales.appendChild(list);
+    }
+  });
+  wrap.appendChild(sales);
+
+  // The dictionary itself
+  var dict = div('section-card');
+  dict.appendChild(div('section-card-title', '&#x1F4D6; พจนานุกรมแท็ก <span class="slip-meta">กดคำเพื่อแก้ชื่อเรียกอื่น</span>'));
+  Tags.KINDS.forEach(function(k) {
+    var mine = _tg.terms.filter(function(t) { return t.kind === k.id; }).sort(function(a, b) { return a.tag.localeCompare(b.tag, 'th'); });
+    dict.appendChild(div('sync-h', escapeHtml(k.label) + ' (' + mine.length + ')'));
+    var row = div('tag-row');
+    mine.forEach(function(t) {
+      var c = tagChip(k, t.tag, t.aliases.length ? '+' + t.aliases.length : ''); c.title = t.aliases.join(', ');
+      c.onclick = function() { openTagTermModal(t); }; row.appendChild(c);
+    });
+    dict.appendChild(row);
+  });
+  wrap.appendChild(dict);
+
+  // Names the dictionary can't place yet: the words to add next
+  var miss = Object.keys(missing).sort(function(a, b) { return missing[b] - missing[a]; });
+  if (miss.length) {
+    var mc = div('section-card');
+    mc.appendChild(div('section-card-title', '&#x2753; ชื่อที่ยังไม่รู้เรื่องหรือประเภท (' + miss.length + ')'));
+    mc.appendChild(div('slip-meta', 'เพิ่มคำหรือชื่อเรียกอื่นในพจนานุกรม แล้วรายการเหล่านี้จะหายไปเอง'));
+    var ml = div('tag-products');
+    miss.slice(0, 40).forEach(function(p) {
+      var line = div('tag-product'); var nm = document.createElement('span'); nm.textContent = p; line.appendChild(nm);
+      var q = document.createElement('b'); q.textContent = missing[p] + ' ออเดอร์'; line.appendChild(q); ml.appendChild(line);
+    });
+    mc.appendChild(ml);
+    wrap.appendChild(mc);
+  }
+  el('content').innerHTML = ''; el('content').appendChild(wrap);
+  if (document.activeElement === document.body && _tg.q) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+}
+
+function tagChip(kind, tag, extra) {
+  var c = document.createElement('button'); c.type = 'button'; c.className = 'tag-chip tag-' + kind.id;
+  c.textContent = tag + (extra ? ' ' + extra : ''); c.setAttribute('aria-label', kind.label + ': ' + tag);
+  return c;
+}
+
+// t: the term to edit; null adds one (of the kind on screen)
+function openTagTermModal(t) {
+  var body = el('modalBody'); body.innerHTML = '';
+  function field(id, label, value, hint) {
+    var f = div('modal-field'), l = document.createElement('label'); l.htmlFor = 'tg_' + id; l.textContent = label; f.appendChild(l);
+    var i = document.createElement(id === 'kind' ? 'select' : 'input'); i.id = 'tg_' + id;
+    if (id === 'kind') Tags.KINDS.forEach(function(k) { var o = document.createElement('option'); o.value = k.id; o.textContent = k.label; i.appendChild(o); });
+    i.value = value; f.appendChild(i);
+    if (hint) f.appendChild(div('slip-meta', hint));
+    body.appendChild(f); return i;
+  }
+  var kind = field('kind', 'ประเภทแท็ก', t ? t.kind : _tg.kind);
+  var tag = field('tag', 'ชื่อแท็ก (ชื่อหลักที่จะแสดง)', t ? t.tag : '');
+  var aliases = field('aliases', 'ชื่อเรียกอื่น / คำสะกดอื่น (คั่นด้วย ,)', t ? t.aliases.join(', ') : '', 'เช่น ซาเวีย, เซเวียร์, Xavier · ตัวพิมพ์เล็กใหญ่และเว้นวรรคไม่มีผล');
+  var minus = field('minus', 'คำที่มีชื่อนี้อยู่ข้างในแต่ไม่ใช่ (ไม่บังคับ)', t ? (t.minus || []).join(', ') : '', 'เช่น แท็ก เซน ไม่นับใน "เซนย่า"');
+  var test = div('tag-row'); body.appendChild(test);
+  function preview() {
+    var m = Tags.compile([{ kind: kind.value, tag: tag.value.trim(), aliases: split(aliases.value), minus: split(minus.value) }]);
+    var hits = 0;
+    (_tg.orders || []).forEach(function(o) { if (Object.keys(Tags.tagsOf(tagOrderText(o), m)).length) hits++; });
+    test.innerHTML = ''; test.appendChild(div('slip-meta', tag.value.trim() ? 'ตรงกับออเดอร์ ' + hits + ' รายการ' : ''));
+  }
+  function split(s) { return String(s).split(',').map(function(x) { return x.trim(); }).filter(Boolean); }
+  [tag, aliases, minus].forEach(function(i) { i.oninput = preview; }); kind.onchange = preview; preview();
+  if (t) {
+    var del = makeBtn('btn btn-ghost btn-sm', '&#x1F5D1; ลบคำนี้', function() {
+      askConfirm('ลบแท็ก "' + t.tag + '" ออกจากพจนานุกรม?', 'ลบ').then(function(ok) {
+        if (!ok) return;
+        apiCall('adminDeleteTagTerm', t.id).then(function(res) {
+          if (res.status !== 'Success') { toast(res.message || 'ลบไม่สำเร็จ', 'error'); return; }
+          _tg.terms = _tg.terms.filter(function(x) { return x.id !== t.id; }); closeModal(); toast('ลบแล้ว', 'success'); drawTagsPanel();
+        });
+      });
+    });
+    del.type = 'button'; del.style.color = 'var(--error)'; body.appendChild(del);
+  }
+  openModal(t ? '&#x270F;&#xFE0F; แก้แท็ก' : '&#x2B; เพิ่มแท็ก', '', function() {
+    if (!tag.value.trim()) { toast('กรุณาใส่ชื่อแท็ก', 'error'); tag.focus(); return; }
+    var btn = el('modalSave'); btn.disabled = true;
+    apiCall('adminSaveTagTerm', { id: t ? t.id : '', kind: kind.value, tag: tag.value.trim(), aliases: split(aliases.value), minus: split(minus.value) }).then(function(res) {
+      btn.disabled = false;
+      if (res.status !== 'Success') { toast(res.message || 'บันทึกไม่สำเร็จ', 'error'); return; }
+      _tg.terms = _tg.terms.filter(function(x) { return x.id !== res.term.id; }).concat([res.term]);
+      closeModal(); toast('บันทึกแล้ว', 'success'); drawTagsPanel();
+    });
+  }, 'บันทึก');
+  tag.focus();
 }
 
 // Old orders imported from the status sheet, with bulk status changes

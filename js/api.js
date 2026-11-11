@@ -2015,6 +2015,40 @@
       } catch (e) { return e.__json || err(e.message || e); }
     },
 
+    // ── Tags dictionary (supabase/migrations/2026-11-11-tags.sql, js/tags.js) ──
+    adminGetTagTerms: async function () {
+      try {
+        requireSb(); await requireAdmin();
+        var r = await sb.from('tag_terms').select('id,kind,tag,aliases,minus').order('tag');
+        if (r.error) {
+          if (/tag_terms/.test(r.error.message || '')) return err('ต้องรันไฟล์ supabase/migrations/2026-11-11-tags.sql ใน SQL Editor ก่อน');
+          return err(r.error.message);
+        }
+        return ok({ terms: r.data || [] });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+    adminSaveTagTerm: async function (t) {
+      try {
+        requireSb(); await requireAdmin();
+        var clean = function (a) { return (a || []).map(function (x) { return String(x).trim(); }).filter(Boolean).slice(0, 50); };
+        var row = { kind: t.kind, tag: String(t.tag || '').trim().slice(0, 80), aliases: clean(t.aliases), minus: clean(t.minus), updated_at: new Date().toISOString() };
+        if (!row.tag) return err('กรุณาใส่ชื่อแท็ก');
+        var q = t.id ? sb.from('tag_terms').update(row).eq('id', t.id) : sb.from('tag_terms').insert(row);
+        var r = await q.select('id,kind,tag,aliases,minus').single();
+        if (r.error) return err(/duplicate|unique/i.test(r.error.message || '') ? 'มีแท็กชื่อนี้ในประเภทนี้แล้ว' : r.error.message);
+        return ok({ term: r.data });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+    adminDeleteTagTerm: async function (id) {
+      try {
+        requireSb(); await requireAdmin();
+        var r = await sb.from('tag_terms').delete().eq('id', id).select('id');
+        if (r.error) return err(r.error.message);
+        if (!r.data || !r.data.length) return err('ไม่พบแท็กนี้');
+        return ok({});
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
     // Purchase Orders LOG (supabase/functions/sheets-sync): the Google Sheet is the record
     // action: list · add · update · pictures · track
     adminPurchaseOrders: async function (action, po) {
