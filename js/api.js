@@ -728,6 +728,16 @@
     },
 
     // ── Order lists (public) ─────────────────────────────────
+    // The tag dictionary for the shop's filter chips. Empty until the public-read
+    // policy exists (supabase/migrations/2026-11-13-tags-shop.sql): the shop then just shows no chips.
+    getTagTerms: async function () {
+      try {
+        requireSb();
+        var r = await sb.from('tag_terms').select('kind,tag,aliases,minus');
+        return ok({ terms: r.error ? [] : (r.data || []) });
+      } catch (e) { return ok({ terms: [] }); }
+    },
+
     getOrderLists: async function () {
       requireSb();
       var data = await fetchLists();
@@ -2035,7 +2045,8 @@
         if (!row.tag) return err('กรุณาใส่ชื่อแท็ก');
         var q = t.id ? sb.from('tag_terms').update(row).eq('id', t.id) : sb.from('tag_terms').insert(row);
         var r = await q.select('id,kind,tag,aliases,minus').single();
-        if (r.error) return err(/duplicate|unique/i.test(r.error.message || '') ? 'มีแท็กชื่อนี้ในประเภทนี้แล้ว' : r.error.message);
+        if (r.error && /kind_check|check constraint/i.test(r.error.message || '')) return err('ต้องรันไฟล์ supabase/migrations/2026-11-13-tags-shop.sql ใน SQL Editor ก่อน');
+        if (r.error) return err(/duplicate|unique/i.test(r.error.message || '') ? 'มีคำนี้ในประเภทนี้แล้ว' : r.error.message);
         return ok({ term: r.data });
       } catch (e) { return e.__json || err(e.message || e); }
     },

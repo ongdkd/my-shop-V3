@@ -118,7 +118,7 @@ window.addEventListener('hashchange', function() {
   if (p !== currentPanel) switchPanel(p);
 });
 
-loadAllLists(function() { switchPanel(panelFromHash()); });
+loadAllLists(function() { switchPanel(panelFromHash()); loadTagMatcher(); });
 
 // ── HELPERS ──
 var _toastTimer = null;
@@ -1647,7 +1647,7 @@ function buildItemSummary(orders) {
     sumQty += g.qty; sumYuan += g.yuan; sumFull += g.full;
     var vs = Object.keys(g.variants).map(function(k) { return g.variants[k]; }).sort(function(a, b) { return b.qty - a.qty; });
     var row = div('isum-row');
-    row.setAttribute('data-search', (g.name + ' ' + vs.map(function(v) { return v.name; }).join(' ')).toLowerCase());
+    row.setAttribute('data-search', (g.name + ' ' + vs.map(function(v) { return v.name; }).join(' ') + ' ' + tagSearchWords(g.name, '')).toLowerCase());
     var top = div('isum-top');
     top.appendChild(div('isum-rank', String(i + 1)));
     var nm = div('isum-name'); nm.textContent = g.name; nm.title = g.name; top.appendChild(nm);
@@ -1767,7 +1767,7 @@ function renderOrdersTable(orders, holder, isAllView) {
   var searchWrap = div('search-row');
   searchWrap.innerHTML = SVG_SEARCH;
   var searchInp = document.createElement('input');
-  searchInp.placeholder = 'ค้นหาลูกค้า / เบอร์ / สินค้า';
+  searchInp.placeholder = 'ค้นหาลูกค้า / เบอร์ / สินค้า / แท็ก';
   searchInp.oninput = function() { filterOrderRows(this.value); };
   searchWrap.appendChild(searchInp);
 
@@ -1901,7 +1901,7 @@ function renderOrdersTable(orders, holder, isAllView) {
       var isDep = o.payType === 'Deposit';
       sum += Number(o.total) || 0; if (o.payType !== 'Gift') pcs += Number(o.qty) || 0;
       if (isDep && Number(o.totalFull) > Number(o.total)) owed += Number(o.totalFull) - Number(o.total);
-      search.push(o.product);
+      search.push(o.product, tagSearchWords(o.product, o.listId));
       var it = div('oitem');
       if (!isAllView) {
         var sel = document.createElement('input'); sel.type = 'checkbox'; sel.className = 'order-sel';
@@ -1910,6 +1910,7 @@ function renderOrdersTable(orders, holder, isAllView) {
       }
       var info = div('oitem-info');
       var pn = div('oitem-name'); pn.textContent = o.product; info.appendChild(pn);
+      var oTags = tagMinis(itemTags(o.product, o.listId)); if (oTags) info.appendChild(oTags);
       // Every item says how it was paid: deposit (with its full price) or full
       info.appendChild(isDep
         ? div('oitem-sub', '<span class="badge badge-deposit">มัดจำ</span> ราคาเต็ม ' + escapeHtml(baht(o.totalFull || o.fullPrice * o.qty)))
@@ -2973,7 +2974,39 @@ function openPoForm(r) {
 // sold), read from names with a dictionary of spellings (js/tags.js, tag_terms).
 // Shows what sells by tag, finds every product under one tag, and edits the dictionary.
 // ════════════════════════════════
-var _tg = { terms: null, orders: null, kind: 'char', open: '', q: '' };
+var _tg = { terms: null, orders: null, kind: 'char', open: '', q: '', more: false };
+
+// The compiled dictionary, shared by every panel: search boxes find items by any
+// spelling of their tags, and rows show their tags. Null until it has loaded.
+var _tagM = null;
+function loadTagMatcher() {
+  apiCall('adminGetTagTerms').then(function(r) {
+    if (r.status !== 'Success') return;
+    _tg.terms = r.terms || []; _tagM = Tags.compile(_tg.terms);
+    // Rows drawn before the dictionary arrived get their tags now
+    if (currentPanel === 'orders' && _ordLast && document.body.contains(_ordLast.holder)) renderOrdersTable(_ordLast.orders, _ordLast.holder, _ordLast.isAllView);
+    else if (currentPanel === 'products' && currentProductsSheetId && !document.querySelector('.modal.open')) loadProducts(currentProductsSheetId);
+  });
+}
+function tagTermsChanged() { _tagM = Tags.compile(_tg.terms || []); }
+function tagListName(listId) {
+  for (var i = 0; i < allLists.length; i++) if (allLists[i].sheetId === listId) return allLists[i].name;
+  return '';
+}
+function itemTags(text, listId) { return _tagM ? Tags.tagsOfItem(text, tagListName(listId), _tagM) : {}; }
+// Every spelling of an item's tags, lower case, for data-search
+function tagSearchWords(text, listId) { return _tagM ? Tags.words(itemTags(text, listId), _tagM) : ''; }
+// Small chips for a row: series, character and type (the rest is noise in a list)
+function tagMinis(tags) {
+  var row = null;
+  ['series', 'char', 'type'].forEach(function(k) {
+    (tags[k] || []).forEach(function(tag) {
+      if (!row) row = div('tag-minis');
+      var s = document.createElement('span'); s.className = 'tag-mini tag-' + k; s.textContent = tag; row.appendChild(s);
+    });
+  });
+  return row;
+}
 
 function renderTagsPanel() {
   setTopbar('แท็ก', 'จัดกลุ่มสินค้าตามเรื่อง ตัวละคร และประเภท');
@@ -2986,7 +3019,7 @@ function renderTagsPanel() {
     if (currentPanel !== 'tags') return;
     var bad = r[0].status !== 'Success' ? r[0] : r[1].status !== 'Success' ? r[1] : null;
     if (bad) { el('content').innerHTML = ''; el('content').appendChild(div('state-empty', '&#x26A0;&#xFE0F; ' + escapeHtml(bad.message || 'โหลดไม่สำเร็จ'))); return; }
-    _tg.terms = r[0].terms || [];
+    _tg.terms = r[0].terms || []; tagTermsChanged();
     _tg.orders = r[1].orders || [];
     drawTagsPanel();
   });
@@ -2994,23 +3027,25 @@ function renderTagsPanel() {
 
 // Each order's text is its list's name + the product: the list usually names the series
 function tagOrderText(o) {
-  var name = '';
-  for (var i = 0; i < allLists.length; i++) if (allLists[i].sheetId === o.listId) { name = allLists[i].name; break; }
-  return (name || o.shopName || '') + ' ' + o.product;
+  return (tagListName(o.listId) || o.shopName || '') + ' ' + o.product;
 }
 
 function drawTagsPanel() {
   var matcher = Tags.compile(_tg.terms), wrap = document.createElement('div');
   var orders = _tg.orders.filter(function(o) { return o.remark !== 'POS' && o.status !== 'ยกเลิก'; });
-  // Totals per tag of the chosen kind: pieces sold and how many products
-  var byTag = {}, missing = {};
+  // Totals per tag of the chosen kind, and the words in names that no term explains
+  var byTag = {}, rest = {};
   orders.forEach(function(o) {
-    var t = Tags.tagsOf(tagOrderText(o), matcher);
+    var n = Number(o.qty) || 1;
+    var t = Tags.tagsOfItem(o.product, tagListName(o.listId) || o.shopName || '', matcher);
     (t[_tg.kind] || []).forEach(function(tag) {
       var b = byTag[tag] = byTag[tag] || { qty: 0, orders: 0, products: {} };
-      b.qty += Number(o.qty) || 1; b.orders++; b.products[o.product] = (b.products[o.product] || 0) + (Number(o.qty) || 1);
+      b.qty += n; b.orders++; b.products[o.product] = (b.products[o.product] || 0) + n;
     });
-    if (!t.series && !t.brand || !t.type) missing[o.product] = (missing[o.product] || 0) + 1;
+    Tags.explain(o.product, matcher).rest.forEach(function(w) {
+      var r = rest[w] = rest[w] || { n: 0, ex: o.product, kind: !t.series ? 'series' : !t.type ? 'type' : 'char' };
+      r.n += n;
+    });
   });
 
   // Try any text: what would it be tagged as?
@@ -3022,13 +3057,52 @@ function drawTagsPanel() {
   var shown = div('tag-row'); tryCard.appendChild(shown);
   function showTry() {
     shown.innerHTML = '';
-    var t = Tags.tagsOf(inp.value, matcher);
-    Tags.KINDS.forEach(function(k) { (t[k.id] || []).forEach(function(tag) { shown.appendChild(tagChip(k, tag)); }); });
+    var e = Tags.explain(inp.value, matcher);
+    Tags.KINDS.forEach(function(k) { (e.tags[k.id] || []).forEach(function(tag) { shown.appendChild(tagChip(k, tag)); }); });
     if (inp.value.trim() && !shown.children.length) shown.appendChild(div('slip-meta', 'ยังไม่มีคำในพจนานุกรมที่ตรงกับชื่อนี้'));
+    if (e.rest.length) shown.appendChild(div('slip-meta', 'คำที่ยังไม่รู้จัก: ' + escapeHtml(e.rest.join(' · '))));
   }
   inp.oninput = function() { _tg.q = inp.value; showTry(); };
   showTry();
   wrap.appendChild(tryCard);
+
+  // Words the dictionary doesn't know, most sold first: one tap to teach each
+  var words = Object.keys(rest).sort(function(a, b) { return rest[b].n - rest[a].n; });
+  if (words.length) {
+    var mc = div('section-card');
+    mc.appendChild(div('section-card-title', '&#x2753; คำที่ยังไม่รู้จัก (' + words.length + ') <span class="slip-meta">เรียงตามจำนวนที่ขาย</span>'));
+    mc.appendChild(div('slip-meta', 'กด + แท็ก เพื่อสอนคำนี้ · กด = เพื่อรวมเป็นคำสะกดอื่นของแท็กที่มีอยู่ · กด ข้าม ถ้าคำนี้ไม่ใช่แท็ก'));
+    var ml = div('tag-words');
+    words.slice(0, _tg.more ? 200 : 15).forEach(function(w) {
+      var r = rest[w], line = div('tag-word'), info = div('tag-word-info');
+      var nm = document.createElement('b'); nm.textContent = w; info.appendChild(nm);
+      var cnt = document.createElement('span'); cnt.className = 'tag-word-n'; cnt.textContent = r.n + ' ชิ้น'; info.appendChild(cnt);
+      var ex = div('tag-word-ex'); ex.textContent = r.ex; info.appendChild(ex);
+      line.appendChild(info);
+      var acts = div('tag-word-acts');
+      var like = Tags.near(w, matcher);
+      if (like) {
+        var same = makeBtn('btn btn-ghost btn-sm', '= ' + escapeHtml(like.tag), function() { addTagAlias(like, w, same); });
+        same.title = 'เพิ่ม "' + w + '" เป็นคำสะกดอื่นของ ' + like.tag; acts.appendChild(same);
+      }
+      acts.appendChild(makeBtn('btn btn-primary btn-sm', '&#x2B; แท็ก', function() { openTagTermModal(null, { tag: w, kind: r.kind }); }));
+      var skip = makeBtn('btn btn-ghost btn-sm', 'ข้าม', function() {
+        skip.disabled = true;
+        apiCall('adminSaveTagTerm', { id: '', kind: 'skip', tag: w, aliases: [], minus: [] }).then(function(res) {
+          if (res.status !== 'Success') { skip.disabled = false; toast(res.message || 'บันทึกไม่สำเร็จ', 'error'); return; }
+          _tg.terms.push(res.term); tagTermsChanged(); drawTagsPanel();
+        });
+      });
+      skip.title = 'คำนี้ไม่ใช่แท็ก ไม่ต้องแสดงอีก'; acts.appendChild(skip);
+      line.appendChild(acts); ml.appendChild(line);
+    });
+    mc.appendChild(ml);
+    if (words.length > 15) {
+      var moreBtn = makeBtn('btn btn-ghost btn-sm', _tg.more ? 'แสดงน้อยลง' : 'แสดงทั้งหมด (' + words.length + ')', function() { _tg.more = !_tg.more; drawTagsPanel(); });
+      moreBtn.style.marginTop = '8px'; mc.appendChild(moreBtn);
+    }
+    wrap.appendChild(mc);
+  }
 
   // What sells, by the chosen kind of tag
   var sales = div('section-card');
@@ -3066,8 +3140,9 @@ function drawTagsPanel() {
   // The dictionary itself
   var dict = div('section-card');
   dict.appendChild(div('section-card-title', '&#x1F4D6; พจนานุกรมแท็ก <span class="slip-meta">กดคำเพื่อแก้ชื่อเรียกอื่น</span>'));
-  Tags.KINDS.forEach(function(k) {
+  Tags.KINDS.concat([Tags.SKIP]).forEach(function(k) {
     var mine = _tg.terms.filter(function(t) { return t.kind === k.id; }).sort(function(a, b) { return a.tag.localeCompare(b.tag, 'th'); });
+    if (k.id === 'skip' && !mine.length) return;
     dict.appendChild(div('sync-h', escapeHtml(k.label) + ' (' + mine.length + ')'));
     var row = div('tag-row');
     mine.forEach(function(t) {
@@ -3078,20 +3153,6 @@ function drawTagsPanel() {
   });
   wrap.appendChild(dict);
 
-  // Names the dictionary can't place yet: the words to add next
-  var miss = Object.keys(missing).sort(function(a, b) { return missing[b] - missing[a]; });
-  if (miss.length) {
-    var mc = div('section-card');
-    mc.appendChild(div('section-card-title', '&#x2753; ชื่อที่ยังไม่รู้เรื่องหรือประเภท (' + miss.length + ')'));
-    mc.appendChild(div('slip-meta', 'เพิ่มคำหรือชื่อเรียกอื่นในพจนานุกรม แล้วรายการเหล่านี้จะหายไปเอง'));
-    var ml = div('tag-products');
-    miss.slice(0, 40).forEach(function(p) {
-      var line = div('tag-product'); var nm = document.createElement('span'); nm.textContent = p; line.appendChild(nm);
-      var q = document.createElement('b'); q.textContent = missing[p] + ' ออเดอร์'; line.appendChild(q); ml.appendChild(line);
-    });
-    mc.appendChild(ml);
-    wrap.appendChild(mc);
-  }
   el('content').innerHTML = ''; el('content').appendChild(wrap);
   if (document.activeElement === document.body && _tg.q) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
 }
@@ -3102,37 +3163,73 @@ function tagChip(kind, tag, extra) {
   return c;
 }
 
-// t: the term to edit; null adds one (of the kind on screen)
-function openTagTermModal(t) {
+// Add a word as another spelling of an existing term ({ kind, tag })
+function addTagAlias(target, word, btn) {
+  var term = null;
+  _tg.terms.forEach(function(t) { if (t.kind === target.kind && t.tag === target.tag) term = t; });
+  if (!term) { toast('ไม่พบแท็กนี้แล้ว กรุณารีเฟรช', 'error'); return Promise.resolve(false); }
+  if (btn) btn.disabled = true;
+  var aliases = term.aliases.slice();
+  String(word).split(',').forEach(function(w) { w = w.trim(); if (w && aliases.indexOf(w) === -1) aliases.push(w); });
+  return apiCall('adminSaveTagTerm', { id: term.id, kind: term.kind, tag: term.tag, aliases: aliases, minus: term.minus || [] }).then(function(res) {
+    if (btn) btn.disabled = false;
+    if (res.status !== 'Success') { toast(res.message || 'บันทึกไม่สำเร็จ', 'error'); return false; }
+    _tg.terms = _tg.terms.filter(function(x) { return x.id !== res.term.id; }).concat([res.term]); tagTermsChanged();
+    toast('เพิ่ม "' + word + '" เข้าแท็ก ' + term.tag + ' แล้ว', 'success');
+    if (currentPanel === 'tags') drawTagsPanel();
+    return true;
+  });
+}
+
+// t: the term to edit; null adds one. seed: { tag, kind } to start a new one from
+// a word found in a name.
+function openTagTermModal(t, seed) {
+  seed = seed || {};
   var body = el('modalBody'); body.innerHTML = '';
   function field(id, label, value, hint) {
     var f = div('modal-field'), l = document.createElement('label'); l.htmlFor = 'tg_' + id; l.textContent = label; f.appendChild(l);
-    var i = document.createElement(id === 'kind' ? 'select' : 'input'); i.id = 'tg_' + id;
-    if (id === 'kind') Tags.KINDS.forEach(function(k) { var o = document.createElement('option'); o.value = k.id; o.textContent = k.label; i.appendChild(o); });
+    var i = document.createElement(id === 'kind' || id === 'into' ? 'select' : 'input'); i.id = 'tg_' + id;
+    if (id === 'kind') Tags.KINDS.concat([Tags.SKIP]).forEach(function(k) { var o = document.createElement('option'); o.value = k.id; o.textContent = k.label; i.appendChild(o); });
+    if (id === 'into') {
+      var o0 = document.createElement('option'); o0.value = ''; o0.textContent = '— สร้างเป็นแท็กใหม่ —'; i.appendChild(o0);
+      Tags.KINDS.forEach(function(k) {
+        var g = document.createElement('optgroup'); g.label = k.label;
+        _tg.terms.filter(function(x) { return x.kind === k.id; }).sort(function(a, b) { return a.tag.localeCompare(b.tag, 'th'); })
+          .forEach(function(x) { var o = document.createElement('option'); o.value = x.id; o.textContent = x.tag; g.appendChild(o); });
+        if (g.children.length) i.appendChild(g);
+      });
+    }
     i.value = value; f.appendChild(i);
     if (hint) f.appendChild(div('slip-meta', hint));
     body.appendChild(f); return i;
   }
-  var kind = field('kind', 'ประเภทแท็ก', t ? t.kind : _tg.kind);
-  var tag = field('tag', 'ชื่อแท็ก (ชื่อหลักที่จะแสดง)', t ? t.tag : '');
+  var tag = field('tag', t ? 'ชื่อแท็ก (ชื่อหลักที่จะแสดง)' : 'คำ / ชื่อแท็ก', t ? t.tag : seed.tag || '');
+  // A new word is often just another spelling of a tag that already exists
+  var like = !t && seed.tag ? Tags.near(seed.tag, Tags.compile(_tg.terms)) : null, likeId = '';
+  if (like) _tg.terms.forEach(function(x) { if (x.kind === like.kind && x.tag === like.tag) likeId = x.id; });
+  var into = t ? null : field('into', 'เป็นคำสะกดอื่นของแท็กที่มีอยู่? (ไม่บังคับ)', likeId, 'เลือกแท็ก ถ้าคำนี้คือชื่อเรียกอีกแบบของแท็กเดิม');
+  var kind = field('kind', 'ประเภทแท็ก', t ? t.kind : seed.kind || _tg.kind);
   var aliases = field('aliases', 'ชื่อเรียกอื่น / คำสะกดอื่น (คั่นด้วย ,)', t ? t.aliases.join(', ') : '', 'เช่น ซาเวีย, เซเวียร์, Xavier · ตัวพิมพ์เล็กใหญ่และเว้นวรรคไม่มีผล');
   var minus = field('minus', 'คำที่มีชื่อนี้อยู่ข้างในแต่ไม่ใช่ (ไม่บังคับ)', t ? (t.minus || []).join(', ') : '', 'เช่น แท็ก เซน ไม่นับใน "เซนย่า"');
   var test = div('tag-row'); body.appendChild(test);
+  function split(s) { return String(s).split(',').map(function(x) { return x.trim(); }).filter(Boolean); }
   function preview() {
-    var m = Tags.compile([{ kind: kind.value, tag: tag.value.trim(), aliases: split(aliases.value), minus: split(minus.value) }]);
+    // Joining an existing tag: only the word and its spellings matter
+    var joining = !!(into && into.value);
+    [kind, minus].forEach(function(i) { i.closest('.modal-field').style.display = joining ? 'none' : ''; });
+    var m = Tags.compile([{ kind: kind.value, tag: tag.value.trim(), aliases: split(aliases.value), minus: joining ? [] : split(minus.value) }]);
     var hits = 0;
-    (_tg.orders || []).forEach(function(o) { if (Object.keys(Tags.tagsOf(tagOrderText(o), m)).length) hits++; });
+    (_tg.orders || []).forEach(function(o) { if (Tags.hits(tagOrderText(o), m)) hits++; });
     test.innerHTML = ''; test.appendChild(div('slip-meta', tag.value.trim() ? 'ตรงกับออเดอร์ ' + hits + ' รายการ' : ''));
   }
-  function split(s) { return String(s).split(',').map(function(x) { return x.trim(); }).filter(Boolean); }
-  [tag, aliases, minus].forEach(function(i) { i.oninput = preview; }); kind.onchange = preview; preview();
+  [tag, aliases, minus].forEach(function(i) { i.oninput = preview; }); kind.onchange = preview; if (into) into.onchange = preview; preview();
   if (t) {
     var del = makeBtn('btn btn-ghost btn-sm', '&#x1F5D1; ลบคำนี้', function() {
       askConfirm('ลบแท็ก "' + t.tag + '" ออกจากพจนานุกรม?', 'ลบ').then(function(ok) {
         if (!ok) return;
         apiCall('adminDeleteTagTerm', t.id).then(function(res) {
           if (res.status !== 'Success') { toast(res.message || 'ลบไม่สำเร็จ', 'error'); return; }
-          _tg.terms = _tg.terms.filter(function(x) { return x.id !== t.id; }); closeModal(); toast('ลบแล้ว', 'success'); drawTagsPanel();
+          _tg.terms = _tg.terms.filter(function(x) { return x.id !== t.id; }); tagTermsChanged(); closeModal(); toast('ลบแล้ว', 'success'); drawTagsPanel();
         });
       });
     });
@@ -3141,10 +3238,16 @@ function openTagTermModal(t) {
   openModal(t ? '&#x270F;&#xFE0F; แก้แท็ก' : '&#x2B; เพิ่มแท็ก', '', function() {
     if (!tag.value.trim()) { toast('กรุณาใส่ชื่อแท็ก', 'error'); tag.focus(); return; }
     var btn = el('modalSave'); btn.disabled = true;
+    if (into && into.value) {
+      var target = null;
+      _tg.terms.forEach(function(x) { if (x.id === into.value) target = x; });
+      addTagAlias(target || {}, [tag.value.trim()].concat(split(aliases.value)).join(', ')).then(function(done) { btn.disabled = false; if (done) closeModal(); });
+      return;
+    }
     apiCall('adminSaveTagTerm', { id: t ? t.id : '', kind: kind.value, tag: tag.value.trim(), aliases: split(aliases.value), minus: split(minus.value) }).then(function(res) {
       btn.disabled = false;
       if (res.status !== 'Success') { toast(res.message || 'บันทึกไม่สำเร็จ', 'error'); return; }
-      _tg.terms = _tg.terms.filter(function(x) { return x.id !== res.term.id; }).concat([res.term]);
+      _tg.terms = _tg.terms.filter(function(x) { return x.id !== res.term.id; }).concat([res.term]); tagTermsChanged();
       closeModal(); toast('บันทึกแล้ว', 'success'); drawTagsPanel();
     });
   }, 'บันทึก');
@@ -4772,6 +4875,15 @@ function confirmDeleteSelectedOrders() {
   el('modal').classList.add('open');
 }
 
+// A product's name and options: options often carry the character names
+function prodTagText(p) { return p.name + ' ' + String(p.options || ''); }
+function prodSearchText(p, sheetId) { return (prodTagText(p) + ' ' + tagSearchWords(prodTagText(p), sheetId)).toLowerCase(); }
+function filterProdRows(term) {
+  term = term.trim().toLowerCase();
+  var rows = document.querySelectorAll('#prodTable tbody tr, .prod-grid .pcard');
+  for (var i = 0; i < rows.length; i++) rows[i].style.display = (rows[i].getAttribute('data-search') || '').indexOf(term) !== -1 ? '' : 'none';
+}
+
 function filterOrderRows(term) {
   term = term.toLowerCase();
   var rows = document.querySelectorAll('#ordersDataTable .ocard, #ordersDataTable .isum-row');
@@ -4888,6 +5000,10 @@ function renderProductsTable(products, sheetId, holder) {
   var gBtn = makeBtn('view-btn' + (productViewMode === 'grid' ? ' active' : ''), svgGrid, function() { setProductView('grid'); }); gBtn.title = 'มุมมองกริด';
   var lBtn = makeBtn('view-btn' + (productViewMode === 'list' ? ' active' : ''), svgList, function() { setProductView('list'); }); lBtn.title = 'มุมมองรายการ';
   vsw.appendChild(gBtn); vsw.appendChild(lBtn); hdrRight.appendChild(vsw);
+  var pSw = div('search-row prod-search'); pSw.innerHTML = SVG_SEARCH;
+  var pSi = document.createElement('input'); pSi.placeholder = 'ค้นหาสินค้า / แท็ก'; pSi.setAttribute('aria-label', 'ค้นหาสินค้าหรือแท็ก');
+  pSi.oninput = function() { filterProdRows(this.value); };
+  pSw.appendChild(pSi); hdrRight.appendChild(pSw);
   // Products enter a list only from the warehouse (one place to add things)
   hdrRight.appendChild(makeBtn('btn btn-primary btn-sm', '&#x1F4E6; นำเข้าจากคลัง', function() { switchPanel('stock'); }));
   hdrRight.appendChild(makeBtn('btn btn-danger btn-sm', '&#x21A9; คืนคลัง/ล้างรายการ', function() { confirmClearList(sheetId); }));
@@ -4920,7 +5036,9 @@ function renderProductsTable(products, sheetId, holder) {
       var tdName = document.createElement('td');
       var nameDiv = document.createElement('div'); nameDiv.style.cssText = 'font-weight:600;font-size:0.85rem;'; nameDiv.textContent = p.name; tdName.appendChild(nameDiv);
       if (p.options) { var optDiv = document.createElement('div'); optDiv.style.cssText = 'font-size:0.72rem;color:var(--text-3);'; optDiv.textContent = 'ตัวเลือก: ' + p.options; tdName.appendChild(optDiv); }
+      var pTags = tagMinis(itemTags(prodTagText(p), sheetId)); if (pTags) tdName.appendChild(pTags);
       tr.appendChild(tdName);
+      tr.setAttribute('data-search', prodSearchText(p, sheetId));
 
       var tdP = document.createElement('td'); tdP.className = 'num'; tdP.textContent = fmt(p.price); tr.appendChild(tdP);
       var tdD = document.createElement('td'); tdD.className = 'num'; tdD.textContent = fmt(p.deposit); tr.appendChild(tdD);
@@ -4970,6 +5088,7 @@ function renderProductsTable(products, sheetId, holder) {
       var pGrid = products[j];
       var remGridVal = (pGrid.remaining === null || pGrid.remaining === undefined) ? '' : pGrid.remaining;
       var pCard = div('pcard' + (pGrid.status === 'Open' ? '' : ' closed'));
+      pCard.setAttribute('data-search', prodSearchText(pGrid, sheetId));
 
       var pSel = document.createElement('input');
       pSel.type = 'checkbox'; pSel.className = 'prod-sel pcard-sel';
@@ -4997,6 +5116,7 @@ function renderProductsTable(products, sheetId, holder) {
       var pMeta = div('pcard-meta'); pMeta.textContent = meta;
       if (pGrid.options) { var pOpt = document.createElement('span'); pOpt.className = 'pcard-opts'; pOpt.textContent = ' · ' + String(pGrid.options).split(',').length + ' ตัวเลือก'; pOpt.title = pGrid.options; pMeta.appendChild(pOpt); }
       pMain.appendChild(pMeta);
+      var gTags = tagMinis(itemTags(prodTagText(pGrid), sheetId)); if (gTags) pMain.appendChild(gTags);
 
       var pBot = div('pcard-bottom');
       var pStep = div('pcard-stepper');

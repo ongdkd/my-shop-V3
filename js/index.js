@@ -325,6 +325,7 @@ function onProductsFetched(fetched) {
       products.push(fetched[i]);
     }
   }
+  activeTag='';
   populateProductTable();
   document.getElementById('loading').style.display='none';
   var form=document.getElementById('orderForm'); form.style.display='block'; form.classList.add('is-ready');
@@ -378,6 +379,51 @@ function populateProductTable() {
   };
   var imgs=tbody.querySelectorAll('img[data-fb]');
   for(var i=0;i<imgs.length;i++) imgs[i].onerror=(function(img){return function(){img.src=PLACEHOLDER;};})(imgs[i]);
+  applyProductTags();
+}
+
+// ── Tag filter: chips of the characters and item types in this list (js/tags.js).
+// Tags are read from each product's name and options with the shop's dictionary;
+// without the dictionary the page works as before, with no chips. ──
+var tagMatcher=null, activeTag='';
+function loadTagTerms(){
+  if(!window.Tags) return;
+  google.script.run.withSuccessHandler(function(r){
+    try{var res=JSON.parse(r);if(res.status==='Success'&&res.terms&&res.terms.length){tagMatcher=Tags.compile(res.terms);applyProductTags();}}catch(e){}
+  }).getTagTerms();
+}
+function applyProductTags(){
+  var bar=document.getElementById('tagFilter');
+  if(!bar) return;
+  var rows=document.querySelectorAll('#productTable tbody tr');
+  if(!tagMatcher||!rows.length||rows.length!==products.length){bar.hidden=true;bar.innerHTML='';return;}
+  var meta=getOrderListMetaBySheetId(selectedSheetId), ctx=meta&&meta.name?meta.name:'', count={}, kinds=['char','type'];
+  for(var i=0;i<products.length;i++){
+    var p=products[i], opts=Array.isArray(p.options)?p.options.map(optLabel).join(' '):'';
+    var t=Tags.tagsOfItem((p.name||'')+' '+opts, ctx, tagMatcher), keys=[];
+    for(var k=0;k<kinds.length;k++){var arr=t[kinds[k]]||[];for(var a=0;a<arr.length;a++){var key=kinds[k]+':'+arr[a];keys.push(key);count[key]=(count[key]||0)+1;}}
+    rows[i].setAttribute('data-tags','|'+keys.join('|')+'|');
+    rows[i].setAttribute('data-words',Tags.words(t,tagMatcher));
+  }
+  // A tag every product has filters nothing, so it gets no chip
+  var chips=Object.keys(count).filter(function(c){return count[c]<products.length;}).sort(function(x,y){
+    var kx=x.indexOf('char:')===0?0:1, ky=y.indexOf('char:')===0?0:1;
+    return kx-ky||count[y]-count[x];
+  }).slice(0,30);
+  if(chips.indexOf(activeTag)===-1) activeTag='';
+  bar.innerHTML='';
+  if(chips.length<2){bar.hidden=true;filterProducts();return;}
+  function chip(key,label,n){
+    var b=document.createElement('button');b.type='button';b.className='tag-filter-chip';
+    b.setAttribute('aria-pressed',activeTag===key?'true':'false');b.textContent=label;
+    if(n){var s=document.createElement('small');s.textContent=n;b.appendChild(s);}
+    b.onclick=function(){activeTag=activeTag===key?'':key;applyProductTags();};
+    bar.appendChild(b);
+  }
+  chip('','ทั้งหมด',0);
+  for(var c=0;c<chips.length;c++) chip(chips[c],chips[c].slice(chips[c].indexOf(':')+1),count[chips[c]]);
+  bar.hidden=false;
+  filterProducts();
 }
 
 function selectChip(s2,opt,el){
@@ -649,11 +695,14 @@ function downloadReceipt() {
 }
 
 function filterProducts(){
-  var t=document.getElementById('productSearch').value.toLowerCase();
+  // Matches the name or any spelling of the product's tags, within the chosen chip
+  var t=document.getElementById('productSearch').value.toLowerCase().trim();
   var rows=document.querySelectorAll('#productTable tbody tr');
   for(var i=0;i<rows.length;i++){
     var nameEl=rows[i].querySelector('.prod-name')||rows[i].querySelector('td:nth-child(2)');
-    rows[i].style.display=(nameEl&&nameEl.textContent.toLowerCase().indexOf(t)!==-1)?'':'none';
+    var text=(nameEl?nameEl.textContent.toLowerCase():'')+' '+(rows[i].getAttribute('data-words')||'');
+    var inTag=!activeTag||(rows[i].getAttribute('data-tags')||'').indexOf('|'+activeTag+'|')!==-1;
+    rows[i].style.display=(inTag&&text.indexOf(t)!==-1)?'':'none';
   }
 }
 function addSearchListeners(){
@@ -807,6 +856,7 @@ document.getElementById('editOrderBtn').onclick = editOrder;
 document.getElementById('confirmButton').onclick = confirmOrder;
 document.getElementById('downloadBtn').onclick = downloadReceipt;
 document.getElementById('newOrderBtn').onclick = resetForm;
+loadTagTerms();
 document.getElementById('hubSearch').oninput = function(){filterHubCards(this.value);};
 document.getElementById('hubSearchClear').onclick = function(){document.getElementById('hubSearch').value='';filterHubCards('');};
 document.getElementById('customerName').onkeydown = function(e){if(e.key==='Enter')e.preventDefault();};
