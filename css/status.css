@@ -116,3 +116,6 @@
 
 /* Edit an unpaid order */
 .st-foot-btns { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.st-slip-img { display: block; width: 100%; max-height: 58dvh; object-fit: contain; margin-bottom: 14px; border: 1.5px solid var(--border); border-radius: var(--radius-md); background: #fff; -webkit-touch-callout: default; }
+.st-slip { overflow-y: auto; }
+a.st-btn { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }

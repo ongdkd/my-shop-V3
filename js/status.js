@@ -265,6 +265,7 @@
       if (tab.id === 'pay') {
         foot.appendChild(amountBox('ยอดที่ต้องโอน · ' + pcs + ' ชิ้น', baht(sum)));
         var btns = h('div', 'st-foot-btns');
+        btns.appendChild(payButton('🧾 ใบสั่งซื้อ', function () { openOrderSlip(l, sum, pcs); }, true));
         btns.appendChild(payButton('ส่งสลิป', function () { openPay({ listId: l.id, title: l.name, amount: sum }); }));
         foot.appendChild(btns);
       } else if (tab.id === 'arrive') {
@@ -276,6 +277,126 @@
       } else { out.appendChild(card); return; }
       card.appendChild(foot);
       out.appendChild(card);
+    });
+  }
+
+  // ── Order slip: the unpaid order as a picture to save or send to the shop ──
+  // Drawn straight on a canvas (no product photos), so it works in every browser.
+  function wrapText(ctx, text, maxW) {
+    var lines = [], line = '';
+    Array.from(String(text)).forEach(function (ch) {
+      if (line && ctx.measureText(line + ch).width > maxW) { lines.push(line); line = ch === ' ' ? '' : ch; }
+      else line += ch;
+    });
+    if (line) lines.push(line);
+    return lines;
+  }
+  function drawOrderSlip(l, sum, pcs, bg) {
+    var W = 720, P = bg ? 48 : 40, F = "'Noto Sans Thai', 'Sora', sans-serif";
+    var c = document.createElement('canvas'), ctx = c.getContext('2d');
+    var font = function (px, w) { ctx.font = (w || 400) + ' ' + px + 'px ' + F; };
+    // Measure first: each item is its wrapped name with qty and price on the right
+    font(24, 500);
+    var rows = l.items.map(function (o) {
+      return { lines: wrapText(ctx, itemName(o), W - P * 2 - 210), qty: '×' + o.qty, price: o.payType === 'Gift' ? 'ฟรี' : baht(o.total), gift: o.payType === 'Gift' };
+    });
+    font(26, 600);
+    var title = wrapText(ctx, l.name, W - P * 2);
+    // With the shop picture: it fills the top and the mascot peeks over the white
+    // card that holds the order. Without it (failed to load): a plain pink band.
+    var top = bg ? 450 : 150;
+    var H = top + 30 + 44 + title.length * 36 + 30;
+    rows.forEach(function (r) { H += r.lines.length * 32 + 26; });
+    H += 110 + 190 + 30 + (bg ? 24 : 0);
+    c.width = W; c.height = H;
+    ctx.textBaseline = 'alphabetic';
+    if (bg) {
+      ctx.fillStyle = '#FFE3EE'; ctx.fillRect(0, 0, W, H);
+      ctx.drawImage(bg, 0, 0, W, W);
+      var fade = ctx.createLinearGradient(0, W - 120, 0, W); // no hard edge where the picture ends
+      fade.addColorStop(0, 'rgba(255,227,238,0)'); fade.addColorStop(1, '#FFE3EE');
+      ctx.fillStyle = fade; ctx.fillRect(0, W - 120, W, 120);
+      // Title on a soft white pill so it reads on sky and clouds alike
+      ctx.fillStyle = 'rgba(255,255,255,0.86)'; ctx.beginPath(); ctx.roundRect(24, 24, 330, 104, 26); ctx.fill();
+      ctx.fillStyle = '#C94B82'; font(34, 700); ctx.fillText('Kagayaku Shop', 46, 70);
+      ctx.fillStyle = '#8A6577'; font(21, 500); ctx.fillText('ใบสรุปคำสั่งซื้อ · ' + day(new Date()), 46, 106);
+      ctx.fillStyle = 'rgba(255,255,255,0.95)'; ctx.beginPath(); ctx.roundRect(20, top, W - 40, H - top - 20, 28); ctx.fill();
+    } else {
+      ctx.fillStyle = '#FFFFFF'; ctx.fillRect(0, 0, W, H);
+      var grad = ctx.createLinearGradient(0, 0, W, 150);
+      grad.addColorStop(0, '#F27FB0'); grad.addColorStop(1, '#D9548E');
+      ctx.fillStyle = grad; ctx.fillRect(0, 0, W, 150);
+      ctx.fillStyle = '#FFFFFF'; font(38, 700); ctx.fillText('Kagayaku Shop', P, 70);
+      font(24, 500); ctx.fillText('ใบสรุปคำสั่งซื้อ', P, 112);
+      ctx.textAlign = 'right'; font(20, 400); ctx.fillText(day(new Date()), W - P, 112); ctx.textAlign = 'left';
+    }
+    var y = top + 46;
+    ctx.fillStyle = '#8A6577'; font(22, 400); ctx.fillText('ลูกค้า: ' + current.name, P, y); y += 44;
+    ctx.fillStyle = '#4A2E3D'; font(26, 600);
+    title.forEach(function (t) { ctx.fillText(t, P, y); y += 36; });
+    y += 4;
+    rows.forEach(function (r) {
+      ctx.strokeStyle = '#F7DCE8'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(P, y - 6); ctx.lineTo(W - P, y - 6); ctx.stroke();
+      y += 30;
+      ctx.fillStyle = r.gift ? '#C94B82' : '#4A2E3D'; font(24, 500);
+      r.lines.forEach(function (t, i) { ctx.fillText(t, P, y + i * 32); });
+      ctx.textAlign = 'right';
+      ctx.fillStyle = '#8A6577'; font(22, 400); ctx.fillText(r.qty, W - P - 130, y);
+      ctx.fillStyle = r.gift ? '#C94B82' : '#4A2E3D'; font(24, 600); ctx.fillText(r.price, W - P, y);
+      ctx.textAlign = 'left';
+      y += r.lines.length * 32 - 4;
+    });
+    y += 14;
+    ctx.fillStyle = '#FDE8F1'; ctx.fillRect(P, y, W - P * 2, 80);
+    ctx.fillStyle = '#8A6577'; font(22, 500); ctx.fillText('ยอดที่ต้องโอน · ' + pcs + ' ชิ้น', P + 20, y + 49);
+    ctx.textAlign = 'right'; ctx.fillStyle = '#C94B82'; font(36, 700); ctx.fillText(baht(sum), W - P - 20, y + 53); ctx.textAlign = 'left';
+    y += 80 + 44;
+    ctx.fillStyle = '#4A2E3D'; font(22, 600); ctx.fillText('ช่องทางการชำระเงิน', P, y); y += 34;
+    ctx.fillStyle = '#8A6577'; font(21, 400);
+    ['TrueMoney: 0802927553', 'ธนาคารกสิกร: 094-8-44664-2', 'ชื่อบัญชี: ปิยธิดา ก.', 'โอนแล้วส่งสลิปได้ที่หน้า "เช็คสถานะ / แจ้งโอน" นะคะ'].forEach(function (t) { ctx.fillText(t, P, y); y += 32; });
+    return c.toDataURL('image/png');
+  }
+  // iPhone/iPad and in-app browsers ignore <a download>: they save by long press or share
+  function canDownloadFiles() {
+    var ua = navigator.userAgent || '';
+    var ios = /iP(hone|ad|od)/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+    return !ios && !/Line\/|FBAN|FBAV|FB_IAB|Instagram|TikTok/i.test(ua);
+  }
+  function openOrderSlip(l, sum, pcs) {
+    var ready = document.fonts && document.fonts.load ? Promise.all([document.fonts.load("500 24px 'Noto Sans Thai'", 'ก'), document.fonts.load("700 24px 'Noto Sans Thai'", 'ก')]).catch(function () {}) : Promise.resolve();
+    // The shop picture behind the slip (same origin, so the canvas stays readable)
+    var pic = new Promise(function (resolve) {
+      var im = new Image();
+      im.onload = function () { resolve(im); }; im.onerror = function () { resolve(null); };
+      im.src = 'img/slip-bg.jpg';
+    });
+    Promise.all([pic, ready]).then(function (got) {
+      var url = drawOrderSlip(l, sum, pcs, CanvasRenderingContext2D.prototype.roundRect ? got[0] : null), fname = 'order_' + Date.now() + '.png';
+      var old = $('slipDialog'); if (old) old.remove();
+      var dlg = h('dialog', 'st-dialog st-slip'); dlg.id = 'slipDialog'; dlg.setAttribute('aria-labelledby', 'slipTitle');
+      var title = h('h2', '', 'ใบสั่งซื้อ'); title.id = 'slipTitle'; dlg.appendChild(title);
+      var down = canDownloadFiles();
+      dlg.appendChild(h('p', 'st-dlg-list', down ? 'กดดาวน์โหลด หรือกดค้างที่รูปเพื่อบันทึก' : 'แตะค้างที่รูป แล้วเลือก “บันทึกลงในรูปภาพ”'));
+      var img = document.createElement('img'); img.className = 'st-slip-img'; img.src = url; img.alt = 'ใบสั่งซื้อ ' + l.name; dlg.appendChild(img);
+      var acts = h('div', 'st-dlg-actions');
+      var close = h('button', 'st-btn ghost', 'ปิด'); close.type = 'button'; close.onclick = function () { dlg.close(); };
+      acts.appendChild(close);
+      var file = null;
+      try {
+        var bin = atob(url.split(',')[1]), arr = new Uint8Array(bin.length);
+        for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+        file = new File([arr], fname, { type: 'image/png' });
+      } catch (e) { file = null; }
+      if (down) {
+        var a = h('a', 'st-btn', '⬇ ดาวน์โหลด'); a.href = url; a.download = fname; acts.appendChild(a);
+      } else if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+        var share = h('button', 'st-btn', 'บันทึก / แชร์รูป'); share.type = 'button';
+        share.onclick = function () { navigator.share({ files: [file] }).catch(function () {}); };
+        acts.appendChild(share);
+      } else acts.style.gridTemplateColumns = '1fr';
+      dlg.appendChild(acts);
+      dlg.addEventListener('close', function () { dlg.remove(); });
+      document.body.appendChild(dlg); dlg.showModal();
     });
   }
 
