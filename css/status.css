@@ -113,3 +113,13 @@
 @media (max-width: 520px) { .st-tabs { grid-template-columns: 1fr 1fr; } .st-tabs .st-tab:last-child { grid-column: 1 / -1; } }
 
 @media (hover: none), (pointer: coarse) { .st-back { padding: 8px 0; margin-bottom: 4px; } }
+
+/* Edit an unpaid order */
+.st-foot-btns { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.st-edit-item { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 8px 2px; border-top: 1px solid var(--border); font-size: 0.86rem; cursor: pointer; }
+.st-edit-item input { width: 20px; height: 20px; flex: none; accent-color: var(--primary); }
+.st-edit-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.st-edit-price { flex: none; color: var(--text-2); font-weight: 600; }
+.st-edit-item + .st-field { margin-top: 14px; }
+.st-edit-note { font-size: 0.78rem; color: var(--text-2); margin: 0 0 8px; }
+.st-edit-note a { color: var(--primary-dark); font-weight: 600; }

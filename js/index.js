@@ -87,21 +87,44 @@ function giftStatus(items) {
   var meta = getOrderListMetaBySheetId(selectedSheetId) || {};
   var rules = meta.giftRules || [];
   if (!rules.length) return null;
-  var yuan = 0, full = 0;
+  // Gifts count the customer's whole round: what they ordered before + this cart
+  var yuan = giftBase.yuan, full = giftBase.full;
   (items || cart).forEach(function(ci) {
     var p = findProduct(ci.productId || ci.id) || {};
     var q = Number(ci.qty || ci.quantity) || 0;
     yuan += (Number(p.yuan) || 0) * q;
     full += (Number(ci.fullPrice !== undefined ? ci.fullPrice : p.price) || 0) * q;
   });
+  // "every" rules give one per every min spent (¥1591 at ¥66 = 24), the rest give one
+  function count(g, have) {
+    var n = have >= g.min ? (g.every ? Math.floor(have / g.min) : 1) : 0;
+    return g.stock !== null ? Math.min(n, g.stock) : n;
+  }
   var rows = rules.map(function(g) {
-    var have = g.currency === 'CNY' ? yuan : full;
-    return { rule: g, have: have, reached: have >= g.min, out: g.stock !== null && g.stock <= 0 };
+    var have = g.currency === 'CNY' ? yuan : full, before = g.currency === 'CNY' ? giftBase.yuan : giftBase.full;
+    return { rule: g, have: have, reached: have >= g.min, out: g.stock !== null && g.stock <= 0, n: count(g, have), n0: count(g, before) };
   });
-  var winners = rows.filter(function(r) { return r.reached && !r.out; });
-  if (meta.giftMode === 'best' && winners.length > 1) winners = [winners[winners.length - 1]];
-  rows.forEach(function(r) { r.win = winners.indexOf(r) !== -1; });
-  return { rows: rows, mode: meta.giftMode, winners: winners };
+  function pick(key) {
+    var w = rows.filter(function(r) { return r[key] > 0; });
+    return meta.giftMode === 'best' && w.length > 1 ? [w[w.length - 1]] : w;
+  }
+  var winners = pick('n'), had = pick('n0');
+  rows.forEach(function(r) {
+    r.win = winners.indexOf(r) !== -1;
+    // What this order adds on top of the gifts earlier orders already earned
+    r.add = r.win ? r.n - (had.indexOf(r) !== -1 ? r.n0 : 0) : 0;
+    r.label = r.rule.name + (r.add > 1 ? ' ×' + r.add : '');
+  });
+  return { rows: rows, mode: meta.giftMode, winners: winners.filter(function(r) { return r.add > 0; }) };
+}
+var giftBase = { yuan: 0, full: 0 };
+function loadGiftBase() {
+  giftBase = { yuan: 0, full: 0 };
+  var sheet = selectedSheetId, name = (document.getElementById('customerName').value || '').trim();
+  if (!sheet || !name) return;
+  google.script.run.withSuccessHandler(function(r) {
+    try { var res = JSON.parse(r); if (res.status === 'Success' && sheet === selectedSheetId) { giftBase = { yuan: res.yuan, full: res.full }; renderGiftBox(); } } catch (e) {}
+  }).customerListTotals(sheet, name);
 }
 function giftMoney(n, cur) { return cur === 'CNY' ? '¥' + (Number(n) || 0).toLocaleString('th-TH', { maximumFractionDigits: 2 }) : shortPrice(n); }
 // Cart box: ✓ earned / "ซื้ออีก ¥38 รับ …" with a progress bar / sold out
@@ -113,12 +136,12 @@ function renderGiftBox() {
   st.rows.forEach(function(r) {
     var g = r.rule, cls, right;
     if (r.out) { cls = 'out'; right = 'หมดแล้ว'; }
-    else if (r.win) { cls = 'win'; right = 'ได้รับ ✓'; }
+    else if (r.win) { cls = 'win'; right = 'ได้รับ' + (r.n > 1 ? ' ×' + r.n : '') + ' ✓'; }
     else if (r.reached) { cls = 'pass'; right = 'ได้ชิ้นที่ใหญ่กว่า'; }
     else { cls = 'next'; right = 'ซื้ออีก ' + giftMoney(g.min - r.have, g.currency); }
     var pct = Math.max(0, Math.min(100, Math.round(r.have / g.min * 100)));
     html += '<div class="gift-row ' + cls + '"><div class="gift-line"><span class="gift-name">' + escapeHtml(g.name) +
-      ' <small>(ครบ ' + escapeHtml(giftMoney(g.min, g.currency)) + ')</small></span><span class="gift-state">' + escapeHtml(right) + '</span></div>' +
+      ' <small>(' + (g.every ? 'ทุก ๆ ' : 'ครบ ') + escapeHtml(giftMoney(g.min, g.currency)) + ')</small></span><span class="gift-state">' + escapeHtml(right) + '</span></div>' +
       (cls === 'next' ? '<div class="gift-bar"><i style="width:' + pct + '%"></i></div>' : '') + '</div>';
   });
   box.innerHTML = html; box.style.display = '';
@@ -467,7 +490,7 @@ function renderSummaryUI(cache) {
   var gs=giftStatus(cache.items);
   if(gs&&gs.winners.length){
     html+='<div class="gift-earned"><div class="gift-title">ของแถมที่จะได้รับ</div>';
-    gs.winners.forEach(function(w){html+='<div class="gift-earned-item">'+escapeHtml(w.rule.name)+'</div>';});
+    gs.winners.forEach(function(w){html+='<div class="gift-earned-item">'+escapeHtml(w.label)+'</div>';});
     html+='</div>';
   }
   document.getElementById('summaryContent').innerHTML=html;
@@ -515,7 +538,7 @@ function onOrderSuccess(gifted){
   }
   html+='</ul>';
   // Gifts the server actually gave (a retried duplicate reports none — fall back to the preview)
-  var gifts=Array.isArray(gifted)?gifted:((giftStatus(currentOrder.items)||{winners:[]}).winners.map(function(w){return w.rule.name;}));
+  var gifts=Array.isArray(gifted)?gifted:((giftStatus(currentOrder.items)||{winners:[]}).winners.map(function(w){return w.label;}));
   if(gifts.length){
     html+='<div class="gift-earned"><div class="gift-title">ของแถมที่ได้รับ</div>';
     gifts.forEach(function(n){html+='<div class="gift-earned-item">'+escapeHtml(n)+'</div>';});
@@ -556,7 +579,7 @@ function resetForm(){
   summaryCache=null;currentOrder=null;resetSubmitState();loadHubPage();
 }
 
-function handleSubmitOk(r){var res=JSON.parse(r);if(res.status==='Success'){onOrderSuccess(res.duplicate?null:(res.gifts||null));refreshListGifts();}else{resetSubmitState();showMessage(res.message,'error');}}
+function handleSubmitOk(r){var res=JSON.parse(r);if(res.status==='Success'){onOrderSuccess(res.duplicate?null:(res.gifts||null));refreshListGifts();loadGiftBase();}else{resetSubmitState();showMessage(res.message,'error');}}
 // Gift stock changes with every order — reload the list rules quietly
 function refreshListGifts(){google.script.run.withSuccessHandler(function(lists){if(Array.isArray(lists))hubOrderLists=lists;}).getOrderLists();}
 function handleSubmitFail(e){resetSubmitState();showMessage('เกิดข้อผิดพลาดในการส่งคำสั่งซื้อ','error');console.error(e);}
@@ -777,6 +800,7 @@ function selectOrderList(sheetId){
     .withFailureHandler(function(){document.getElementById('loading').textContent='ไม่สามารถโหลดสินค้าได้ค่ะ';})
     .getProductsFromSheet(sheetId);
   setWorkbookNameBySheetId(sheetId);
+  loadGiftBase();
 }
 
 function openSideMenu(){document.getElementById('sideMenu').classList.add('open');document.getElementById('sideMenuOverlay').classList.add('open');renderSideMenuList();}
@@ -835,6 +859,7 @@ function switchOrderList(sheetId){
   setFabVisible(true); selectedSheetId=sheetId;
   google.script.run.withSuccessHandler(function(r){try{var res=JSON.parse(r);if(res.status==='Success')onProductsFetched(res.products);}catch(ex){}}).getProductsFromSheet(sheetId);
   setWorkbookNameBySheetId(sheetId);
+  loadGiftBase();
 }
 
 // Static event bindings

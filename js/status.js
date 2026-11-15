@@ -264,7 +264,12 @@
       var foot = h('div', 'st-card-foot');
       if (tab.id === 'pay') {
         foot.appendChild(amountBox('ยอดที่ต้องโอน · ' + pcs + ' ชิ้น', baht(sum)));
-        foot.appendChild(payButton('ส่งสลิป', function () { openPay({ listId: l.id, title: l.name, amount: sum }); }));
+        // Until a slip is in (and while the round is open) the customer can still take items out
+        var canEdit = !mine.length && l.items.some(editable);
+        var btns = h('div', 'st-foot-btns');
+        if (canEdit) btns.appendChild(payButton('แก้ไขรายการ', function () { openEdit(l); }, true));
+        btns.appendChild(payButton('ส่งสลิป', function () { openPay({ listId: l.id, title: l.name, amount: sum }); }));
+        foot.appendChild(btns);
       } else if (tab.id === 'arrive') {
         foot.appendChild(amountBox(owed > 0 ? 'ส่วนที่เหลือ (ชำระเมื่อของถึงไทย) + ค่าส่ง' : 'ชำระครบแล้ว · รอค่าส่งเมื่อของถึงไทย',
           owed > 0 ? baht(owed) : '✓'));
@@ -275,6 +280,48 @@
       card.appendChild(foot);
       out.appendChild(card);
     });
+  }
+
+  // ── Edit an unpaid order: remove items (customer_remove_items) ──
+  function editable(o) { return !!o.id && o.listOpen && o.payType !== 'Gift' && !o.status && !o.shippedAt && !o.deliveryId; }
+  function openEdit(l) {
+    var old = $('editDialog'); if (old) old.remove();
+    var dlg = h('dialog', 'st-dialog'); dlg.id = 'editDialog'; dlg.setAttribute('aria-labelledby', 'editTitle');
+    var title = h('h2', '', 'แก้ไขรายการ'); title.id = 'editTitle'; dlg.appendChild(title);
+    dlg.appendChild(h('p', 'st-dlg-list', l.name + ' · เลือกรายการที่ต้องการลบออก'));
+    var picks = [];
+    l.items.filter(editable).forEach(function (o) {
+      var row = h('label', 'st-edit-item');
+      var c = document.createElement('input'); c.type = 'checkbox'; c.value = o.id; picks.push(c);
+      row.appendChild(c);
+      row.appendChild(h('span', 'st-edit-name', itemName(o) + ' ×' + o.qty));
+      row.appendChild(h('span', 'st-edit-price', baht(o.total)));
+      dlg.appendChild(row);
+    });
+    var f = h('label', 'st-field'); f.appendChild(h('span', '', 'เบอร์โทรที่ใช้สั่งซื้อ (เพื่อยืนยันว่าเป็นคุณ) *'));
+    var phone = document.createElement('input'); phone.type = 'tel'; phone.inputMode = 'tel'; phone.autocomplete = 'tel';
+    phone.placeholder = '08x-xxx-xxxx'; phone.value = store('_custPhone'); f.appendChild(phone); dlg.appendChild(f);
+    var more = h('p', 'st-edit-note', 'อยากเพิ่มสินค้า? สั่งเพิ่มในรอบเดิมได้เลย ยอดจะนับรวมกันสำหรับของแถม ');
+    var link = h('a', '', 'ไปหน้าสั่งซื้อ →'); link.href = 'index.html'; more.appendChild(link); dlg.appendChild(more);
+    dlg.appendChild(h('p', 'st-edit-note', 'ของแถมจะปรับตามยอดใหม่ให้อัตโนมัติ'));
+    var acts = h('div', 'st-dlg-actions');
+    var cancel = h('button', 'st-btn ghost', 'ยกเลิก'); cancel.type = 'button'; cancel.onclick = function () { dlg.close(); };
+    var go = h('button', 'st-btn', 'ลบรายการที่เลือก'); go.type = 'button';
+    go.onclick = function () {
+      var ids = picks.filter(function (c) { return c.checked; }).map(function (c) { return c.value; });
+      if (!ids.length) { toast('กรุณาเลือกรายการที่ต้องการลบ', 'error'); return; }
+      if (!/^0[6-9]\d{8}$/.test(phone.value.replace(/[-\s]/g, ''))) { toast('เบอร์โทรไม่ถูกต้อง', 'error'); phone.focus(); return; }
+      go.disabled = true; go.textContent = 'กำลังลบ...';
+      call('customerRemoveItems', current.name, phone.value, l.id, ids).then(function (res) {
+        go.disabled = false; go.textContent = 'ลบรายการที่เลือก';
+        if (res.status !== 'Success') { toast(res.message || 'ลบไม่สำเร็จ', 'error'); return; }
+        dlg.close(); toast('ลบแล้ว ' + res.removed + ' รายการค่ะ', 'ok');
+        lookup(current.name);
+      });
+    };
+    acts.appendChild(cancel); acts.appendChild(go); dlg.appendChild(acts);
+    dlg.addEventListener('close', function () { dlg.remove(); });
+    document.body.appendChild(dlg); dlg.showModal();
   }
 
   // Tab 3: one card per delivery bill the shop made (may mix lists)

@@ -30,8 +30,10 @@ await q(`insert into public.products(list_id, code, name, price, deposit, yuan, 
          values ($1,'A','Card pack',160,50,40,null,'Open','','[]'::jsonb),
                 ($1,'B','Badge',60,0,15,null,'Open','','[]'::jsonb)`, [L]);
 const setRules = (rules, mode) => q(`update public.order_lists set gift_rules=$2::jsonb, gift_mode=$3 where id=$1`, [L, JSON.stringify(rules), mode]);
-const order = async (items, phone = '0812345678') => {
-  const [{ r }] = await q(`select public.submit_order($1, '@t', $2, $3::jsonb, gen_random_uuid()) as r`, [L, phone, JSON.stringify(items)]);
+// Gifts count a customer's whole round, so each call is a new customer unless one is named
+let custSeq = 0;
+const order = async (items, cust = '@t' + (++custSeq), phone = '0812345678') => {
+  const [{ r }] = await q(`select public.submit_order($1, $2, $3, $4::jsonb, gen_random_uuid()) as r`, [L, cust, phone, JSON.stringify(items)]);
   return r;
 };
 const giftRows = () => q(`select product from public.orders where list_id=$1 and pay_type='Gift' order by seq`, [L]);
@@ -92,6 +94,70 @@ assert.equal(r.status, 'Success'); assert.deepEqual(r.gifts, []);
 await setRules([], 'all');
 r = await order([{ id: 'B', quantity: 1, isDeposit: false }]);
 assert.equal(r.status, 'Success'); assert.deepEqual(r.gifts, []);
+
+// 9) "every": one gift per every min spent. ¥40×39 + ¥15×2 + ¥1 = ¥1591 → 24 / 5 / 3
+await q(`insert into public.products(list_id, code, name, price, deposit, yuan, remaining, status, options, option_details)
+         values ($1,'C','Sticker dot',5,0,1,null,'Open','','[]'::jsonb),
+                ($1,'D','Standee',100,0,40,10,'Open','Red,Blue','[{"name":"Red","remaining":4},{"name":"Blue","remaining":6}]'::jsonb)`, [L]);
+await setRules([
+  { id: 'e1', name: 'Card', min: 66, currency: 'CNY', stock: null, every: true },
+  { id: 'e2', name: 'Set', min: 299, currency: 'CNY', stock: null, every: true },
+  { id: 'e3', name: 'Post', min: 399, currency: 'CNY', stock: null, every: true }
+], 'all');
+r = await order([{ id: 'A', quantity: 39, isDeposit: false }, { id: 'B', quantity: 2, isDeposit: false }, { id: 'C', quantity: 1, isDeposit: false }]);
+assert.deepEqual(r.gifts, ['Card ×24', 'Set ×5', 'Post ×3']);
+
+// 10) A second order adds to the first: ¥80 then ¥40 more reaches ¥100 once
+await setRules([{ id: 'c1', name: 'Pin', min: 100, currency: 'CNY', stock: null }], 'all');
+r = await order([{ id: 'A', quantity: 2, isDeposit: false }], '@cum'); assert.deepEqual(r.gifts, []);
+r = await order([{ id: 'A', quantity: 1, isDeposit: false }], '@Cum '); assert.deepEqual(r.gifts, ['Pin'], 'same customer, any spelling of the @name');
+r = await order([{ id: 'A', quantity: 3, isDeposit: false }], '@cum'); assert.deepEqual(r.gifts, [], 'not "every": given once per round');
+
+// 11) "every" stops at the stock left
+await setRules([{ id: 's1', name: 'Rare', min: 40, currency: 'CNY', stock: 2, every: true }], 'all');
+r = await order([{ id: 'A', quantity: 5, isDeposit: false }]);
+assert.deepEqual(r.gifts, ['Rare ×2']); assert.equal(await stockOf(0), '0');
+
+// 12) A customer removes an unpaid item: stock and option stock come back, gifts follow the new total
+await setRules([{ id: 'r1', name: 'Fan', min: 40, currency: 'CNY', stock: 9, every: true }], 'all');
+r = await order([{ id: 'D', quantity: 3, isDeposit: false, selectedOption: 'Red' }, { id: 'A', quantity: 1, isDeposit: false }], '@rm', '0899999999');
+assert.deepEqual(r.gifts, ['Fan ×4']); assert.equal(await stockOf(0), '5');
+const mine = () => q(`select id, product, qty, pay_type from public.orders where customer='@rm' order by seq`);
+const dRow = (await mine()).find((x) => x.product === 'Standee (Red)');
+const stockD = async () => (await q(`select remaining::int remaining, option_details->0->>'remaining' red from public.products where code='D'`))[0];
+assert.deepEqual(await stockD(), { remaining: 7, red: '1' });
+const rm = async (ids, phone = '0899999999', name = '@rm') =>
+  (await q(`select public.customer_remove_items($1, $2, $3, $4::uuid[]) r`, [name, phone, L, ids]))[0].r;
+assert.equal((await rm([dRow.id], '0811111111')).status, 'Error', 'wrong phone');
+assert.equal((await rm([dRow.id], '0899999999', '@someone')).status, 'Error', 'wrong name');
+assert.equal((await rm([(await mine()).find((x) => x.pay_type === 'Gift').id])).status, 'Error', 'gift rows cannot be removed');
+r = await rm([dRow.id]);
+assert.equal(r.status, 'Success', r.message); assert.equal(r.removed, 1);
+assert.deepEqual(await stockD(), { remaining: 10, red: '4' });
+assert.deepEqual((await mine()).map((x) => x.product + '×' + x.qty), ['Card pack×1', 'ของแถม: Fan×1'], '¥40 left → 1 gift');
+assert.equal(await stockOf(0), '8', 'the 3 gifts taken back return to gift stock');
+// …but not once a slip is in, or the round is closed
+await q(`insert into public.payments(list_id, customer, amount, paid_at, bank_ref, address, slip_image) values ($1,'@RM',160,now(),'x','','img')`, [L]);
+const aRow = (await mine()).find((x) => x.product === 'Card pack');
+assert.match((await rm([aRow.id])).message, /สลิป/);
+await q(`delete from public.payments where customer='@RM'`);
+await q(`update public.order_lists set status='Closed' where id=$1`, [L]);
+assert.match((await rm([aRow.id])).message, /ปิดรับ/);
+await q(`update public.order_lists set status='Open' where id=$1`, [L]);
+
+// 13) The status page gets each order's id and whether the round is open; the cart gets the round total
+const [{ co }] = await q(`select public.customer_orders('@rm') co`);
+assert.ok(co.orders.every((o) => o.id && o.listOpen === true));
+const [{ tot }] = await q(`select public.customer_list_totals($1, 'RM') tot`, [L]);
+assert.equal(Number(tot.yuan), 40); assert.equal(Number(tot.full), 160);
+
+// 14) Admin deletes an unpaid order: only admins, stock back, gifts taken back
+assert.equal((await q(`select public.admin_remove_orders($1::uuid[]) r`, [[aRow.id]]))[0].r.status, 'Error', 'not an admin');
+await q(`create or replace function public.is_admin() returns boolean language sql as 'select true'`);
+r = (await q(`select public.admin_remove_orders($1::uuid[]) r`, [[aRow.id]]))[0].r;
+assert.equal(r.status, 'Success', r.message); assert.equal(r.deleted, 1);
+assert.deepEqual(await mine(), [], 'the gift went with the order');
+assert.equal(await stockOf(0), '9');
 
 console.log('Gift checks passed (schema.sql on Postgres).');
 

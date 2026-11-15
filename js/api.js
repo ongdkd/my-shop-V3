@@ -395,6 +395,19 @@
 
   function listIdFromRow(rowIndex) { return _listRowMap[rowIndex] || null; }
 
+  // admin_remove_orders (supabase/migrations/2026-11-15-gifts-every-edit-orders.sql); before that file is run, a plain delete as before
+  async function removeOrders(ids) {
+    var r = await sb.rpc('admin_remove_orders', { p_ids: ids, p_restock: true });
+    if (r.error && r.error.code === 'PGRST202') {
+      var d = await sb.from('orders').delete().in('id', ids).select('id');
+      if (d.error) return err(d.error.message);
+      return ok({ deleted: (d.data || []).length, restocked: false });
+    }
+    if (r.error) return err(r.error.message);
+    if (!r.data || r.data.status !== 'Success') return err((r.data && r.data.message) || 'ลบไม่สำเร็จ');
+    return ok({ deleted: r.data.deleted, restocked: true });
+  }
+
   // Free-gift rules of a list, cleaned for the UI (submit_order re-checks them)
   function giftRulesOf(row) {
     return (Array.isArray(row && row.gift_rules) ? row.gift_rules : []).filter(function (g) {
@@ -403,7 +416,8 @@
       return {
         id: String(g.id || ''), name: String(g.name).trim(), min: Number(g.min),
         currency: g.currency === 'CNY' ? 'CNY' : 'THB',
-        stock: g.stock === null || g.stock === undefined || g.stock === '' ? null : Math.max(0, Math.floor(Number(g.stock)) || 0)
+        stock: g.stock === null || g.stock === undefined || g.stock === '' ? null : Math.max(0, Math.floor(Number(g.stock)) || 0),
+        every: g.every === true // one gift per every `min` spent, not just one
       };
     });
   }
@@ -699,6 +713,29 @@
         var d = r.data || {};
         return ok({ orders: d.orders || [], payments: d.payments || [], legacy: d.legacy || [], deliveries: d.deliveries || [] });
       } catch (e) { return e.__json || err(e.message || e); }
+    },
+
+    // Status page: take items out of an unpaid order. The phone the order was
+    // placed with proves it is theirs (customer_remove_items checks everything).
+    customerRemoveItems: async function (name, phone, listId, orderIds) {
+      try {
+        requireSb();
+        var r = await sb.rpc('customer_remove_items', { p_name: String(name || '').trim(), p_phone: String(phone || '').trim(), p_list_id: listId, p_order_ids: orderIds || [] });
+        if (r.error) return err(r.error.code === 'PGRST202' ? 'ระบบแก้ไขรายการยังไม่พร้อม กรุณาติดต่อร้านค่ะ' : r.error.message);
+        if (!r.data || r.data.status !== 'Success') return err((r.data && r.data.message) || 'ลบไม่สำเร็จ');
+        return ok({ removed: r.data.removed });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
+    // What this customer already ordered in a list (¥ and full ฿), so the cart can
+    // count gifts on the whole round. Zeros when unknown.
+    customerListTotals: async function (sheetId, name) {
+      try {
+        requireSb();
+        var r = await sb.rpc('customer_list_totals', { p_list_id: sheetId, p_name: String(name || '').trim() });
+        var d = (!r.error && r.data) || {};
+        return ok({ yuan: Number(d.yuan) || 0, full: Number(d.full) || 0 });
+      } catch (e) { return ok({ yuan: 0, full: 0 }); }
     },
 
     // deliveryId: pay the rest + delivery fee for one bill instead of a list
@@ -1069,7 +1106,7 @@
           if (!(min > 0)) return err('ของแถมข้อ ' + (i + 1) + ': ยอดขั้นต่ำต้องมากกว่า 0');
           var stock = g.stock === null || g.stock === undefined || g.stock === '' ? null : Math.floor(Number(g.stock));
           if (stock !== null && !(stock >= 0)) return err('ของแถมข้อ ' + (i + 1) + ': จำนวนต้องเป็น 0 ขึ้นไป');
-          clean.push({ id: String(g.id || randomCode()), name: name, min: min, currency: g.currency === 'CNY' ? 'CNY' : 'THB', stock: stock });
+          clean.push({ id: String(g.id || randomCode()), name: name, min: min, currency: g.currency === 'CNY' ? 'CNY' : 'THB', stock: stock, every: g.every === true });
         }
         var r = await sb.from('order_lists')
           .update({ gift_rules: clean, gift_mode: mode === 'best' ? 'best' : 'all' })
@@ -1122,9 +1159,17 @@
         var omap = _orderRowMap[sheetId] || {};
         var ids = (rowIndexes || []).map(function (ri) { return omap[ri]; }).filter(Boolean);
         if (!ids.length) return err('ไม่พบคำสั่งซื้อ (กรุณารีเฟรชหน้า)');
-        var r = await sb.from('orders').delete().in('id', ids).select('id');
-        if (r.error) return err(r.error.message);
-        return ok({ deleted: (r.data || []).length });
+        return await removeOrders(ids);
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
+    // Delete orders by id (a bill the customer never paid): their stock goes back
+    // to the products and gifts the customer no longer earns are taken back
+    adminRemoveOrders: async function (orderIds) {
+      try {
+        requireSb(); await requireAdmin();
+        if (!orderIds || !orderIds.length) return err('ไม่พบคำสั่งซื้อ');
+        return await removeOrders(orderIds);
       } catch (e) { return e.__json || err(e.message || e); }
     },
 

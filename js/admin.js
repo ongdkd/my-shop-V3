@@ -1252,7 +1252,7 @@ function toggleListStatus(rowIndex, checkbox, lbl) {
 //   + เพิ่มของแถม
 // Returns { el, rules(), mode(), changed(), error() }.
 function buildGiftEditor(item) {
-  var rules = (item.giftRules || []).map(function(g) { return { id: g.id, name: g.name, min: g.min, currency: g.currency, stock: g.stock }; });
+  var rules = (item.giftRules || []).map(function(g) { return { id: g.id, name: g.name, min: g.min, currency: g.currency, stock: g.stock, every: g.every === true }; });
   var mode = item.giftMode === 'best' ? 'best' : 'all';
   var start = JSON.stringify([rules, mode]);
   var box = fkMore('ของแถมตามยอดซื้อ' + (rules.length ? ' · ' + rules.length + ' รายการ' : ''), rules.length > 0);
@@ -1273,7 +1273,8 @@ function buildGiftEditor(item) {
     body.appendChild(seg);
     body.appendChild(div('gift-ed-note', mode === 'best'
       ? 'ลูกค้าได้ของแถม 1 ชิ้น: ข้อที่อยู่ล่างสุดที่ยอดถึง (เรียงจากยอดน้อยไปมาก)'
-      : 'ลูกค้าได้ของแถมทุกข้อที่ยอดซื้อในบิลนั้นถึง'));
+      : 'ลูกค้าได้ของแถมทุกข้อที่ยอดซื้อรวมของรอบนี้ถึง (สั่งหลายครั้งนับรวมกัน)'));
+    body.appendChild(div('gift-ed-note', 'ติ๊ก "ทุก ๆ ยอดนี้" = ได้ 1 ชิ้นต่อทุก ๆ ยอดนั้น เช่น ¥66 ซื้อ ¥1591 ได้ 24 ชิ้น · ไม่ติ๊ก = ได้ 1 ชิ้นเมื่อยอดถึง'));
     rules.forEach(function(g, i) {
       var row = div('gift-ed-row');
       var nm = fkInput('', 'text', g.name, 'ชื่อของแถม เช่น สติกเกอร์'); nm.removeAttribute('id');
@@ -1291,11 +1292,16 @@ function buildGiftEditor(item) {
       var del = makeBtn('bopt-del', '&#x2715;', function() { rules.splice(i, 1); draw(); }); del.type = 'button'; del.setAttribute('aria-label', 'ลบของแถมข้อ ' + (i + 1));
       line.appendChild(cur); line.appendChild(mn); line.appendChild(sk); line.appendChild(del);
       row.appendChild(line);
+      var ev = document.createElement('label'); ev.className = 'gift-ed-every';
+      var evc = document.createElement('input'); evc.type = 'checkbox'; evc.checked = g.every === true;
+      evc.onchange = function() { g.every = evc.checked; };
+      ev.appendChild(evc); ev.appendChild(document.createTextNode(' ทุก ๆ ยอดนี้ (ได้หลายชิ้น)'));
+      row.appendChild(ev);
       body.appendChild(row);
     });
     var add = makeBtn('bopt-add', '+ เพิ่มของแถม', function() {
       var last = rules[rules.length - 1];
-      rules.push({ id: '', name: '', min: '', currency: last ? last.currency : 'CNY', stock: null }); draw();
+      rules.push({ id: '', name: '', min: '', currency: last ? last.currency : 'CNY', stock: null, every: last ? last.every === true : false }); draw();
       var inputs = body.querySelectorAll('.gift-ed-row input[type=text]'); if (inputs.length) inputs[inputs.length - 1].focus();
     });
     add.type = 'button'; body.appendChild(add);
@@ -1955,6 +1961,9 @@ function renderOrdersTable(orders, holder, isAllView) {
       var mvBtn = makeBtn('btn btn-ghost btn-sm touch-only', '&#x21C4; ย้าย', (function(gr) { return function() { openMoveModal(gr); }; })(g));
       mvBtn.title = 'ย้ายสินค้าไปออเดอร์ของลูกค้าคนอื่น (หรือลากสินค้าไปวางบนการ์ดอื่น)';
       ship.appendChild(mvBtn);
+      var rmBtn = makeBtn('btn btn-ghost btn-sm', '&#x1F5D1; ลบบิล', (function(items, who, paid) { return function() { confirmRemoveOrder(items, who, paid); }; })(g.items, o0.customer, pays.length));
+      rmBtn.title = 'ลบออเดอร์นี้ทั้งบิล (เช่น ลูกค้าไม่โอน) และคืนสต็อก'; rmBtn.style.color = 'var(--error)';
+      ship.appendChild(rmBtn);
     }
     ship.appendChild(makeBtn('btn btn-sm ' + (waiting ? 'btn-primary' : 'btn-ghost'), waiting ? '&#x1F4E6; อัปเดตสถานะ' : 'แก้ไข',
       (function(items) { return function() { openStatusModal(items); }; })(g.items)));
@@ -4882,6 +4891,23 @@ function filterProdRows(term) {
   term = term.trim().toLowerCase();
   var rows = document.querySelectorAll('#prodTable tbody tr, .prod-grid .pcard');
   for (var i = 0; i < rows.length; i++) rows[i].style.display = (rows[i].getAttribute('data-search') || '').indexOf(term) !== -1 ? '' : 'none';
+}
+
+// Delete one customer's whole order (a bill never paid): stock goes back to the
+// products, and gifts the customer no longer earns are taken back
+function confirmRemoveOrder(items, who, paid) {
+  var shipped = items.filter(function(o) { return o.shippedAt; }).length;
+  var msg = 'ลบบิลของ ' + String(who).replace(/\s*\n\s*/g, ' ') + ' ทั้ง ' + items.length + ' รายการ?\nสต็อกจะคืนเข้ารายการสินค้า และของแถมจะถูกนำออก ลบแล้วกู้คืนไม่ได้' +
+    (paid ? '\n\n⚠️ ลูกค้าส่งสลิปของรอบนี้มาแล้ว ' + paid + ' ครั้ง' : '') +
+    (shipped ? '\n\n⚠️ มี ' + shipped + ' รายการที่จัดส่งแล้ว' : '');
+  askConfirm(msg, 'ลบบิล').then(function(ok) {
+    if (!ok) return;
+    apiCall('adminRemoveOrders', items.map(function(o) { return o.id; })).then(function(res) {
+      if (res.status !== 'Success') { toast(res.message || 'ลบไม่สำเร็จ', 'error'); return; }
+      toast('ลบแล้ว ' + res.deleted + ' รายการ' + (res.restocked ? ' · คืนสต็อกแล้ว' : ''), 'success');
+      renderOrdersPanel();
+    });
+  });
 }
 
 function filterOrderRows(term) {

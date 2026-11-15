@@ -517,44 +517,10 @@ begin
     v_full := v_full + coalesce(prod.price, 0) * v_qty;
   end loop;
 
-  -- 3) Free gifts for this checkout — decided here so a client can't fake them.
-  --    The list row is locked so two checkouts can't both take the last gift.
-  select coalesce(gift_rules, '[]'::jsonb), coalesce(gift_mode, 'all')
-    into v_rules, v_mode
-    from public.order_lists where id = p_list_id for update;
-  if jsonb_typeof(v_rules) = 'array' and jsonb_array_length(v_rules) > 0 then
-    for g in
-      select r.value as rule, (r.ordinality - 1)::int as idx
-      from jsonb_array_elements(v_rules) with ordinality r(value, ordinality)
-    loop
-      continue when coalesce(g.rule->>'name', '') = ''
-                 or coalesce(g.rule->>'min', '') !~ '^[0-9]+(\.[0-9]+)?$';
-      continue when g.rule->>'stock' is not null
-                 and (coalesce(g.rule->>'stock', '') !~ '^[0-9]+$' or (g.rule->>'stock')::int <= 0);
-      if (case when g.rule->>'currency' = 'CNY' then v_yuan else v_full end) >= (g.rule->>'min')::numeric then
-        v_pick := v_pick || g.idx;
-      end if;
-    end loop;
-    -- 'best': only the last reached rule in list order
-    if v_mode = 'best' and array_length(v_pick, 1) > 1 then
-      v_pick := array[v_pick[array_length(v_pick, 1)]];
-    end if;
-    foreach v_idx in array v_pick loop
-      insert into public.orders
-        (list_id, customer, product, qty, pay_type, price, total,
-         yuan, total_yuan, full_price, total_full, remark, checkout_id)
-      values
-        (p_list_id, btrim(p_customer), 'ของแถม: ' || (v_rules->v_idx->>'name'), 1, 'Gift',
-         0, 0, 0, 0, 0, 0, v_phone, p_checkout_id);
-      v_given := v_given || jsonb_build_array(v_rules->v_idx->>'name');
-      if v_rules->v_idx->>'stock' is not null then
-        v_rules := jsonb_set(v_rules, array[v_idx::text, 'stock'], to_jsonb((v_rules->v_idx->>'stock')::int - 1));
-      end if;
-    end loop;
-    if array_length(v_pick, 1) > 0 then
-      update public.order_lists set gift_rules = v_rules where id = p_list_id;
-    end if;
-  end if;
+  -- 3) Free gifts — decided on the server so a client can't fake them, and counted
+  --    on everything this customer has ordered in the list (sync_gifts, below),
+  --    so a second order adds up with the first.
+  v_given := public.sync_gifts(p_list_id, p_customer, v_phone, p_checkout_id, true, false);
 
   return jsonb_build_object('status', 'Success', 'gifts', v_given);
 end;
@@ -1535,3 +1501,334 @@ grant execute on function public.list_covers() to anon, authenticated;
 
 notify pgrst, 'reload schema';
 
+-- ── Gifts per every X spent, counted on the customer's whole round; removing items ──
+-- A gift rule may carry "every": true → one gift for every `min` spent
+-- (¥1591 with a ¥66 rule = 24). Gifts are counted on everything the customer has
+-- ordered in the list, not on one checkout, so ordering again adds up.
+
+-- Brings one customer's gift rows in a list in line with what they have ordered.
+-- p_grow: may add gifts; p_shrink: may take back gifts that are not shipped yet.
+-- Returns the names of the gifts added now (["Sticker", "Card ×3"]).
+create or replace function public.sync_gifts(
+  p_list_id uuid, p_customer text, p_phone text, p_checkout_id uuid,
+  p_grow boolean, p_shrink boolean
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_cust   text := public.norm_customer(p_customer);
+  v_rules  jsonb;
+  v_mode   text;
+  v_yuan   numeric;
+  v_full   numeric;
+  v_total  numeric;
+  v_min    numeric;
+  v_name   text;
+  v_stock  int;
+  v_n      int;
+  v_cut    int;
+  v_want   int[] := '{}';
+  v_have   int[] := '{}';
+  v_last   int := null;
+  v_given  jsonb := '[]'::jsonb;
+  v_dirty  boolean := false;
+  i        int;
+  gr       record;
+begin
+  select coalesce(gift_rules, '[]'::jsonb), coalesce(gift_mode, 'all')
+    into v_rules, v_mode
+    from public.order_lists where id = p_list_id for update;
+  if not found or jsonb_typeof(v_rules) <> 'array' or jsonb_array_length(v_rules) = 0 then
+    return v_given;
+  end if;
+
+  -- Thresholds use the full value of the goods (a deposit still counts in full)
+  select coalesce(sum(total_yuan), 0), coalesce(sum(total_full), 0)
+    into v_yuan, v_full
+    from public.orders
+    where list_id = p_list_id and public.norm_customer(customer) = v_cust
+      and pay_type <> 'Gift' and coalesce(remark, '') <> 'POS' and coalesce(status, '') <> 'ยกเลิก';
+
+  for i in 0 .. jsonb_array_length(v_rules) - 1 loop
+    v_n := 0;
+    v_name := coalesce(v_rules->i->>'name', '');
+    select coalesce(sum(qty), 0)::int into v_cut
+      from public.orders
+      where list_id = p_list_id and public.norm_customer(customer) = v_cust
+        and pay_type = 'Gift' and product = 'ของแถม: ' || v_name and coalesce(status, '') <> 'ยกเลิก';
+    v_have := v_have || v_cut;
+    if v_name <> '' and coalesce(v_rules->i->>'min', '') ~ '^[0-9]+(\.[0-9]+)?$' and (v_rules->i->>'min')::numeric > 0 then
+      v_min := (v_rules->i->>'min')::numeric;
+      v_total := case when v_rules->i->>'currency' = 'CNY' then v_yuan else v_full end;
+      if v_total >= v_min then
+        v_n := case when coalesce(v_rules->i->>'every', 'false') = 'true' then floor(v_total / v_min)::int else 1 end;
+        -- stock null = unlimited; otherwise what they hold plus what is left
+        if v_rules->i->>'stock' is not null then
+          v_stock := case when v_rules->i->>'stock' ~ '^[0-9]+$' then (v_rules->i->>'stock')::int else 0 end;
+          v_n := least(v_n, v_cut + v_stock);
+        end if;
+        if v_n > 0 then v_last := i; end if;
+      end if;
+    end if;
+    v_want := v_want || v_n;
+  end loop;
+
+  -- 'best': only the last reached rule in list order
+  if v_mode = 'best' then
+    for i in 0 .. jsonb_array_length(v_rules) - 1 loop
+      if v_last is null or i <> v_last then v_want[i + 1] := 0; end if;
+    end loop;
+  end if;
+
+  for i in 0 .. jsonb_array_length(v_rules) - 1 loop
+    v_name := coalesce(v_rules->i->>'name', '');
+    v_n := v_want[i + 1] - v_have[i + 1];
+    if v_n > 0 and p_grow then
+      insert into public.orders
+        (list_id, customer, product, qty, pay_type, price, total,
+         yuan, total_yuan, full_price, total_full, remark, checkout_id)
+      values
+        (p_list_id, btrim(p_customer), 'ของแถม: ' || v_name, v_n, 'Gift',
+         0, 0, 0, 0, 0, 0, coalesce(p_phone, ''), p_checkout_id);
+      v_given := v_given || jsonb_build_array(v_name || case when v_n > 1 then ' ×' || v_n else '' end);
+      if v_rules->i->>'stock' is not null then
+        v_rules := jsonb_set(v_rules, array[i::text, 'stock'], to_jsonb(greatest(0, (v_rules->i->>'stock')::int - v_n)));
+        v_dirty := true;
+      end if;
+    elsif v_n < 0 and p_shrink then
+      v_cut := -v_n;
+      for gr in
+        select id, qty from public.orders
+        where list_id = p_list_id and public.norm_customer(customer) = v_cust
+          and pay_type = 'Gift' and product = 'ของแถม: ' || v_name
+          and coalesce(status, '') <> 'ยกเลิก' and shipped_at is null
+        order by created_at desc, seq desc
+      loop
+        exit when v_cut <= 0;
+        if gr.qty <= v_cut then
+          delete from public.orders where id = gr.id;
+          v_n := gr.qty::int;
+        else
+          update public.orders set qty = qty - v_cut where id = gr.id;
+          v_n := v_cut;
+        end if;
+        v_cut := v_cut - v_n;
+        if v_rules->i->>'stock' is not null and v_rules->i->>'stock' ~ '^[0-9]+$' then
+          v_rules := jsonb_set(v_rules, array[i::text, 'stock'], to_jsonb((v_rules->i->>'stock')::int + v_n));
+          v_dirty := true;
+        end if;
+      end loop;
+    end if;
+  end loop;
+
+  if v_dirty then
+    update public.order_lists set gift_rules = v_rules where id = p_list_id;
+  end if;
+  return v_given;
+end;
+$$;
+revoke all on function public.sync_gifts(uuid, text, text, uuid, boolean, boolean) from public, anon, authenticated;
+
+-- Deletes order rows; p_restock puts their pieces back on the product (and its
+-- option) they came from. Gift and POS rows are deleted without restocking.
+create or replace function public.remove_order_rows(p_ids uuid[], p_restock boolean)
+returns int
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  o     record;
+  prod  public.products%rowtype;
+  v_opt text;
+  n     int := 0;
+begin
+  for o in select * from public.orders where id = any (p_ids) order by seq for update loop
+    if p_restock and o.pay_type <> 'Gift' and coalesce(o.remark, '') <> 'POS' then
+      -- An order's product is the product's name, or "name (option)"
+      select * into prod from public.products p
+        where p.list_id = o.list_id
+          and (p.name = o.product
+               or (left(o.product, length(p.name) + 2) = p.name || ' (' and right(o.product, 1) = ')'))
+        order by (p.name = o.product) desc, length(p.name) desc
+        limit 1
+        for update;
+      if found then
+        if prod.remaining is not null then
+          update public.products set remaining = remaining + o.qty where id = prod.id;
+        end if;
+        if prod.name <> o.product and jsonb_array_length(coalesce(prod.option_details, '[]'::jsonb)) > 0 then
+          v_opt := substr(o.product, length(prod.name) + 3, length(o.product) - length(prod.name) - 3);
+          update public.products p
+          set option_details = coalesce((
+            select jsonb_agg(
+              case
+                when btrim(coalesce(detail.value->>'name', '')) = v_opt
+                     and detail.value ? 'remaining' and detail.value->>'remaining' is not null
+                then jsonb_set(detail.value, '{remaining}',
+                               to_jsonb((detail.value->>'remaining')::numeric + o.qty), true)
+                else detail.value
+              end
+              order by detail.ordinality)
+            from jsonb_array_elements(p.option_details) with ordinality detail(value, ordinality)
+          ), '[]'::jsonb)
+          where p.id = prod.id;
+        end if;
+      end if;
+    end if;
+    delete from public.orders where id = o.id;
+    n := n + 1;
+  end loop;
+  return n;
+end;
+$$;
+revoke all on function public.remove_order_rows(uuid[], boolean) from public, anon, authenticated;
+
+-- Admin: delete orders (a bill the customer never paid), give the stock back, and
+-- take back the gifts the remaining total no longer earns.
+create or replace function public.admin_remove_orders(p_ids uuid[], p_restock boolean default true)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  who    jsonb;
+  v_who  jsonb;
+  v_grow boolean;
+  n      int;
+begin
+  if not public.is_admin() then
+    return jsonb_build_object('status', 'Error', 'message', 'Not allowed');
+  end if;
+  if p_ids is null or coalesce(array_length(p_ids, 1), 0) = 0 then
+    return jsonb_build_object('status', 'Error', 'message', 'ไม่พบคำสั่งซื้อ');
+  end if;
+  -- Deleting a gift row by hand must not hand the same gift straight back
+  v_grow := not exists (select 1 from public.orders where id = any (p_ids) and pay_type = 'Gift');
+  select coalesce(jsonb_agg(jsonb_build_object('list', w.list_id, 'customer', w.customer, 'phone', w.phone)), '[]'::jsonb)
+    into v_who
+    from (select distinct on (list_id, public.norm_customer(customer)) list_id, customer, coalesce(remark, '') as phone
+          from public.orders where id = any (p_ids) and coalesce(remark, '') <> 'POS') w;
+  n := public.remove_order_rows(p_ids, coalesce(p_restock, true));
+  for who in select * from jsonb_array_elements(v_who) loop
+    perform public.sync_gifts((who->>'list')::uuid, who->>'customer', who->>'phone', null, v_grow, true);
+  end loop;
+  return jsonb_build_object('status', 'Success', 'deleted', n);
+end;
+$$;
+revoke all on function public.admin_remove_orders(uuid[], boolean) from public, anon;
+grant execute on function public.admin_remove_orders(uuid[], boolean) to authenticated;
+
+-- Customer (status page): take items out of an order they have not paid for yet.
+-- They prove it is theirs with the phone number the order was placed with.
+create or replace function public.customer_remove_items(
+  p_name text, p_phone text, p_list_id uuid, p_order_ids uuid[]
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_cust  text := public.norm_customer(p_name);
+  v_phone text := regexp_replace(coalesce(p_phone, ''), '[-[:space:]]', '', 'g');
+  v_ids   uuid[];
+  n       int;
+begin
+  select array_agg(distinct x) into v_ids from unnest(coalesce(p_order_ids, '{}'::uuid[])) x;
+  if length(v_cust) < 2 or coalesce(array_length(v_ids, 1), 0) = 0 or array_length(v_ids, 1) > 100 then
+    return jsonb_build_object('status', 'Error', 'message', 'ไม่พบรายการที่เลือก');
+  end if;
+  if v_phone !~ '^0[6-9][0-9]{8}$' then
+    return jsonb_build_object('status', 'Error', 'message', 'เบอร์โทรไม่ถูกต้อง');
+  end if;
+  if not exists (select 1 from public.order_lists where id = p_list_id and lower(btrim(status)) = 'open') then
+    return jsonb_build_object('status', 'Error', 'message', 'รอบนี้ปิดรับออเดอร์แล้ว แก้ไขไม่ได้ กรุณาติดต่อร้านค่ะ');
+  end if;
+  if exists (select 1 from public.payments p
+             where p.list_id = p_list_id and p.delivery_id is null and public.norm_customer(p.customer) = v_cust) then
+    return jsonb_build_object('status', 'Error', 'message', 'ส่งสลิปของรอบนี้แล้ว แก้ไขไม่ได้ กรุณาติดต่อร้านค่ะ');
+  end if;
+  select count(*) into n from public.orders o
+    where o.id = any (v_ids) and o.list_id = p_list_id
+      and public.norm_customer(o.customer) = v_cust
+      and regexp_replace(coalesce(o.remark, ''), '[-[:space:]]', '', 'g') = v_phone
+      and o.pay_type <> 'Gift' and o.shipped_at is null
+      and coalesce(o.status, '') = '' and o.delivery_id is null;
+  if n <> array_length(v_ids, 1) then
+    return jsonb_build_object('status', 'Error', 'message', 'เบอร์โทรไม่ตรงกับที่ใช้สั่งซื้อ หรือรายการนี้แก้ไขไม่ได้แล้ว');
+  end if;
+  n := public.remove_order_rows(v_ids, true);
+  perform public.sync_gifts(p_list_id, p_name, v_phone, null, true, true);
+  return jsonb_build_object('status', 'Success', 'removed', n);
+end;
+$$;
+grant execute on function public.customer_remove_items(text, text, uuid, uuid[]) to anon, authenticated;
+
+-- What a customer has already ordered in a list, so the cart can show how far
+-- they are from the next gift
+create or replace function public.customer_list_totals(p_list_id uuid, p_name text)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select jsonb_build_object('yuan', coalesce(sum(total_yuan), 0), 'full', coalesce(sum(total_full), 0))
+  from public.orders
+  where list_id = p_list_id and length(public.norm_customer(p_name)) >= 2
+    and public.norm_customer(customer) = public.norm_customer(p_name)
+    and pay_type <> 'Gift' and coalesce(remark, '') <> 'POS' and coalesce(status, '') <> 'ยกเลิก'
+$$;
+grant execute on function public.customer_list_totals(uuid, text) to anon, authenticated;
+
+-- Status page lookup: each order now carries its id and whether its list is still
+-- open, so the page can offer "remove this item" on unpaid orders
+create or replace function public.customer_orders(p_name text)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare v text := public.norm_customer(p_name);
+begin
+  if length(v) < 2 then
+    return jsonb_build_object('orders', '[]'::jsonb, 'payments', '[]'::jsonb, 'legacy', '[]'::jsonb, 'deliveries', '[]'::jsonb);
+  end if;
+  return jsonb_build_object(
+    'orders', coalesce((
+      select jsonb_agg(jsonb_build_object(
+        'id', o.id, 'listOpen', lower(btrim(l.status)) = 'open', 'listId', o.list_id, 'listName', l.name, 'product', o.product, 'qty', o.qty,
+        'payType', o.pay_type, 'total', o.total, 'totalFull', o.total_full,
+        'status', o.status, 'shippedAt', o.shipped_at, 'tracking', o.tracking,
+        'createdAt', o.created_at, 'deliveryId', case when d.sent_at is not null then o.delivery_id end,
+        'courier', o.courier)
+        order by o.created_at desc)
+      from public.orders o join public.order_lists l on l.id = o.list_id
+      left join public.deliveries d on d.id = o.delivery_id
+      where public.norm_customer(o.customer) = v), '[]'::jsonb),
+    'deliveries', coalesce((
+      select jsonb_agg(jsonb_build_object('id', d.id, 'fee', d.fee, 'createdAt', d.sent_at,
+                         'courier', d.courier, 'tracking', d.tracking,
+                         'ishipStatus', d.iship_status_text, 'ishipStatusAt', d.iship_status_at,
+                         'holdAt', d.hold_at, 'paidMarkAt', d.paid_mark_at,
+                         'deliveredAt', d.delivered_at)
+                       order by d.sent_at desc)
+      from public.deliveries d where d.customer = v and d.sent_at is not null), '[]'::jsonb),
+    'payments', coalesce((
+      select jsonb_agg(jsonb_build_object(
+        'listId', p.list_id, 'deliveryId', p.delivery_id, 'kind', p.kind, 'amount', p.amount,
+        'paidAt', p.paid_at, 'createdAt', p.created_at, 'hasAddress', p.address <> '') order by p.created_at desc)
+      from public.payments p
+      where public.norm_customer(p.customer) = v), '[]'::jsonb),
+    'legacy', coalesce((
+      select jsonb_agg(jsonb_build_object(
+        'round', g.round, 'product', g.product, 'qty', g.qty, 'pay', g.pay,
+        'status', g.status, 'tracking', g.tracking, 'note', g.note) order by g.sort)
+      from public.legacy_orders g
+      where v = any (select public.norm_customer(x) from regexp_split_to_table(g.customer, '[\s,]+') x)), '[]'::jsonb));
+end $$;
+grant execute on function public.customer_orders(text) to anon, authenticated;
