@@ -590,7 +590,7 @@ a.btn{text-decoration:none;}
   .modal-actions #modalSaveNext{flex:1 1 100%;order:-1;}
 
   /* Product cards — list view better on mobile */
-  .prod-grid{grid-template-columns:1fr;}
+  .prod-grid{grid-template-columns:repeat(auto-fill,minmax(280px,1fr));}
 
   /* Sticky save bar */
   .sticky-save-bar{border-radius:0;}
@@ -1005,14 +1005,15 @@ a.ocard-phone{text-decoration:underline;text-decoration-color:var(--border-stron
 .ocard.drop-on{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-light);}
 .ocard.dragging,.oitem.dragging{opacity:0.45;}
 
-/* Reorder handle + arrows (lists, products) */
-.reorder-handle{cursor:grab;color:var(--text-3);font-size:1rem;line-height:1;padding:4px 2px;user-select:none;}
-.reorder-btn{width:26px;height:26px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text-2);font-size:0.62rem;cursor:pointer;flex-shrink:0;}
-.reorder-btn:disabled{opacity:0.35;cursor:default;}
+/* Reorder (lists, products): the card itself is the handle */
+.reorder-item{cursor:grab;}
+.reorder-item input,.reorder-item textarea{cursor:auto;}
+.reorder-item button,.reorder-item label,.reorder-item a,.reorder-item input[type=checkbox]{cursor:pointer;}
+/* A long press must start the drag, not a text selection or the image menu */
+@media(hover:none),(pointer:coarse){.reorder-item{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;}.reorder-item input{-webkit-user-select:text;user-select:text;}}
 .reorder-item.drop-on{outline:2px solid var(--primary);outline-offset:2px;}
 .reorder-item.dragging{opacity:0.45;}
 .ol-card{position:relative;}
-.reorder-bar{position:absolute;top:8px;right:8px;display:flex;align-items:center;gap:4px;padding:3px 5px;border-radius:8px;background:rgba(255,255,255,0.92);box-shadow:var(--shadow-sm);}
 
 /* Drop an image file on a photo picker */
 .img-drop-on{outline:2px dashed var(--primary) !important;outline-offset:2px;background:var(--primary-light) !important;}
@@ -1155,7 +1156,6 @@ a.ocard-phone{text-decoration:underline;text-decoration-color:var(--border-stron
 }
 /* Fingers need bigger targets than a mouse */
 @media(hover:none),(pointer:coarse){
-  .reorder-btn{width:36px;height:36px;font-size:0.72rem;}
   .view-btn{width:42px;height:38px;}
   .po-chip,.tpl-key,.bulk-ai-btn{min-height:38px;}
   .bcard-del{width:40px;height:40px;}

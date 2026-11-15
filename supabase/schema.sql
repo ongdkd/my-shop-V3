@@ -1765,7 +1765,8 @@ begin
   return jsonb_build_object('status', 'Success', 'removed', n);
 end;
 $$;
-grant execute on function public.customer_remove_items(text, text, uuid, uuid[]) to anon, authenticated;
+-- Switched off (2026-11-16): only the shop edits orders now, so customers can't call it
+revoke all on function public.customer_remove_items(text, text, uuid, uuid[]) from public, anon, authenticated;
 
 -- What a customer has already ordered in a list, so the cart can show how far
 -- they are from the next gift

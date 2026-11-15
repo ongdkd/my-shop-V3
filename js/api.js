@@ -715,18 +715,6 @@
       } catch (e) { return e.__json || err(e.message || e); }
     },
 
-    // Status page: take items out of an unpaid order. The phone the order was
-    // placed with proves it is theirs (customer_remove_items checks everything).
-    customerRemoveItems: async function (name, phone, listId, orderIds) {
-      try {
-        requireSb();
-        var r = await sb.rpc('customer_remove_items', { p_name: String(name || '').trim(), p_phone: String(phone || '').trim(), p_list_id: listId, p_order_ids: orderIds || [] });
-        if (r.error) return err(r.error.code === 'PGRST202' ? 'ระบบแก้ไขรายการยังไม่พร้อม กรุณาติดต่อร้านค่ะ' : r.error.message);
-        if (!r.data || r.data.status !== 'Success') return err((r.data && r.data.message) || 'ลบไม่สำเร็จ');
-        return ok({ removed: r.data.removed });
-      } catch (e) { return e.__json || err(e.message || e); }
-    },
-
     // What this customer already ordered in a list (¥ and full ฿), so the cart can
     // count gifts on the whole round. Zeros when unknown.
     customerListTotals: async function (sheetId, name) {

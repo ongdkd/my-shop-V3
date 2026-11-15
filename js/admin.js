@@ -1138,12 +1138,12 @@ function renderOrderLists() {
     navRow.appendChild(subRow);
 
     // Sync button — only for lists that were imported from a Google Sheet
+    var syncBtn = null;
     if (item.sourceSpreadsheetId) {
-      var syncBtn = makeBtn('btn btn-ghost btn-sm', '&#x1F504; ซิงก์สินค้าจากชีต', (function(it) {
+      syncBtn = makeBtn('btn-icon', '&#x1F504;', (function(it) {
         return function() { openSyncSheetModal(it); };
       })(item));
-      syncBtn.style.cssText = 'justify-content:center;width:100%;';
-      navRow.appendChild(syncBtn);
+      syncBtn.title = 'ซิงก์สินค้าจากชีต'; syncBtn.setAttribute('aria-label', 'ซิงก์สินค้าจากชีต');
     }
     body.appendChild(navRow);
  
@@ -1172,6 +1172,7 @@ function renderOrderLists() {
     var delBtn  = makeBtn('btn-icon ol-del',  SVG_TRASH); delBtn.title  = 'ลบ';   delBtn.setAttribute('data-row',  item.rowIndex);
     delBtn.style.cssText = 'color:var(--error);border-color:var(--error);';
  
+    if (syncBtn) btnWrap.appendChild(syncBtn);
     btnWrap.appendChild(hideBtn); btnWrap.appendChild(editBtn); btnWrap.appendChild(delBtn);
     row.appendChild(btnWrap); body.appendChild(row); card.appendChild(body);
     grid.appendChild(card);
@@ -1192,7 +1193,7 @@ function renderOrderLists() {
         if (res.status !== 'Success') { toast(res.message || 'จัดลำดับไม่สำเร็จ', 'error'); return; }
         toast('บันทึกลำดับแล้ว', 'success'); loadAllLists(renderOrderLists);
       });
-    }, function(card) { var bar = div('reorder-bar'); card.appendChild(bar); return bar; });
+    });
   });
 
   wrap.onchange = function(e) {
@@ -4313,44 +4314,30 @@ function apiCall(fn) {
 }
 
 // ════════════════════════════════
-// REORDER — drag a row/card by its ⠿ handle onto another to take its place,
-// or use ▲▼ (touch screens). save(newKeys) gets every key in the new order.
+// REORDER — drag a row/card by its empty space onto another to take its place
+// (long press on touch screens). save(newKeys) gets every key in the new order.
 // ════════════════════════════════
-function enableReorder(nodes, keys, save, hostOf) {
+function enableReorder(nodes, keys, save) {
   var group = 'r' + Math.random().toString(36).slice(2);
   Array.prototype.forEach.call(nodes, function(node, i) {
     node.classList.add('reorder-item');
     dragSource(node, function() { return { reorder: group, from: i }; });
-    node.draggable = false; // only the handle starts a drag, so inputs inside stay usable
+    node.draggable = false; // armed per press (below), so inputs inside stay usable
     dropZone(node, function(d) {
       if (d.reorder !== group || d.from === i) return;
       var order = keys.slice(); order.splice(i, 0, order.splice(d.from, 1)[0]);
       save(order);
     });
-    var host = hostOf(node);
-    var handle = document.createElement('span'); handle.className = 'reorder-handle mouse-only';
-    handle.textContent = '⠿'; handle.title = 'ลากเพื่อจัดลำดับ'; handle.setAttribute('aria-hidden', 'true');
-    handle.addEventListener('mousedown', function() { node.draggable = true; });
-    node.addEventListener('dragend', function() { node.draggable = false; });
-    host.appendChild(handle);
-    [[-1, '▲', 'เลื่อนขึ้น'], [1, '▼', 'เลื่อนลง']].forEach(function(a) {
-      var b = makeBtn('reorder-btn touch-only', a[1], function(e) {
-        e.stopPropagation();
-        var j = i + a[0];
-        var order = keys.slice(); order.splice(j, 0, order.splice(i, 1)[0]);
-        save(order);
-      });
-      b.type = 'button'; b.title = a[2]; b.setAttribute('aria-label', a[2]);
-      b.disabled = i + a[0] < 0 || i + a[0] >= keys.length;
-      host.appendChild(b);
-    });
+    // No handle: a press on empty space (or plain text / the picture) arms the drag,
+    // a press on a control does not. Touch screens start the drag after a long press.
+    node.title = 'กดค้างที่พื้นที่ว่างแล้วลาก เพื่อจัดลำดับ';
+    Array.prototype.forEach.call(node.querySelectorAll('img'), function(im) { im.draggable = false; });
+    var arm = function(e) { node.draggable = !e.target.closest(REORDER_SKIP); };
+    node.addEventListener('mousedown', arm);
+    node.addEventListener('touchstart', arm, { passive: true });
   });
 }
-
-// A press on a handle that didn't become a drag must not leave the row draggable
-document.addEventListener('mouseup', function() {
-  document.querySelectorAll('.reorder-item[draggable=true]').forEach(function(n) { n.draggable = false; });
-});
+var REORDER_SKIP = 'input,button,a,select,textarea,label,.toggle,[contenteditable=true]';
 
 // ════════════════════════════════
 // SLIP MATCHING — drag a slip (or pick it with "ย้าย") onto one of the
@@ -5175,7 +5162,7 @@ function renderProductsTable(products, sheetId, holder) {
         if (res.status !== 'Success') { toast(res.message || 'จัดลำดับไม่สำเร็จ', 'error'); return; }
         toast('บันทึกลำดับแล้ว', 'success'); loadProducts(sheetId);
       });
-    }, function(node) { return node.querySelector('.pcard-bottom') || node.querySelector('td:last-child > div'); });
+    });
 
   // ── Sticky save bar ──
   var saveBar = document.createElement('div');

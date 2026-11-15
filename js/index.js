@@ -120,10 +120,11 @@ function giftStatus(items) {
 var giftBase = { yuan: 0, full: 0 };
 function loadGiftBase() {
   giftBase = { yuan: 0, full: 0 };
+  renderGiftNudge();
   var sheet = selectedSheetId, name = (document.getElementById('customerName').value || '').trim();
   if (!sheet || !name) return;
   google.script.run.withSuccessHandler(function(r) {
-    try { var res = JSON.parse(r); if (res.status === 'Success' && sheet === selectedSheetId) { giftBase = { yuan: res.yuan, full: res.full }; renderGiftBox(); } } catch (e) {}
+    try { var res = JSON.parse(r); if (res.status === 'Success' && sheet === selectedSheetId) { giftBase = { yuan: res.yuan, full: res.full }; renderGiftBox(); renderGiftNudge(); } } catch (e) {}
   }).customerListTotals(sheet, name);
 }
 function giftMoney(n, cur) { return cur === 'CNY' ? '¥' + (Number(n) || 0).toLocaleString('th-TH', { maximumFractionDigits: 2 }) : shortPrice(n); }
@@ -140,15 +141,77 @@ function renderGiftBox() {
     else if (r.reached) { cls = 'pass'; right = 'ได้ชิ้นที่ใหญ่กว่า'; }
     else { cls = 'next'; right = 'ซื้ออีก ' + giftMoney(g.min - r.have, g.currency); }
     var pct = Math.max(0, Math.min(100, Math.round(r.have / g.min * 100)));
+    // "Every" gifts keep going: show how far the next one is
+    var more = '';
+    if (cls === 'win' && g.every && (g.stock === null || r.n < g.stock)) {
+      pct = Math.round((r.have % g.min) / g.min * 100);
+      more = '<div class="gift-more">อีก ' + escapeHtml(giftMoney(g.min - r.have % g.min, g.currency)) + ' รับเพิ่มอีกชิ้น</div>';
+    }
     html += '<div class="gift-row ' + cls + '"><div class="gift-line"><span class="gift-name">' + escapeHtml(g.name) +
       ' <small>(' + (g.every ? 'ทุก ๆ ' : 'ครบ ') + escapeHtml(giftMoney(g.min, g.currency)) + ')</small></span><span class="gift-state">' + escapeHtml(right) + '</span></div>' +
-      (cls === 'next' ? '<div class="gift-bar"><i style="width:' + pct + '%"></i></div>' : '') + '</div>';
+      (cls === 'next' || more ? '<div class="gift-bar"><i style="width:' + pct + '%"></i></div>' : '') + more + '</div>';
   });
   box.innerHTML = html; box.style.display = '';
 }
 
+// The gift closest to being earned: { row, gap, pct } — null when nothing is left to earn
+function giftNext(st) {
+  var best = null;
+  st.rows.forEach(function(r) {
+    var g = r.rule, done = 0;
+    if (r.out) return;
+    if (g.every) { done = Math.floor(r.have / g.min); if (g.stock !== null && done >= g.stock) return; }
+    else if (r.reached) return;
+    var from = done * g.min, pct = (r.have - from) / g.min;
+    if (!best || pct > best.pct) best = { row: r, gap: from + g.min - r.have, pct: pct };
+  });
+  return best;
+}
+// Cheapest product on sale that alone covers the gap to the next gift
+function giftSuggest(next) {
+  var cny = next.row.rule.currency === 'CNY', pick = null, pv = 0;
+  products.forEach(function(p) {
+    if (p.remaining !== Infinity && p.remaining <= cartQtyOfProduct(p.id)) return;
+    var v = Number(cny ? p.yuan : p.price) || 0;
+    if (v >= next.gap && (!pick || v < pv)) { pick = p; pv = v; }
+  });
+  return pick;
+}
+// Strip above the cart button: "อีก ¥38 รับ … ฟรี" with a bunny hopping to the gift
+function renderGiftNudge() {
+  var box = document.getElementById('giftNudge'); if (!box) return;
+  var st = selectedSheetId ? giftStatus() : null;
+  document.body.classList.toggle('has-gift-nudge', !!st);
+  if (!st) { box.hidden = true; box.innerHTML = ''; return; }
+  var next = giftNext(st), got = st.rows.filter(function(r) { return r.win; });
+  var text, pct = 100, tip = '';
+  if (!next) {
+    text = got.length ? '&#x1F389; ได้ของแถมครบแล้ว ขอบคุณนะคะ &#x1F496;' : '';
+  } else {
+    var g = next.row.rule, name = '<b>' + escapeHtml(g.name) + '</b>', gap = '<b>' + escapeHtml(giftMoney(next.gap, g.currency)) + '</b>';
+    pct = Math.round(next.pct * 100);
+    if (next.row.n > 0) text = 'เย้! ได้ ' + name + ' แล้ว ×' + next.row.n + ' &#x1F495; อีก ' + gap + ' รับเพิ่มอีกชิ้น';
+    else if (!cart.length && next.row.have <= 0) text = '&#x1F380; ช้อปครบ ' + gap + ' รับ ' + name + ' ฟรีเลยน้า';
+    else text = (pct >= 70 ? 'อีกนิดเดียว! ' : '') + 'ซื้อเพิ่มอีก ' + gap + ' รับ ' + name + ' ฟรี &#x1F380;';
+    var p = cart.length ? giftSuggest(next) : null;
+    if (p) tip = '<button type="button" class="gn-pick" data-psid="' + sid(p.id) + '">&#x1F4A1; เพิ่ม &ldquo;' + escapeHtml(p.name || '') + '&rdquo; ก็ถึงเลย <span aria-hidden="true">&rsaquo;</span></button>';
+  }
+  if (!text) { box.hidden = true; box.innerHTML = ''; document.body.classList.remove('has-gift-nudge'); return; }
+  box.innerHTML = '<div class="gn-text">' + text + '</div>' +
+    '<div class="gn-track' + (next ? '' : ' full') + '" aria-hidden="true"><i style="width:' + pct + '%"></i><span class="gn-runner" style="left:' + pct + '%">&#x1F430;</span><span class="gn-goal">&#x1F381;</span></div>' + tip;
+  box.hidden = false;
+  var b = box.querySelector('.gn-pick');
+  if (b) b.onclick = function() {
+    var btn = document.querySelector('#productTable .atcbtn[data-psid="' + b.getAttribute('data-psid') + '"]');
+    var row = btn && btn.closest('tr'); if (!row) return;
+    if (row.style.display === 'none') { var s = document.getElementById('productSearch'); if (s) s.value = ''; activeTag = ''; applyProductTags(); }
+    row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    row.classList.remove('gn-flash'); void row.offsetWidth; row.classList.add('gn-flash');
+  };
+}
+
 function updateCartBadge() {
-  renderGiftBox();
+  renderGiftBox(); renderGiftNudge();
   var n = cartCount();
   var badge = document.getElementById('cartBadge');
   badge.textContent = n;
@@ -589,6 +652,40 @@ function resetSubmitState(){
   if(btn){btn.disabled=false;btn.textContent='ยืนยันและส่งคำสั่งซื้อ \u2192';}
 }
 
+// iPhone/iPad and in-app browsers ignore <a download>
+function canDownloadFiles() {
+  var ua = navigator.userAgent || '';
+  var ios = /iP(hone|ad|od)/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+  return !ios && !/Line\/|FBAN|FBAV|FB_IAB|Instagram|TikTok/i.test(ua);
+}
+// Full-screen receipt: long press the picture to save it, or use the share sheet
+function showReceiptViewer(dataUrl) {
+  var old = document.getElementById('rcptView'); if (old) old.remove();
+  var v = document.createElement('div'); v.id = 'rcptView'; v.className = 'rcpt-view';
+  v.setAttribute('role', 'dialog'); v.setAttribute('aria-label', 'ใบยืนยันคำสั่งซื้อ');
+  var tip = document.createElement('div'); tip.className = 'rcpt-view-tip';
+  tip.innerHTML = '&#x1F447; <b>แตะค้างที่รูป</b> แล้วเลือก <b>&ldquo;บันทึกลงในรูปภาพ&rdquo;</b>';
+  var img = document.createElement('img'); img.src = dataUrl; img.alt = 'ใบยืนยันคำสั่งซื้อ';
+  var btns = document.createElement('div'); btns.className = 'rcpt-view-btns';
+  var file = null;
+  try {
+    var bin = atob(dataUrl.split(',')[1]), arr = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    file = new File([arr], 'receipt_' + Date.now() + '.png', { type: 'image/png' });
+  } catch (e) { file = null; }
+  if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+    var share = document.createElement('button'); share.type = 'button'; share.className = 'rcpt-share';
+    share.textContent = 'บันทึก / แชร์รูป';
+    share.onclick = function() { navigator.share({ files: [file] }).catch(function() {}); };
+    btns.appendChild(share);
+  }
+  var close = document.createElement('button'); close.type = 'button'; close.className = 'rcpt-close'; close.textContent = 'ปิด';
+  close.onclick = function() { v.remove(); };
+  btns.appendChild(close);
+  v.appendChild(tip); v.appendChild(img); v.appendChild(btns);
+  document.body.appendChild(v);
+}
+
 function downloadReceipt() {
   var receipt = document.getElementById('receipt');
   var list    = document.querySelector('#orderSummary ul');
@@ -634,13 +731,19 @@ function downloadReceipt() {
  
       var dataUrl = canvas.toDataURL('image/png');
  
-      // ── Step 2: Try programmatic download (works on Android/desktop) ──
-      try {
-        var a = document.createElement('a');
-        a.download = 'receipt_' + Date.now() + '.png';
-        a.href = dataUrl;
-        a.click();
-      } catch(e) {}
+      // ── Step 2: download where the browser can (Android/desktop); iPhone, iPad
+      //    and in-app browsers (LINE, Facebook…) can't, so they get the image
+      //    full screen to save with a long press or the share sheet
+      if (canDownloadFiles()) {
+        try {
+          var a = document.createElement('a');
+          a.download = 'receipt_' + Date.now() + '.png';
+          a.href = dataUrl;
+          a.click();
+        } catch(e) {}
+      } else {
+        showReceiptViewer(dataUrl);
+      }
  
       // ── Step 3: Insert inline preview image below receipt ──
       //    On iOS the <a>.click() download doesn't work, so we show
@@ -662,7 +765,7 @@ function downloadReceipt() {
  
       var preview = document.createElement('img');
       preview.src = dataUrl;
-      preview.style.cssText = 'width:100%;display:block;';
+      preview.style.cssText = 'width:100%;display:block;-webkit-touch-callout:default;';
       preview.alt = 'ใบยืนยันคำสั่งซื้อ';
  
       previewWrap.innerHTML = '';
@@ -675,6 +778,7 @@ function downloadReceipt() {
     })
     .catch(function(err) {
       console.error('html2canvas error:', err);
+      showMessage('สร้างรูปไม่สำเร็จ กรุณาแคปหน้าจอแทนนะคะ', 'error');
       if (list) { list.style.maxHeight = om; list.style.overflowY = oo; }
       btn.disabled = false;
       btn.textContent = '⬇ ดาวน์โหลดใบยืนยันคำสั่งซื้อ';
