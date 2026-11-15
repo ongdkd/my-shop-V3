@@ -610,6 +610,53 @@ function updateCartFab() {
 
   if (totalQty > 0) fab.classList.add('visible');
   else fab.classList.remove('visible');
+  renderSideCart(totalQty, totalPrice);
+}
+
+// Wide screens (iPad landscape, desktop): the cart panel beside the products
+function renderSideCart(totalQty, totalPrice) {
+  var box = document.getElementById('posSideItems'); if (!box) return;
+  document.getElementById('posSideCount').textContent = totalQty;
+  document.getElementById('posSideTotal').textContent = fmt(totalPrice);
+  document.getElementById('posSidePay').disabled = !POS_CART.length;
+  box.innerHTML = '';
+  if (!POS_CART.length) {
+    var e = document.createElement('div'); e.className = 'pos-side-empty';
+    e.textContent = 'แตะสินค้าเพื่อเพิ่มลงตะกร้า'; box.appendChild(e); return;
+  }
+  POS_CART.forEach(function(item, idx) {
+    var row = document.createElement('div'); row.className = 'pos-side-item';
+    var info = document.createElement('div'); info.className = 'pos-side-info';
+    var nm = document.createElement('div'); nm.className = 'pos-side-name'; nm.textContent = item.product.name; info.appendChild(nm);
+    var sub = document.createElement('div'); sub.className = 'pos-side-sub';
+    sub.textContent = fmt(item.product.price) + (item.option ? ' · ' + item.option : ''); info.appendChild(sub);
+    row.appendChild(info);
+    var ctrl = document.createElement('div'); ctrl.className = 'pos-side-ctrl';
+    [[-1, '−', 'ลด'], [1, '+', 'เพิ่ม']].forEach(function(a, i) {
+      var b = document.createElement('button'); b.type = 'button'; b.className = 'sum-qty-btn'; b.textContent = a[1];
+      b.setAttribute('aria-label', a[2] + ' ' + item.product.name);
+      b.onclick = function() { posSideAdjust(idx, a[0]); };
+      ctrl.appendChild(b);
+      if (i === 0) { var q = document.createElement('div'); q.className = 'sum-qty'; q.textContent = item.qty; ctrl.appendChild(q); }
+    });
+    row.appendChild(ctrl);
+    var tot = document.createElement('div'); tot.className = 'pos-side-line'; tot.textContent = fmt(item.lineTotal); row.appendChild(tot);
+    box.appendChild(row);
+  });
+}
+function posSideAdjust(idx, delta) {
+  var item = POS_CART[idx]; if (!item) return;
+  if (delta > 0 && !ensureQtyAvailable(item.product, item.option, delta)) return;
+  item.qty += delta;
+  if (item.qty <= 0) POS_CART.splice(idx, 1); else item.lineTotal = item.qty * Number(item.product.price);
+  updateCartFab();
+  var card = document.querySelector('#posProductGrid .pos-prod-card[data-row="' + item.product.rowIndex + '"]');
+  if (card) posCardBadge(card, item.product, getCartQty(item.product.rowIndex));
+}
+// Straight to payment from the side panel (the summary is already on screen there)
+function posSidePay() {
+  if (!POS_CART.length) return;
+  renderSummary(); renderPayment(); goScreen('payment', 'pos');
 }
 
 // ══════════════════════════════════

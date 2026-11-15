@@ -973,6 +973,37 @@ document.getElementById('cartClearBtn').onclick = clearCart;
 document.getElementById('checkoutBtn').onclick = checkoutFromCart;
 document.getElementById('cartBarBtn').onclick = openCart;
 document.getElementById('menuToggleBtn').onclick = openSideMenu;
+// Swipes: right opens the list menu (left side), left closes it; the cart
+// (right side) closes with a swipe right. Sideways scrollers keep their swipe.
+(function() {
+  var s = null;
+  function scrollsSideways(n) {
+    for (; n && n !== document.body; n = n.parentNode) {
+      if (n.nodeType === 1 && n.scrollWidth > n.clientWidth + 4 && /auto|scroll/.test(getComputedStyle(n).overflowX)) return true;
+    }
+    return false;
+  }
+  function isOpen(id) { return document.getElementById(id).classList.contains('open'); }
+  document.addEventListener('touchstart', function(e) {
+    s = null;
+    if (e.touches.length !== 1 || document.getElementById('rcptView')) return;
+    var t = e.touches[0], menu = isOpen('sideMenu'), cartOpen = isOpen('cartSidebar');
+    if (!menu && !cartOpen && t.clientX > 32 && (scrollsSideways(e.target) || e.target.closest('input,textarea,select'))) return;
+    s = { x: t.clientX, y: t.clientY, at: Date.now() };
+  }, { passive: true });
+  document.addEventListener('touchend', function(e) {
+    if (!s) return;
+    var t = e.changedTouches[0], dx = t.clientX - s.x, dy = t.clientY - s.y, quick = Date.now() - s.at < 600;
+    s = null;
+    if (!quick || Math.abs(dx) < 70 || Math.abs(dy) > Math.abs(dx) * 0.6) return;
+    if (isOpen('cartSidebar')) { if (dx > 0) closeCart(); return; }
+    if (isOpen('sideMenu')) { if (dx < 0) closeSideMenu(); return; }
+    // The list menu only exists on the product page
+    var onShop = selectedSheetId && document.getElementById('orderContainer').style.display !== 'none' && document.getElementById('orderForm').style.display !== 'none';
+    if (dx > 0 && onShop) openSideMenu();
+  }, { passive: true });
+})();
+
 document.getElementById('sideMenuOverlay').onclick = closeSideMenu;
 document.getElementById('sideMenuCloseBtn').onclick = closeSideMenu;
 document.getElementById('sideMenuBackBtn').onclick = function(){

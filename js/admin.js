@@ -80,6 +80,36 @@ function toggleSidebar() {
 }
 
 if (menuBtn) menuBtn.onclick = toggleSidebar;
+
+// Phones: swipe right to open the side menu, swipe left to close it.
+// A swipe that starts inside something that scrolls sideways (tabs, tables,
+// the topbar) belongs to that, unless it starts at the very left edge.
+(function() {
+  var s = null;
+  function scrollsSideways(n) {
+    for (; n && n !== document.body; n = n.parentNode) {
+      if (n.nodeType === 1 && n.scrollWidth > n.clientWidth + 4 && /auto|scroll/.test(getComputedStyle(n).overflowX)) return true;
+    }
+    return false;
+  }
+  document.addEventListener('touchstart', function(e) {
+    s = null;
+    if (e.touches.length !== 1 || window.innerWidth > 850 || !sidebar) return;
+    if (document.getElementById('modal').classList.contains('open')) return;
+    var t = e.touches[0], open = sidebar.classList.contains('open');
+    if (!open && t.clientX > 32 && (scrollsSideways(e.target) || e.target.closest('input,textarea,select,[draggable=true]'))) return;
+    s = { x: t.clientX, y: t.clientY, at: Date.now(), open: open };
+  }, { passive: true });
+  document.addEventListener('touchend', function(e) {
+    if (!s) return;
+    var t = e.changedTouches[0], dx = t.clientX - s.x, dy = t.clientY - s.y, quick = Date.now() - s.at < 600, was = s;
+    s = null;
+    if (!quick || Math.abs(dx) < 70 || Math.abs(dy) > Math.abs(dx) * 0.6) return;
+    if (typeof _touchDrag !== 'undefined' && _touchDrag && _touchDrag.live) return; // a row is being dragged
+    if (sidebar.classList.contains('open') !== was.open) return;
+    if ((dx > 0 && !was.open) || (dx < 0 && was.open)) toggleSidebar();
+  }, { passive: true });
+})();
 if (overlay) overlay.onclick = toggleSidebar;
 
 var navItems = document.querySelectorAll('.nav-item[data-panel]');

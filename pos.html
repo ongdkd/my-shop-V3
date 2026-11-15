@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-title" content="Order Hub">
 <title>POS Mode — Order Hub</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&family=Sora:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Mitr:wght@500;600&family=Noto+Sans+Thai:wght@300;400;500;600;700&family=Sora:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 <script>
 // URL params replace the old Apps Script template variables.
@@ -21,7 +21,7 @@ var __posQuery = new URLSearchParams(location.search);
 var POS_INIT_SHEET_ID  = __posQuery.get('sheetId')  || '';
 var POS_INIT_LIST_NAME = __posQuery.get('listName') || 'POS';
 </script>
-<link rel="stylesheet" href="css/pos.css?v=20261117a">
+<link rel="stylesheet" href="css/pos.css?v=20261118a">
 </head>
 <body>
 
@@ -46,6 +46,7 @@ var POS_INIT_LIST_NAME = __posQuery.get('listName') || 'POS';
     <button class="pos-back-btn" id="posBackBtn" onclick="posGoBack()">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
     </button>
+    <img class="pos-logo" src="img/logo-256.webp" alt="" width="38" height="38">
     <div class="pos-topbar-center">
       <div class="pos-topbar-title" id="posTitle">POS — เลือกสินค้า</div>
       <div class="pos-topbar-sub" id="posSub">เพิ่มสินค้าเข้าตะกร้า</div>
@@ -59,20 +60,29 @@ var POS_INIT_LIST_NAME = __posQuery.get('listName') || 'POS';
   <div class="pos-search-bar">
     <div class="pos-search-inner">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-      <input type="text" id="posSearch" placeholder="ค้นหาสินค้า..." oninput="filterProducts(this.value)">
+      <input type="search" id="posSearch" placeholder="ค้นหาสินค้า..." oninput="filterProducts(this.value)" aria-label="ค้นหาสินค้า">
     </div>
-  </div>
-  <div class="pos-scan-row">
-    <button class="pos-scan-btn" onclick="openBarcodeScanner()">
-      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 5h2M7 5h1M12 5h2M17 5h2M3 10h2M7 10h5M15 10h2M19 10h2M3 15h2M7 15h1M12 15h5M3 19h2M7 19h1M12 19h2M17 19h2"/></svg>
-      สแกนบาร์โค้ด
+    <button class="pos-scan-btn" onclick="openBarcodeScanner()" aria-label="สแกนบาร์โค้ด">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M7 8v8M10.5 8v8M14 8v8M17 8v8"/></svg>
+      <span>สแกน</span>
     </button>
   </div>
 
-  <div class="pos-product-scroll">
-    <div class="pos-prod-grid" id="posProductGrid"></div>
-    <div class="pos-empty" id="posEmpty" style="display:none;">ไม่พบสินค้า</div>
-    <div style="height:88px;"></div>
+  <div class="pos-main">
+    <div class="pos-product-scroll">
+      <div class="pos-prod-grid" id="posProductGrid"></div>
+      <div class="pos-empty" id="posEmpty" style="display:none;">ไม่พบสินค้า</div>
+      <div class="pos-scroll-pad"></div>
+    </div>
+    <!-- Wide screens: the cart stays open beside the products -->
+    <aside class="pos-side" id="posSide" aria-label="ตะกร้าสินค้า">
+      <div class="pos-side-head">ตะกร้า <span class="pos-side-count" id="posSideCount">0</span></div>
+      <div class="pos-side-items" id="posSideItems"></div>
+      <div class="pos-side-foot">
+        <div class="pos-side-total"><span>ยอดรวม</span><b id="posSideTotal">฿0</b></div>
+        <button type="button" class="pos-side-pay" id="posSidePay" onclick="posSidePay()">ชำระเงิน</button>
+      </div>
+    </aside>
   </div>
 
   <button class="pos-cart-fab" id="posCartFab" onclick="goToSummary()">
@@ -199,7 +209,7 @@ if (window.__sb) {
 }
 </script>
 <script src="js/barcode-scan.js?v=20261102a"></script>
-<script src="js/pos.js?v=20261117b"></script>
+<script src="js/pos.js?v=20261118a"></script>
 
 </body>
 </html>
