@@ -9,6 +9,43 @@
 (function () {
   'use strict';
 
+  // ── Staff pages pick up a new version by themselves ──────────
+  // The installed app has no reload button and keeps the page open for days,
+  // so it kept showing old screens after an update. On opening, and each time
+  // the app comes back to the front, compare this page's ?v= file versions with
+  // the copy on the server and reload once when they differ. Shop pages are
+  // left alone: a reload there would empty a customer's cart.
+  (function () {
+    if (typeof location === 'undefined' || typeof document === 'undefined') return; // not in a browser (tests)
+    if (!/(admin|admin-login|pos)\.html$/.test(location.pathname)) return;
+    function versions(html) { return (html.match(/\?v=\w+/g) || []).join(','); }
+    var mine = versions(Array.prototype.map.call(document.querySelectorAll('script[src],link[href]'), function (n) {
+      return n.getAttribute('src') || n.getAttribute('href');
+    }).join(' '));
+    var checking = false, lastCheck = 0;
+    function busy() { // never reload over unsaved work
+      var m = document.getElementById('modal');
+      return (m && m.classList.contains('open')) || (window.POS_CART && window.POS_CART.length > 0) ||
+        /^(INPUT|TEXTAREA|SELECT)$/.test((document.activeElement || {}).tagName || '');
+    }
+    function check() {
+      if (checking || Date.now() - lastCheck < 60000) return;
+      checking = true; lastCheck = Date.now();
+      fetch(location.pathname + '?_=' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : ''; }).then(function (html) {
+        checking = false;
+        var theirs = html && versions(html);
+        if (!theirs || theirs === mine || busy()) return;
+        var tried = '';
+        try { tried = sessionStorage.getItem('_appVersion') || ''; sessionStorage.setItem('_appVersion', theirs); } catch (e) {}
+        if (tried === theirs) return; // already reloaded for this version: don't loop
+        location.reload();
+      }).catch(function () { checking = false; });
+    }
+    window.addEventListener('pageshow', check);
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) check(); });
+    setTimeout(check, 1500);
+  })();
+
   var PLACEHOLDER_IMG = 'https://www.svgrepo.com/show/508699/landscape-placeholder.svg';
 
   // A smaller copy of a Cloudinary photo for lists and cards: uploads are
