@@ -81,7 +81,12 @@ function posGoBack() {
   if (window.parent && window.parent !== window) {
     try { window.parent.closePOSMode && window.parent.closePOSMode(); } catch(e) {}
   }
-  if (window.closePOSMode) window.closePOSMode();
+  if (window.closePOSMode) { window.closePOSMode(); return; }
+  if (window.parent && window.parent !== window) return;
+  if (POS_CART.length && !confirm('ตะกร้ายังมีสินค้า ออกจาก POS ใช่ไหม?')) return;
+  // Opened in its own tab: close it. Opened inside the installed app (same window): back to admin.
+  if (window.opener) { window.close(); if (window.closed) return; }
+  location.href = 'admin.html';
 }
 
 // ══════════════════════════════════
@@ -264,13 +269,7 @@ function renderProducts(prods) {
 
     card.appendChild(body);
 
-    // Cart badge
-    if (inCart > 0) {
-      var badge = document.createElement('div');
-      badge.className = 'pos-prod-badge';
-      badge.textContent = inCart;
-      card.appendChild(badge);
-    }
+    posCardBadge(card, p, inCart);
 
     // Out-of-stock badge
     if (p.remaining === 0) {
@@ -280,13 +279,53 @@ function renderProducts(prods) {
       card.appendChild(oosBadge);
     }
 
-    card.onclick = function() { openQtyModal(p); };
+    // One tap = one more in the cart. Only products with options need the picker.
+    card.onclick = function() {
+      if (getProductOptions(p).length) openQtyModal(p); else posQuickAdd(p, 1);
+    };
     grid.appendChild(card);
   });
 
   // Re-apply an active search so badge refreshes don't reset the filter
   var searchBox = document.getElementById('posSearch');
   if (searchBox && searchBox.value.trim()) filterProducts(searchBox.value);
+}
+
+// Count badge (+ a minus button for products without options) on a product card
+function posCardBadge(card, p, inCart) {
+  var old = card.querySelectorAll('.pos-prod-badge,.pos-prod-minus');
+  for (var i = 0; i < old.length; i++) old[i].remove();
+  card.classList.toggle('in-cart', inCart > 0);
+  if (inCart <= 0) return;
+  var badge = document.createElement('div');
+  badge.className = 'pos-prod-badge';
+  badge.textContent = inCart;
+  card.appendChild(badge);
+  if (getProductOptions(p).length) return;
+  var minus = document.createElement('button');
+  minus.type = 'button'; minus.className = 'pos-prod-minus'; minus.textContent = '−';
+  minus.setAttribute('aria-label', 'ลด ' + p.name + ' 1 ชิ้น');
+  minus.onclick = function(e) { e.stopPropagation(); posQuickAdd(p, -1); };
+  card.appendChild(minus);
+}
+// Tap on a card: change the cart by one and refresh just that card (no grid rebuild)
+function posQuickAdd(p, delta) {
+  if (delta > 0 && posStockLeft(p, '') < 1) { posToast('สต็อกไม่พอ: ' + p.name, 'error'); return; }
+  var idx = -1;
+  for (var k = 0; k < POS_CART.length; k++) if (POS_CART[k].product.rowIndex === p.rowIndex && !POS_CART[k].option) { idx = k; break; }
+  if (idx === -1) { if (delta < 0) return; POS_CART.push({ product: p, qty: 1, option: '', lineTotal: Number(p.price) }); }
+  else {
+    POS_CART[idx].qty += delta;
+    if (POS_CART[idx].qty <= 0) POS_CART.splice(idx, 1);
+    else POS_CART[idx].lineTotal = POS_CART[idx].qty * Number(p.price);
+  }
+  updateCartFab();
+  var card = document.querySelector('#posProductGrid .pos-prod-card[data-row="' + p.rowIndex + '"]');
+  if (card) {
+    posCardBadge(card, p, getCartQty(p.rowIndex));
+    card.classList.remove('bump'); void card.offsetWidth; card.classList.add('bump');
+  }
+  try { if (navigator.vibrate) navigator.vibrate(8); } catch (e) {}
 }
 
 // Show/hide the already-rendered cards instead of rebuilding the grid —
@@ -654,6 +693,14 @@ function renderSummary() {
   totCard.appendChild(grandRow);
 
   container.appendChild(totCard);
+
+  var clearBtn = document.createElement('button');
+  clearBtn.type = 'button'; clearBtn.className = 'sum-clear-btn'; clearBtn.textContent = 'ล้างตะกร้า';
+  clearBtn.onclick = function() {
+    if (!confirm('ล้างสินค้าทั้งหมดในตะกร้า?')) return;
+    POS_CART = []; updateCartFab(); renderProducts(POS_PRODUCTS); goScreen('pos', 'summary');
+  };
+  container.appendChild(clearBtn);
 }
 
 function adjustSummaryQty(idx, delta) {
@@ -690,6 +737,39 @@ function renderPayment() {
   hero.className = 'pay-amount-hero';
   hero.innerHTML = '<div class="pay-amount-label">ยอดที่ต้องชำระ</div><div class="pay-amount-value">' + fmt(totalPrice) + '</div>';
   container.appendChild(hero);
+
+  // Cash helper: type or tap what the customer handed over, see the change.
+  // Nothing here is saved — it is only a calculator for the seller.
+  var cash = document.createElement('div'); cash.className = 'pay-cash-card';
+  var cashTitle = document.createElement('div'); cashTitle.className = 'pay-order-title'; cashTitle.textContent = '💵 รับเงินสด (คำนวณเงินทอน)';
+  cash.appendChild(cashTitle);
+  var cashIn = document.createElement('input');
+  cashIn.type = 'number'; cashIn.inputMode = 'decimal'; cashIn.min = '0'; cashIn.className = 'pay-cash-input';
+  cashIn.placeholder = 'รับเงินมา (บาท)'; cashIn.setAttribute('aria-label', 'จำนวนเงินที่รับมา');
+  var chips = document.createElement('div'); chips.className = 'pay-cash-chips';
+  var change = document.createElement('div'); change.className = 'pay-cash-change'; change.setAttribute('aria-live', 'polite');
+  function showChange() {
+    var got = Number(cashIn.value);
+    if (!cashIn.value || !isFinite(got)) { change.textContent = ''; change.className = 'pay-cash-change'; return; }
+    var diff = Math.round((got - totalPrice) * 100) / 100;
+    change.className = 'pay-cash-change ' + (diff >= 0 ? 'ok' : 'short');
+    change.textContent = diff >= 0 ? 'เงินทอน ' + fmt(diff) : 'ยังขาดอีก ' + fmt(-diff);
+  }
+  // Exact amount, then the notes a customer could pay this total with
+  var quick = [totalPrice];
+  [20, 50, 100, 500, 1000].forEach(function(n) {
+    var up = Math.ceil(totalPrice / n) * n;
+    if (up > totalPrice && quick.indexOf(up) === -1) quick.push(up);
+  });
+  quick.sort(function(a, b) { return a - b; }).slice(0, 5).forEach(function(v, i) {
+    var b = document.createElement('button'); b.type = 'button'; b.className = 'pay-cash-chip';
+    b.textContent = i === 0 ? 'พอดี' : fmt(v);
+    b.onclick = function() { cashIn.value = v; showChange(); };
+    chips.appendChild(b);
+  });
+  cashIn.oninput = showChange;
+  cash.appendChild(cashIn); cash.appendChild(chips); cash.appendChild(change);
+  container.appendChild(cash);
 
   // Payment card — the shop's real payment channels (same as the
   // customer page). The old generated QR encoded an internal string

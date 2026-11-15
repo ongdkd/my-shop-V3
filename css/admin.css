@@ -1010,7 +1010,11 @@ a.ocard-phone{text-decoration:underline;text-decoration-color:var(--border-stron
 .reorder-item input,.reorder-item textarea{cursor:auto;}
 .reorder-item button,.reorder-item label,.reorder-item a,.reorder-item input[type=checkbox]{cursor:pointer;}
 /* A long press must start the drag, not a text selection or the image menu */
-@media(hover:none),(pointer:coarse){.reorder-item{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;}.reorder-item input{-webkit-user-select:text;user-select:text;}}
+@media(hover:none),(pointer:coarse){.drag-src{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;}.drag-src input,.drag-src textarea{-webkit-user-select:text;user-select:text;}}
+/* Touch drag: the picked-up copy follows the finger */
+.touch-ghost{position:fixed!important;left:0;top:0;z-index:5000;margin:0!important;pointer-events:none;opacity:0.9;box-shadow:0 14px 34px rgba(228,99,155,0.35);border-radius:var(--radius-md);background:var(--surface);rotate:1.5deg;will-change:transform;}
+body.touch-dragging{-webkit-user-select:none;user-select:none;}
+body.touch-dragging *{-webkit-touch-callout:none;}
 .reorder-item.drop-on{outline:2px solid var(--primary);outline-offset:2px;}
 .reorder-item.dragging{opacity:0.45;}
 .ol-card{position:relative;}

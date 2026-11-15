@@ -4284,8 +4284,108 @@ function dragSource(node, getData) {
     node.classList.remove('dragging'); _billDrag = null;
     document.querySelectorAll('.drop-on').forEach(function(n) { n.classList.remove('drop-on'); });
   });
+  touchDragSource(node, getData);
 }
+
+// ── Touch screens: phones don't run the mouse drag above, so a long press picks
+// the row up, it follows the finger, and lifting over a drop zone drops it.
+// Every dragSource / dropZone pair gets this for free.
+var TOUCH_SKIP = 'input,button,a,select,textarea,label,.toggle,[contenteditable=true]';
+var _touchDrag = null; // { node, getData, x, y, timer, live, ghost, zone, native }
+function touchDragSource(node, getData) {
+  node.classList.add('drag-src');
+  node.addEventListener('touchstart', function(e) {
+    // The innermost source wins (an item inside an order drags on its own)
+    if (e._dragClaimed || e.touches.length !== 1 || e.target.closest(TOUCH_SKIP)) return;
+    e._dragClaimed = true;
+    touchDragEnd(false);
+    var t = e.touches[0];
+    // The browser's own long-press drag would fight this one
+    _touchDrag = { node: node, getData: getData, x: t.clientX, y: t.clientY, native: node.draggable };
+    node.draggable = false;
+    _touchDrag.timer = setTimeout(touchDragBegin, 380);
+  }, { passive: true });
+}
+function touchDragBegin() {
+  var s = _touchDrag; if (!s || !document.body.contains(s.node)) { touchDragEnd(false); return; }
+  s.live = true; _billDrag = s.getData();
+  var r = s.node.getBoundingClientRect();
+  var g = s.node.cloneNode(true); g.classList.add('touch-ghost'); g.removeAttribute('id');
+  g.style.width = r.width + 'px'; g.style.height = r.height + 'px';
+  s.dx = s.x - r.left; s.dy = s.y - r.top;
+  if (s.node.tagName === 'TR') { // a bare <tr> can't sit in <body>: wrap it in its own table
+    var tb = document.createElement('table'); tb.className = 'touch-ghost'; tb.style.width = r.width + 'px';
+    g.classList.remove('touch-ghost'); g.style.width = ''; tb.appendChild(document.createElement('tbody')).appendChild(g); g = tb;
+  }
+  s.ghost = g; document.body.appendChild(g);
+  s.node.classList.add('dragging'); document.body.classList.add('touch-dragging');
+  touchDragMove(s.x, s.y);
+  try { if (navigator.vibrate) navigator.vibrate(12); } catch (x) {}
+}
+function touchDropZoneAt(x, y) {
+  for (var n = document.elementFromPoint(x, y); n; n = n.parentNode) if (n._onDrop) return n;
+  return null;
+}
+function touchDragMove(x, y) {
+  var s = _touchDrag;
+  s.x = x; s.y = y;
+  s.ghost.style.transform = 'translate(' + (x - s.dx) + 'px,' + (y - s.dy) + 'px)';
+  var zone = touchDropZoneAt(x, y);
+  if (zone === s.node) zone = null;
+  if (zone !== s.zone) {
+    if (s.zone) s.zone.classList.remove('drop-on');
+    if (zone) zone.classList.add('drop-on');
+    s.zone = zone;
+  }
+}
+// Near the top or bottom edge, scroll whatever scrolls under the finger
+function touchDragAutoScroll() {
+  var s = _touchDrag; if (!s || !s.live) return;
+  var edge = 70, v = s.y < edge ? -1 : s.y > window.innerHeight - edge ? 1 : 0;
+  if (v) {
+    for (var n = document.elementFromPoint(s.x, s.y); n && n !== document.documentElement; n = n.parentNode) {
+      if (n.scrollHeight > n.clientHeight + 4 && /auto|scroll/.test(getComputedStyle(n).overflowY)) { n.scrollTop += v * 14; break; }
+    }
+    if (!n || n === document.documentElement) window.scrollBy(0, v * 14);
+    touchDragMove(s.x, s.y);
+  }
+  s.raf = requestAnimationFrame(touchDragAutoScroll);
+}
+function touchDragEnd(drop) {
+  var s = _touchDrag; if (!s) return;
+  _touchDrag = null;
+  clearTimeout(s.timer); cancelAnimationFrame(s.raf);
+  s.node.draggable = s.native;
+  if (!s.live) return;
+  if (s.ghost) s.ghost.remove();
+  s.node.classList.remove('dragging'); document.body.classList.remove('touch-dragging');
+  if (s.zone) s.zone.classList.remove('drop-on');
+  var d = _billDrag; _billDrag = null;
+  if (drop && s.zone && d) s.zone._onDrop(d);
+}
+document.addEventListener('touchmove', function(e) {
+  var s = _touchDrag; if (!s) return;
+  var t = e.touches[0];
+  if (!s.live) { // moved before the long press finished: the user is scrolling
+    if (Math.abs(t.clientX - s.x) > 8 || Math.abs(t.clientY - s.y) > 8) touchDragEnd(false);
+    return;
+  }
+  if (e.cancelable) e.preventDefault();
+  touchDragMove(t.clientX, t.clientY);
+  if (!s.raf) s.raf = requestAnimationFrame(touchDragAutoScroll);
+}, { passive: false });
+document.addEventListener('touchend', function(e) {
+  if (!_touchDrag) return;
+  var live = _touchDrag.live;
+  touchDragEnd(true);
+  if (live && e.cancelable) e.preventDefault(); // no click on whatever is under the finger
+});
+document.addEventListener('touchcancel', function() { touchDragEnd(false); });
+// A long press also opens the image / text menu — not while a row is being picked up
+document.addEventListener('contextmenu', function(e) { if (_touchDrag) e.preventDefault(); });
+
 function dropZone(node, onDrop) {
+  node._onDrop = onDrop;
   node.addEventListener('dragover', function(e) {
     if (!_billDrag) return;
     e.preventDefault(); e.stopPropagation();
@@ -4332,9 +4432,7 @@ function enableReorder(nodes, keys, save) {
     // a press on a control does not. Touch screens start the drag after a long press.
     node.title = 'กดค้างที่พื้นที่ว่างแล้วลาก เพื่อจัดลำดับ';
     Array.prototype.forEach.call(node.querySelectorAll('img'), function(im) { im.draggable = false; });
-    var arm = function(e) { node.draggable = !e.target.closest(REORDER_SKIP); };
-    node.addEventListener('mousedown', arm);
-    node.addEventListener('touchstart', arm, { passive: true });
+    node.addEventListener('mousedown', function(e) { node.draggable = !e.target.closest(REORDER_SKIP); });
   });
 }
 var REORDER_SKIP = 'input,button,a,select,textarea,label,.toggle,[contenteditable=true]';
@@ -8713,6 +8811,11 @@ function resolveImage(fieldId, callback) {
 
 function openPOSMode(listItem) {
   // POS shares the Supabase session — no credentials in the URL
+  // Installed app: stay in the app window (a new tab would leave it for the browser)
+  if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true) {
+    location.href = 'pos.html?sheetId=' + encodeURIComponent(listItem.sheetId) + '&listName=' + encodeURIComponent(listItem.name);
+    return;
+  }
   google.script.run.withSuccessHandler(function(baseUrl) {
     var url = baseUrl
       + '?page=pos'

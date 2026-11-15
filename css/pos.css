@@ -240,3 +240,34 @@ button,.pos-prod-card,.qty-step-btn,.sum-qty-btn{touch-action:manipulation;}
   .pos-prod-card:hover{border-color:var(--border);}
   .sum-qty-btn:hover{background:var(--surface-2);color:var(--text-2);border-color:var(--border-strong);}
 }
+
+/* ── One-tap add: minus button + a little bump on the tapped card ── */
+.pos-prod-card.in-cart{border-color:var(--primary);}
+.pos-prod-minus{position:absolute;top:6px;left:6px;width:34px;height:34px;border-radius:50%;background:var(--surface);color:var(--primary-dark);border:1.5px solid var(--primary);font-size:1.2rem;font-weight:700;line-height:1;display:flex;align-items:center;justify-content:center;box-shadow:var(--shadow-sm);}
+.pos-prod-badge{width:26px;height:26px;font-size:0.78rem;}
+.pos-prod-card.bump{animation:pos-bump 0.22s ease-out;}
+@keyframes pos-bump{0%{transform:scale(1);}45%{transform:scale(0.95);}100%{transform:scale(1);}}
+@media(prefers-reduced-motion:reduce){.pos-prod-card.bump{animation:none;}}
+
+/* ── Cash helper + clear cart ── */
+.pay-cash-card{background:var(--surface);border:1.5px solid var(--border);border-radius:var(--radius-md);padding:14px;display:flex;flex-direction:column;gap:10px;}
+.pay-cash-card .pay-order-title{margin-bottom:0;}
+.pay-cash-input{width:100%;min-height:48px;padding:0 14px;border:1.5px solid var(--border-strong);border-radius:var(--radius-sm);background:var(--surface-2);font:600 1.1rem var(--font);color:var(--text);outline:none;}
+.pay-cash-input:focus{border-color:var(--primary);}
+.pay-cash-chips{display:flex;gap:8px;flex-wrap:wrap;}
+.pay-cash-chip{flex:1 1 auto;min-height:44px;padding:0 14px;border-radius:999px;background:var(--primary-light);color:var(--primary-dark);border:1.5px solid var(--border-strong);font-size:0.86rem;font-weight:700;}
+.pay-cash-change{font-size:1.25rem;font-weight:800;text-align:center;min-height:1.6em;}
+.pay-cash-change.ok{color:#007A5A;}
+.pay-cash-change.short{color:var(--error);}
+.sum-clear-btn{display:block;margin:0 auto;padding:10px 18px;min-height:44px;background:none;color:var(--text-3);font-size:0.82rem;font-weight:600;text-decoration:underline;}
+
+/* ── Tablets and wide screens: more product columns, readable centre column ── */
+@media(min-width:600px){
+  .pos-prod-grid{grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;}
+  .pos-product-scroll{padding:16px;}
+  .summary-scroll > *,.pay-scroll > *,.history-scroll > *{width:100%;max-width:640px;margin-left:auto;margin-right:auto;}
+  .sum-bottom-bar{justify-content:center;}
+  .sum-confirm-btn{max-width:640px;}
+  .qty-modal-box{border-radius:var(--radius-lg);margin-bottom:24px;}
+  #qty-modal{align-items:center;}
+}

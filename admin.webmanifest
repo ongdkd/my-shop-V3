@@ -5,7 +5,7 @@
   "description": "จัดการระบบสั่งซื้อ Kagayaku",
   "lang": "th",
   "start_url": "admin.html",
-  "scope": "admin",
+  "scope": "./",
   "display": "standalone",
   "background_color": "#FFF5F9",
   "theme_color": "#E4639B",
