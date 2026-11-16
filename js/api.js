@@ -2804,6 +2804,12 @@
   // ════════════════════════════════════════════════════════════
   // google.script.run emulation
   // ════════════════════════════════════════════════════════════
+  // How many server calls are waiting; pages can listen for "apibusy" (Faye thinks).
+  var _busy = 0;
+  function apiBusy(step) {
+    _busy = Math.max(0, _busy + step);
+    try { window.dispatchEvent(new CustomEvent('apibusy', { detail: _busy })); } catch (e) {}
+  }
   function makeRunner() {
     var onSuccess = null, onFailure = null;
     var chain = {};
@@ -2815,6 +2821,7 @@
         if (typeof prop !== 'string') return undefined;
         return function () {
           var args = Array.prototype.slice.call(arguments);
+          apiBusy(1);
           Promise.resolve()
             .then(function () {
               var fn = API[prop];
@@ -2827,7 +2834,8 @@
             .catch(function (e) {
               console.error('[api] ' + prop + ':', e);
               if (onFailure) { try { onFailure(e); } catch (e2) { console.error(e2); } }
-            });
+            })
+            .then(function () { apiBusy(-1); });
         };
       }
     });

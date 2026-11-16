@@ -138,41 +138,58 @@ document.getElementById('modalSave').onclick = function() { if (modalSaveFn) mod
 // ════════════════════════════════
 var fayeBox = el('faye');
 var fayeHelp = el('fayeHelp');
-var fayeSprite = fayeHelp.querySelector('.faye-sprite');
 var fayeReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
-// Sprite rows: 0 blink, 1 wave, 2 music, 3 phone, 4 nap, 5 snack, 6 arms up, 7 sway
-var fayeIdleLoops = [[0, 1800], [2, 900], [3, 1200], [4, 2200], [5, 1500], [6, 1400], [7, 1600]];
-var fayeLastIdle = -1, fayeMotion, fayePaused = false, fayeHeld = false;
+var fayePaused = false, fayeHeld = false;
+var FAYE_SPEED = 1; // 1 = the artwork's own pace; lower = slower moves
+var FAYE_REST = [15000, 25000]; // stands still (breathing) 15–25 s between idle activities
+// The animated pixel Faye (faye/faye.js). The page moves his box itself, so the
+// canvas ignores the pointer; we tell it when he's picked up, carried and dropped.
+var faye = null;
+try { if (window.FayeCompanion) faye = FayeCompanion.mount(fayeHelp.querySelector('.faye-stage'), { interactive: false, speed: FAYE_SPEED, rest: FAYE_REST }); } catch (e) { faye = null; }
+if (faye) faye.ready.catch(function() { fayeBox.classList.add('no-art'); });
+else fayeBox.classList.add('no-art');
 function fayeStore(k, v) {
   try { if (v === undefined) return localStorage.getItem(k); if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) {}
   return null;
 }
+// One-shot reaction (wakes him first if he's napping)
+function fayeDo(id) {
+  if (!faye || fayePaused || fayeHeld) return;
+  faye.wake();
+  try { faye.play(id); } catch (e) {}
+}
 
-function playFaye(row, duration, iterations) {
-  var size = fayeSprite.offsetWidth;
-  var y = (-row * size) + 'px';
-  if (fayeMotion) fayeMotion.cancel();
-  fayeMotion = fayeSprite.animate(
-    [{ backgroundPosition: '0px ' + y }, { backgroundPosition: (-4 * size) + 'px ' + y }],
-    { duration: duration, iterations: iterations, easing: 'steps(4, end)' }
-  );
-  return fayeMotion;
+// ── Nap: nothing tapped, typed or scrolled for a while → yawn and curl up.
+// Any touch on the page wakes him (rub eyes, stretch, stand up). ──
+var FAYE_NAP_MS = 90 * 1000, fayeNapTimer = null, fayeLastNudge = 0;
+function fayeNapLater() {
+  clearTimeout(fayeNapTimer);
+  fayeNapTimer = setTimeout(function() {
+    if (!faye || fayeHeld || fayeHelp.open || fayePaused || document.hidden) return fayeNapLater();
+    faye.doze();
+  }, FAYE_NAP_MS);
 }
-function playFayeIdle() {
-  if (fayeHeld || fayeHelp.open || document.hidden || fayeReducedMotion.matches || fayePaused) return;
-  var pick = Math.floor(Math.random() * (fayeIdleLoops.length - (fayeLastIdle < 0 ? 0 : 1)));
-  if (fayeLastIdle >= 0 && pick >= fayeLastIdle) pick++;
-  fayeLastIdle = pick;
-  var loop = fayeIdleLoops[pick];
-  var min = Math.ceil(5000 / loop[1]), max = Math.floor(15000 / loop[1]);
-  var repeats = min + Math.floor(Math.random() * (max - min + 1));
-  playFaye(loop[0], loop[1], repeats).onfinish = playFayeIdle;
+function fayeNudge(e) {
+  if (e.type === 'pointermove' || e.type === 'scroll') { // cheap: at most once a second
+    var now = Date.now(); if (now - fayeLastNudge < 1000) return; fayeLastNudge = now;
+  }
+  if (faye && faye.asleep && e.type !== 'pointermove' && e.type !== 'scroll') faye.wake();
+  fayeNapLater();
 }
-function resetFayeMotion(wave) {
-  if (fayeMotion) { fayeMotion.cancel(); fayeMotion = null; }
-  if (!document.hidden && !fayeReducedMotion.matches && !fayePaused && wave) playFaye(1, 600, 1).onfinish = playFayeIdle;
-  else playFayeIdle();
-}
+['pointerdown', 'keydown', 'wheel', 'scroll', 'pointermove'].forEach(function(t) {
+  document.addEventListener(t, fayeNudge, { capture: true, passive: true });
+});
+document.addEventListener('visibilitychange', function() { if (!document.hidden) fayeNapLater(); });
+fayeNapLater();
+
+// ── Busy: while the page waits on the server for a moment, he thinks ──
+var fayeBusyTimer = null;
+window.addEventListener('apibusy', function(e) {
+  if (!faye) return;
+  clearTimeout(fayeBusyTimer);
+  if (e.detail > 0) fayeBusyTimer = setTimeout(function() { if (!faye.asleep && !fayeHeld) faye.setMode('thinking'); }, 700);
+  else if (!faye.asleep) faye.setMode('idle');
+});
 
 // ── Where he stands: saved as a share of the free space, so it survives
 // rotating the phone or resizing the window ──
@@ -213,8 +230,11 @@ window.addEventListener('resize', fayePlace);
       try { summary.setPointerCapture(d.id); } catch (x) {}
       fayeHelp.open = false; fayeBubbleHide();
       fayeBox.classList.add('held');
-      if (!fayeReducedMotion.matches) playFaye(6, 700, Infinity); // arms up while carried
+      d.lastX = e.clientX;
+      if (faye) faye.grab(); // dangles while carried
     }
+    if (faye) faye.carry(e.clientX - d.lastX);
+    d.lastX = e.clientX;
     var x = Math.min(Math.max(0, e.clientX - d.dx), innerWidth - d.w);
     var y = Math.min(Math.max(0, e.clientY - d.dy), innerHeight - d.h);
     fayeBox.style.left = x + 'px'; fayeBox.style.top = y + 'px';
@@ -224,6 +244,7 @@ window.addEventListener('resize', fayePlace);
     if (!d || e.pointerId !== d.id) return;
     var was = d; d = null;
     if (!was.live) return;
+    if (e.type === 'pointercancel' && faye) faye.release();
     dragged = true; fayeHeld = false;
     fayeBox.classList.remove('held');
     var r = fayeBox.getBoundingClientRect();
@@ -232,7 +253,8 @@ window.addEventListener('resize', fayePlace);
       y: innerHeight > r.height ? r.top / (innerHeight - r.height) : 0
     }));
     fayeSide();
-    resetFayeMotion(true); // a little wave on landing
+    if (faye) faye.release(); // lands, settles, carries on
+    fayeNapLater();
   }
   summary.addEventListener('pointerup', drop);
   summary.addEventListener('pointercancel', drop);
@@ -243,20 +265,20 @@ window.addEventListener('resize', fayePlace);
 
 // ── Speech bubble (works while the panel is closed) ──
 var fayeBubbleTimer = null;
-function fayeSay(text, ms) {
+function fayeSay(text, ms, anim) {
   var b = el('fayeBubble');
   b.textContent = text; b.hidden = false;
   fayeSide();
   clearTimeout(fayeBubbleTimer);
   fayeBubbleTimer = setTimeout(fayeBubbleHide, ms || 6000);
-  if (!fayeReducedMotion.matches && !fayePaused && !fayeHelp.open) playFaye(1, 600, 2).onfinish = playFayeIdle;
+  fayeDo(anim || 'hello');
 }
 function fayeBubbleHide() { clearTimeout(fayeBubbleTimer); el('fayeBubble').hidden = true; }
 el('fayeBubble').addEventListener('click', function() { fayeBubbleHide(); fayeHelp.open = true; });
 
 // ── What's in the panel ──
 var FAYE_TIPS = {
-  common: [['ย้าย Faye ยังไง?', 'กดที่ตัวผมค้างไว้แล้วลากไปวางตรงไหนก็ได้เลยครับ ผมจะจำที่นั้นไว้ในเครื่องนี้']],
+  common: [['ย้าย Faye ยังไง?', 'กดที่ตัวผมค้างไว้แล้วลากไปวางตรงไหนก็ได้เลยครับ ผมจะจำที่นั้นไว้ในเครื่องนี้'], ['Faye หลับอยู่?', 'ถ้าไม่มีใครแตะหน้าจอสักชั่วครู่ (ราว 1 นาทีครึ่ง) ผมจะงีบครับ แตะตรงไหนก็ได้ผมก็ตื่นแล้ว']],
   orderlists: [
     ['สร้างรอบใหม่ยังไง?', 'กด “+ สร้างรายการใหม่” ที่แถบด้านบนครับ'],
     ['จัดลำดับรอบยังไง?', 'กดค้างที่พื้นที่ว่างของการ์ด แล้วลากไปวางบนการ์ดอีกใบ ลำดับนี้คือลำดับที่ลูกค้าเห็นในหน้าร้านครับ'],
@@ -279,40 +301,83 @@ function fayeGreeting() {
   var h = new Date().getHours();
   return h < 11 ? 'อรุณสวัสดิ์ครับ' : h < 17 ? 'สวัสดีตอนบ่ายครับ' : 'สวัสดีตอนเย็นครับ';
 }
-function fayeFill() {
-  var unread = typeof notifUnread === 'function' && _notif && _notif.loaded ? notifUnread() : 0;
-  el('fayeReply').textContent = fayeGreeting() + ' ' + (unread ? 'มีเรื่องใหม่ ' + unread + ' เรื่องครับ' : 'ตอนนี้ยังไม่มีอะไรใหม่ครับ ให้ผมช่วยอะไรดี?');
-  // What's new: the latest unread notifications
-  var news = el('fayeNews'); news.innerHTML = '';
-  if (unread) {
-    var seen = notifSeen();
-    _notif.events.filter(function(e) { return notifNewer(e.at, seen); }).slice(0, 3).forEach(function(e) {
-      var row = div('faye-news-item'); row.textContent = notifText(e);
-      row.appendChild(div('faye-news-time', escapeHtml(timeAgo(e.at))));
-      news.appendChild(row);
-    });
-    var all = makeBtn('btn btn-ghost btn-sm', 'ดูการแจ้งเตือนทั้งหมด', function() { fayeHelp.open = false; el('notifBtn').click(); });
-    all.type = 'button'; news.appendChild(all);
-  }
-  news.hidden = !unread;
-  // Shortcuts to every other screen, from the sidebar's own list
-  var go = el('fayeGo'); go.innerHTML = '';
-  document.querySelectorAll('.nav-item[data-panel]').forEach(function(n) {
-    var p = n.getAttribute('data-panel');
-    if (p === currentPanel) return;
-    var b = makeBtn('faye-go-btn', '', function() { fayeHelp.open = false; switchPanel(p); });
-    b.type = 'button'; b.textContent = n.textContent.trim(); go.appendChild(b);
-  });
-  var shop = document.createElement('a'); shop.className = 'faye-go-btn'; shop.href = 'index.html'; shop.target = '_blank'; shop.rel = 'noopener';
-  shop.textContent = '🛍 เปิดหน้าร้าน'; go.appendChild(shop);
-  // Tips for this screen
-  var tips = el('fayeTopics'); tips.innerHTML = '';
-  (FAYE_TIPS[currentPanel] || []).concat(FAYE_TIPS.common).forEach(function(t) {
-    var b = makeBtn('btn btn-ghost btn-sm', '', function() { el('fayeReply').textContent = t[1]; });
-    b.type = 'button'; b.textContent = t[0]; tips.appendChild(b);
-  });
-  el('fayeMini').textContent = fayeBox.classList.contains('mini') ? 'ขยาย Faye' : 'ย่อ Faye';
+// ── His panel is a little conversation: a main menu, each item opens a
+// sub-menu (‹ goes back), and Faye answers in his speech bubble ──
+var FAYE_VIEWS = {
+  news: 'มีอะไรใหม่', find: 'ค้นหาออเดอร์', go: 'ไปหน้าอื่น', tips: 'ถามเรื่องหน้านี้', settings: 'ตั้งค่า Faye'
+};
+function fayeUnread() { return typeof notifUnread === 'function' && _notif && _notif.loaded ? notifUnread() : 0; }
+function fayeChat(you, reply) {
+  var y = el('fayeYou'), r = el('fayeReply');
+  y.textContent = you || ''; y.hidden = !you;
+  r.textContent = reply;
+  r.style.animation = 'none'; void r.offsetWidth; r.style.animation = ''; // replay the pop
 }
+function fayeMenuLabel(id, text) { el(id).querySelector('.faye-lbl').textContent = text; }
+function fayeView(name) {
+  name = name || 'main';
+  fayeHelp.querySelectorAll('.faye-view').forEach(function(v) { v.hidden = v.getAttribute('data-view') !== name; });
+  el('fayeBack').hidden = name === 'main';
+  el('fayeWhere').textContent = name === 'main' ? '' : FAYE_VIEWS[name];
+  var you = name === 'main' ? '' : FAYE_VIEWS[name];
+  var unread = fayeUnread();
+  if (name === 'main') {
+    fayeChat('', fayeGreeting() + ' ' + (unread ? 'มีเรื่องใหม่ ' + unread + ' เรื่องครับ ให้ผมช่วยอะไรดี?' : 'ให้ผมช่วยอะไรดีครับ?'));
+    var cnt = el('fayeNewsCount'); cnt.textContent = unread > 99 ? '99+' : unread; cnt.hidden = !unread;
+  } else if (name === 'news') {
+    var news = el('fayeNews'); news.innerHTML = '';
+    if (unread) {
+      var seen = notifSeen();
+      _notif.events.filter(function(e) { return notifNewer(e.at, seen); }).slice(0, 5).forEach(function(e) {
+        var row = div('faye-news-item'); row.textContent = notifText(e);
+        row.appendChild(div('faye-news-time', escapeHtml(timeAgo(e.at))));
+        news.appendChild(row);
+      });
+    }
+    var all = makeBtn('faye-menu-item', '', function() { fayeHelp.open = false; el('notifBtn').click(); });
+    all.type = 'button';
+    all.innerHTML = '<span class="faye-ico">📋</span><span class="faye-lbl">ดูการแจ้งเตือนทั้งหมด</span><span class="faye-chev">›</span>';
+    news.appendChild(all);
+    fayeChat(you, unread ? 'นี่คือเรื่องใหม่ ' + unread + ' เรื่องครับ' : 'ยังไม่มีอะไรใหม่เลยครับ ถ้ามีออเดอร์หรือสลิปเข้ามาผมจะบอกนะ');
+    if (unread) fayeDo('letter');
+  } else if (name === 'find') {
+    fayeChat(you, 'อยากหาใครครับ? พิมพ์ชื่อลูกค้า เบอร์ หรือชื่อสินค้า ผมจะเปิดคำสั่งซื้อทุกรอบแล้วค้นให้');
+    setTimeout(function() { el('fayeFindInput').focus(); }, 30);
+  } else if (name === 'go') {
+    var go = el('fayeGo'); go.innerHTML = '';
+    document.querySelectorAll('.nav-item[data-panel]').forEach(function(n) {
+      var p = n.getAttribute('data-panel');
+      if (p === currentPanel) return;
+      var b = makeBtn('faye-go-btn', '', function() { fayeHelp.open = false; switchPanel(p); });
+      b.type = 'button'; b.textContent = n.textContent.trim(); go.appendChild(b);
+    });
+    var shop = document.createElement('a'); shop.className = 'faye-go-btn'; shop.href = 'index.html'; shop.target = '_blank'; shop.rel = 'noopener';
+    shop.textContent = '🛍 เปิดหน้าร้าน'; go.appendChild(shop);
+    fayeChat(you, 'อยากไปหน้าไหนครับ?');
+  } else if (name === 'tips') {
+    var tips = el('fayeTopics'); tips.innerHTML = '';
+    (FAYE_TIPS[currentPanel] || []).concat(FAYE_TIPS.common).forEach(function(t) {
+      var b = makeBtn('faye-menu-item', '', function() {
+        tips.querySelectorAll('.on').forEach(function(x) { x.classList.remove('on'); });
+        b.classList.add('on');
+        fayeChat(t[0], t[1]); fayeDo('yes');
+      });
+      b.type = 'button';
+      b.innerHTML = '<span class="faye-ico">❓</span><span class="faye-lbl"></span>';
+      b.querySelector('.faye-lbl').textContent = t[0];
+      tips.appendChild(b);
+    });
+    fayeChat(you, 'สงสัยเรื่องไหนในหน้านี้ เลือกถามได้เลยครับ');
+  } else if (name === 'settings') {
+    fayeMenuLabel('fayeMini', fayeBox.classList.contains('mini') ? 'ขยาย Faye' : 'ย่อ Faye');
+    fayeChat(you, 'ปรับตัวผมได้ตรงนี้ครับ');
+  }
+}
+fayeHelp.querySelectorAll('[data-open]').forEach(function(b) {
+  b.addEventListener('click', function() { fayeView(b.getAttribute('data-open')); });
+});
+el('fayeBack').addEventListener('click', function() { fayeView('main'); fayeHelp.querySelector('[data-open]').focus(); });
+function fayeFill() { fayeView('main'); }
 // Badge on Faye: unread count (kept in step with the bell)
 function fayeBadge() {
   var n = typeof notifUnread === 'function' && _notif && _notif.loaded ? notifUnread() : 0, b = el('fayeBadge');
@@ -336,31 +401,32 @@ el('fayeFind').addEventListener('submit', function(e) {
 
 fayeHelp.addEventListener('toggle', function() {
   if (fayeHelp.open) { fayeBubbleHide(); fayeSide(); fayeFill(); }
-  resetFayeMotion(fayeHelp.open);
+  if (fayeHelp.open) fayeDo('hello');
 });
 el('fayePause').addEventListener('click', function() {
   fayePaused = !fayePaused;
   this.setAttribute('aria-pressed', String(fayePaused));
-  this.textContent = fayePaused ? 'เล่นแอนิเมชัน' : 'พักแอนิเมชัน';
-  resetFayeMotion(false);
+  fayeMenuLabel('fayePause', fayePaused ? 'เล่นแอนิเมชัน' : 'พักแอนิเมชัน');
+  this.querySelector('.faye-ico').textContent = fayePaused ? '▶️' : '⏸️';
+  fayeChat('', fayePaused ? 'โอเค ผมจะอยู่นิ่ง ๆ ครับ' : 'กลับมาขยับแล้วครับ!');
+  if (faye) faye.pause(fayePaused);
 });
 el('fayeMini').addEventListener('click', function() {
   var mini = !fayeBox.classList.contains('mini');
   fayeBox.classList.toggle('mini', mini);
   fayeStore('fayeMini', mini ? '1' : null);
-  this.textContent = mini ? 'ขยาย Faye' : 'ย่อ Faye';
-  fayePlace(); resetFayeMotion(false);
+  fayeMenuLabel('fayeMini', mini ? 'ขยาย Faye' : 'ย่อ Faye');
+  fayeChat('', mini ? 'ตัวเล็กลงแล้วครับ' : 'กลับมาตัวเท่าเดิมแล้วครับ');
+  fayePlace();
 });
 el('fayeHome').addEventListener('click', function() {
-  fayeStore('fayePos', null); fayePlace(); resetFayeMotion(true);
+  fayeStore('fayePos', null); fayePlace(); fayeDo('hello');
+  fayeChat('', 'กลับมาอยู่มุมขวาล่างแล้วครับ');
 });
-fayeReducedMotion.addEventListener('change', function() { resetFayeMotion(false); });
-document.addEventListener('visibilitychange', function() { resetFayeMotion(false); });
 // Tap outside closes his panel
 document.addEventListener('pointerdown', function(e) { if (fayeHelp.open && !fayeBox.contains(e.target)) fayeHelp.open = false; });
 if (fayeStore('fayeMini') === '1') fayeBox.classList.add('mini');
 fayePlace();
-resetFayeMotion(false);
 
 // Escape closes the active admin controls, then Faye's help.
 document.addEventListener('keydown', function(e) {
@@ -368,6 +434,7 @@ document.addEventListener('keydown', function(e) {
   if (document.getElementById('imageActionPicker')) closeImageActionPicker();
   else if (document.getElementById('modal').classList.contains('open')) closeModal();
   else if (sidebar.classList.contains('open')) toggleSidebar();
+  else if (fayeHelp.open && !el('fayeBack').hidden) fayeView('main'); // Esc in a sub-menu: back one step
   else if (fayeHelp.open) {
     fayeHelp.open = false;
     fayeHelp.querySelector('summary').focus();
@@ -401,6 +468,7 @@ function toast(msg, type, action) {
   }
   if (_toastTimer) clearTimeout(_toastTimer);
   _toastTimer = setTimeout(function() { el.classList.remove('show'); el.style.pointerEvents = ''; _toastTimer = null; }, action ? 7000 : 3500);
+  if (typeof fayeDo === 'function') fayeDo(type === 'error' ? 'oops' : 'yes'); // nod at good news, "oops" at errors
 }
 
 // ── Beep — runs in parent window where AudioContext is already unlocked ──
@@ -9271,7 +9339,7 @@ function drawNotifBadge() {
 function notifAnnounce(fresh) {
   var first = notifText(fresh[0]) + (fresh.length > 1 ? ' และอีก ' + (fresh.length - 1) + ' รายการ' : '');
   toast('🔔 ' + first, 'success');
-  fayeSay(first, 7000);
+  fayeSay(first, 7000, 'letter'); // a new order or slip: he brings the letter
   if (_notif.audio) {
     try {
       var o = _notif.audio.createOscillator(), g = _notif.audio.createGain();

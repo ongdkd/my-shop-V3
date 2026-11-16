@@ -14,7 +14,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&family=Sora:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-<link rel="stylesheet" href="css/admin.css?v=20261121b">
+<link rel="stylesheet" href="css/admin.css?v=20261122c">
 </head>
 <body>
 <div id="toast" role="status" aria-live="polite"></div>
@@ -121,23 +121,39 @@
     <div id="faye" class="faye">
       <div class="faye-bubble" id="fayeBubble" role="status" hidden></div>
       <details id="fayeHelp" class="faye-help">
-        <summary aria-label="คุยกับ Faye (กดค้างแล้วลากเพื่อย้าย)"><span class="faye-sprite" aria-hidden="true"></span><span class="faye-badge" id="fayeBadge" hidden></span></summary>
+        <summary aria-label="คุยกับ Faye (กดค้างแล้วลากเพื่อย้าย)"><span class="faye-stage" aria-hidden="true"></span><span class="faye-badge" id="fayeBadge" hidden></span></summary>
         <section class="faye-help-panel" aria-labelledby="fayeHelpHeading">
-          <h2 id="fayeHelpHeading">Faye</h2>
-          <p class="faye-reply" id="fayeReply" role="status"></p>
-          <div class="faye-news" id="fayeNews" hidden></div>
-          <form class="faye-find" id="fayeFind" role="search">
-            <input type="search" id="fayeFindInput" placeholder="ค้นหาลูกค้า / เบอร์ / สินค้า" aria-label="ค้นหาในคำสั่งซื้อทุกรอบ" autocomplete="off">
-            <button class="btn btn-primary btn-sm" type="submit">ค้นหา</button>
-          </form>
-          <div class="faye-sub">ไปที่</div>
-          <div class="faye-go" id="fayeGo"></div>
-          <div class="faye-sub">เคล็ดลับหน้านี้</div>
-          <div class="faye-topics" id="fayeTopics" aria-label="คำถามที่เลือกได้"></div>
-          <div class="faye-tools">
-            <button class="btn btn-ghost btn-sm" type="button" id="fayeMini">ย่อ Faye</button>
-            <button class="btn btn-ghost btn-sm" type="button" id="fayePause" aria-pressed="false">พักแอนิเมชัน</button>
-            <button class="btn btn-ghost btn-sm" type="button" id="fayeHome">กลับมุมขวาล่าง</button>
+          <div class="faye-head">
+            <button class="faye-back" type="button" id="fayeBack" aria-label="กลับเมนูหลัก" hidden>‹</button>
+            <h2 id="fayeHelpHeading">Faye</h2>
+            <span class="faye-where" id="fayeWhere"></span>
+          </div>
+          <div class="faye-chat">
+            <p class="faye-you" id="fayeYou" hidden></p>
+            <p class="faye-reply" id="fayeReply" role="status"></p>
+          </div>
+          <!-- Main menu -->
+          <div class="faye-view" data-view="main">
+            <button class="faye-menu-item" type="button" data-open="news"><span class="faye-ico">🔔</span><span class="faye-lbl">มีอะไรใหม่</span><span class="faye-count" id="fayeNewsCount" hidden></span><span class="faye-chev">›</span></button>
+            <button class="faye-menu-item" type="button" data-open="find"><span class="faye-ico">🔍</span><span class="faye-lbl">ค้นหาออเดอร์</span><span class="faye-chev">›</span></button>
+            <button class="faye-menu-item" type="button" data-open="go"><span class="faye-ico">🧭</span><span class="faye-lbl">ไปหน้าอื่น</span><span class="faye-chev">›</span></button>
+            <button class="faye-menu-item" type="button" data-open="tips"><span class="faye-ico">💡</span><span class="faye-lbl">ถามเรื่องหน้านี้</span><span class="faye-chev">›</span></button>
+            <button class="faye-menu-item" type="button" data-open="settings"><span class="faye-ico">⚙️</span><span class="faye-lbl">ตั้งค่า Faye</span><span class="faye-chev">›</span></button>
+          </div>
+          <!-- Sub-menus -->
+          <div class="faye-view" data-view="news" hidden><div class="faye-news" id="fayeNews"></div></div>
+          <div class="faye-view" data-view="find" hidden>
+            <form class="faye-find" id="fayeFind" role="search">
+              <input type="search" id="fayeFindInput" placeholder="ชื่อลูกค้า / เบอร์ / สินค้า" aria-label="ค้นหาในคำสั่งซื้อทุกรอบ" autocomplete="off">
+              <button class="btn btn-primary btn-sm" type="submit">ค้นหา</button>
+            </form>
+          </div>
+          <div class="faye-view" data-view="go" hidden><div class="faye-go" id="fayeGo"></div></div>
+          <div class="faye-view" data-view="tips" hidden><div class="faye-topics" id="fayeTopics" aria-label="คำถามที่เลือกได้"></div></div>
+          <div class="faye-view" data-view="settings" hidden>
+            <button class="faye-menu-item" type="button" id="fayeMini"><span class="faye-ico">🔎</span><span class="faye-lbl">ย่อ Faye</span></button>
+            <button class="faye-menu-item" type="button" id="fayePause" aria-pressed="false"><span class="faye-ico">⏸️</span><span class="faye-lbl">พักแอนิเมชัน</span></button>
+            <button class="faye-menu-item" type="button" id="fayeHome"><span class="faye-ico">↘️</span><span class="faye-lbl">กลับมุมขวาล่าง</span></button>
           </div>
         </section>
       </details>
@@ -147,7 +163,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.7/dist/umd/supabase.min.js" integrity="sha384-BmlQlKlDvXvKoxkn5OQuUo/aJQCTXeB+Kls6EccBmG4Kf8AXvp89RtO9MtPxP/r5" crossorigin="anonymous"></script>
 <script src="js/config.js?v=20261031u"></script>
-<script src="js/api.js?v=20261121c"></script>
+<script src="js/api.js?v=20261122b"></script>
 <script>
 // Guard: must be signed in to view the admin panel
 if (window.__sb) {
@@ -160,6 +176,7 @@ if (window.__sb) {
 <script src="js/couriers.js?v=20261031a"></script>
 <script src="js/thai-address.js?v=20261031c"></script>
 <script src="js/tags.js?v=20261113a"></script>
-<script src="js/admin.js?v=20261121b"></script>
+<script src="faye/faye.js?v=20261122c"></script>
+<script src="js/admin.js?v=20261122d"></script>
 </body>
 </html>
