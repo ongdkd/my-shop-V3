@@ -2604,7 +2604,7 @@ function openSheetsSync() {
     last.innerHTML = !v.at ? 'ยังไม่เคยอัปเดตชีต'
       : 'อัปเดตล่าสุด ' + escapeHtml(new Date(v.at).toLocaleString('th-TH', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })) +
         (v.by === 'auto' ? ' (อัตโนมัติ)' : '') + ' · ' +
-        (v.error ? '<span class="sync-bad">' + escapeHtml(v.error) + '</span>' : 'เพิ่ม ' + v.added + ' · จับคู่ ' + (v.matched || 0) + ' · แก้ ' + v.updated + ' แถว' + (v.created && v.created.length ? ' · แท็บใหม่ ' + escapeHtml(v.created.join(', ')) : ''));
+        (v.error ? '<span class="sync-bad">' + escapeHtml(v.error) + '</span>' : 'เพิ่ม ' + v.added + ' · จับคู่ ' + (v.matched || 0) + ' · แก้ ' + v.updated + ' แถว' + (v.shipped ? ' · จัดส่งตามชีต ' + v.shipped : '') + (v.created && v.created.length ? ' · แท็บใหม่ ' + escapeHtml(v.created.join(', ')) : ''));
   });
   openModal('&#x1F4E4; อัปเดตชีตสถานะ', '', function() {
     el('modalSave').disabled = true; el('modalSave').textContent = 'กำลังอัปเดต...';
@@ -2616,7 +2616,7 @@ function openSheetsSync() {
       el('modalSave').disabled = false; el('modalSave').textContent = 'อัปเดตชีตตอนนี้';
       if (res.status !== 'Success') { toast(res.message || 'อัปเดตชีตไม่สำเร็จ', 'error'); return; }
       closeModal();
-      toast('อัปเดตชีตแล้ว · เพิ่ม ' + res.added + ' · จับคู่ ' + (res.matched || 0) + ' · แก้ ' + res.updated + ' แถว' + (res.created && res.created.length ? ' · แท็บใหม่ ' + res.created.join(', ') : ''), 'success');
+      toast('อัปเดตชีตแล้ว · เพิ่ม ' + res.added + ' · จับคู่ ' + (res.matched || 0) + ' · แก้ ' + res.updated + ' แถว' + (res.shipped ? ' · จัดส่งตามชีต ' + res.shipped + ' รายการ' : '') + (res.created && res.created.length ? ' · แท็บใหม่ ' + res.created.join(', ') : ''), 'success');
     }).catch(function(e) {
       el('modalSave').disabled = false; el('modalSave').textContent = 'อัปเดตชีตตอนนี้';
       toast(e.message || 'บันทึกไม่สำเร็จ', 'error');
@@ -2635,7 +2635,11 @@ function drawSyncPreview(out, res) {
     table('แยกตามแท็บ', [['tab', 'แท็บ'], ['state', ''], ['orders', 'ออเดอร์เว็บ'], ['added', 'เพิ่ม'], ['matched', 'จับคู่'], ['updated', 'แก้']],
       p.tabs.map(function(t) { return { tab: t.tab, state: t.isNew ? 'แท็บใหม่' : '', orders: String(t.orders), added: String(t.added), matched: String(t.matched || 0), updated: String(t.updated) }; }), p.tabs.length);
   }
-  if (!res.added && !res.updated && !res.matched) { out.appendChild(div('slip-meta', '✓ ชีตตรงกับเว็บแล้ว ไม่มีอะไรต้องอัปเดต')); return; }
+  // Sheet → website: rows the shop marked shipped (จัดส่งแล้ว or a parcel number) for orders still open here
+  var ships = p.ships || [];
+  if (ships.length) out.appendChild(div('sync-sum', 'ชีตบอกว่าส่งแล้ว: จะทำเครื่องหมาย<strong>จัดส่งแล้วบนเว็บ ' + ships.length + ' รายการ</strong> (วันที่ส่ง = วันนี้)'));
+  table('ออเดอร์ที่จะเป็น "จัดส่งแล้ว" บนเว็บตามชีต', [['tab', 'แท็บ'], ['row', 'แถว'], ['name', 'ชื่อแอค'], ['product', 'สินค้า'], ['tracking', 'เลขพัสดุ']], ships, ships.length);
+  if (!res.added && !res.updated && !res.matched) { if (!ships.length) out.appendChild(div('slip-meta', '✓ ชีตตรงกับเว็บแล้ว ไม่มีอะไรต้องอัปเดต')); return; }
   if (p.headers.length) out.appendChild(div('slip-meta', 'เพิ่มหัวคอลัมน์: ' + escapeHtml(p.headers.join(' · '))));
   function table(title, heads, rows, total) {
     if (!rows.length) return;

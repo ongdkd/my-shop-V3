@@ -4,7 +4,9 @@
 // status and tracking number. Rows are found again by the order id in the
 // "รหัสเว็บ" column, so later runs update them. A row typed by hand for the same
 // customer + product is claimed instead of adding a second one (see plan.ts).
-// Edits made in the sheet to rows this function added are overwritten.
+// Edits made in the sheet to rows this function added are overwritten — except
+// shipping: a row marked จัดส่งแล้ว / given a parcel number in the sheet marks the
+// website's order shipped (any open order, also ones older than the "from" date).
 //
 // Called by admin (📤 in ประวัติจากชีต) or every 15 minutes by pg_cron with the
 // x-sync-key header (SHEETS_SYNC_KEY). Google access is a service account
@@ -82,7 +84,7 @@ const norm = (s: unknown) => String(s ?? "").trim().toLowerCase().replace(/^@+/,
 const num = (v: unknown) => Number(v) || 0;
 
 // The row the sheet shows for one order item
-function rowFor(o: Record<string, any>, listPaid: boolean, bill: Record<string, any> | undefined, billPaid: boolean): Want {
+function rowFor(o: Record<string, any>, listPaid: boolean, bill: Record<string, any> | undefined, billPaid: boolean, ro: boolean): Want {
   let status: string;
   if (o.status === "ยกเลิก") status = "ยกเลิก";
   else if (o.shipped_at) status = "จัดส่งแล้ว";
@@ -94,6 +96,8 @@ function rowFor(o: Record<string, any>, listPaid: boolean, bill: Record<string, 
   return {
     name: String(o.customer ?? "").replace(/\s*\n\s*/g, " "), channel: "เว็บไซต์", product: String(o.product ?? ""),
     qty: String(num(o.qty)), pay, status, tracking: String(o.tracking ?? ""), web: String(o.id),
+    // An order on a delivery bill is shipped through its bill, not from the sheet
+    open: !o.shipped_at && o.status !== "ยกเลิก" && !o.delivery_id, ro,
   };
 }
 
@@ -107,7 +111,10 @@ async function sync(db: SupabaseClient, dry = false) {
 
   const orders = await allRows(db, "orders",
     "id,customer,product,qty,pay_type,total,total_full,status,shipped_at,tracking,delivery_id,list_id,created_at",
-    (q) => { q = q.neq("remark", "POS"); return since ? q.gte("created_at", since + "T00:00:00+07:00") : q; });
+    (q) => q.neq("remark", "POS"));
+  // Orders older than "from" are paired with their rows too, but only to read shipping
+  const sinceAt = since ? new Date(since + "T00:00:00+07:00").getTime() : 0;
+  const isOld = (o: Record<string, any>) => new Date(o.created_at).getTime() < sinceAt;
   const payments = await allRows(db, "payments", "list_id,customer,delivery_id,created_at");
   const bills = await allRows(db, "deliveries", "id,sent_at,created_at");
   const listPaid = new Set<string>(), billPaid = new Set<string>();
@@ -119,7 +126,7 @@ async function sync(db: SupabaseClient, dry = false) {
   for (const o of orders) {
     const k = quarterKey(o.created_at);
     if (!byQuarter.has(k)) byQuarter.set(k, []);
-    byQuarter.get(k)!.push(rowFor(o, listPaid.has(o.list_id + "|" + norm(o.customer)), billById.get(o.delivery_id), billPaid.has(o.delivery_id)));
+    byQuarter.get(k)!.push(rowFor(o, listPaid.has(o.list_id + "|" + norm(o.customer)), billById.get(o.delivery_id), billPaid.has(o.delivery_id), isOld(o)));
   }
   if (!byQuarter.size) return { added: 0, updated: 0, matched: 0, created: [] as string[], preview: { rows: [], cells: [], matched: [], headers: [] } };
 
@@ -131,6 +138,8 @@ async function sync(db: SupabaseClient, dry = false) {
   const titles: string[] = (meta.sheets ?? []).map((s: any) => s.properties.title);
   const titleOf = new Map(titles.map((t) => [tabKey(t), t]));
   const created: string[] = [];
+  // A quarter with only old orders and no tab has nothing to read
+  for (const [k, list] of byQuarter) if (!titleOf.has(k) && list.every((w) => w.ro)) byQuarter.delete(k);
   const missing = [...byQuarter.keys()].filter((k) => !titleOf.has(k));
   if (missing.length && !dry) {
     await api(":batchUpdate", { method: "POST", body: JSON.stringify({
@@ -150,13 +159,23 @@ async function sync(db: SupabaseClient, dry = false) {
 
   // Newest quarter first, so a long preview starts with the current orders
   const wants = new Map([...byQuarter.entries()].reverse());
-  const { data, added, updated, matched, preview } = planSheet(tabs, wants);
+  const { data, added, updated, matched, ships, preview } = planSheet(tabs, wants);
+  const synced = orders.filter((o) => !isOld(o)).length;
 
-  if (dry) return { added, updated, matched, created, orders: orders.length, sheetId, preview };
+  if (dry) return { added, updated, matched, shipped: ships.length, created, orders: synced, sheetId, preview: { ...preview, ships } };
+  // Sheet → website: mark those orders shipped, one update per parcel. The sheet
+  // has no shipping date, so it is the moment the website learns of it.
+  const byParcel = new Map<string, string[]>();
+  for (const s of ships) byParcel.set(s.tracking, [...(byParcel.get(s.tracking) ?? []), s.id]);
+  for (const [tracking, ids] of byParcel) {
+    const { error } = await db.from("orders").update({ shipped_at: new Date().toISOString(), tracking, status: "" })
+      .in("id", ids).is("shipped_at", null);
+    if (error) throw new Error("ทำเครื่องหมายจัดส่งจากชีตไม่สำเร็จ: " + error.message);
+  }
   for (let i = 0; i < data.length; i += 2000) {
     await api("/values:batchUpdate", { method: "POST", body: JSON.stringify({ valueInputOption: "RAW", data: data.slice(i, i + 2000) }) });
   }
-  return { added, updated, matched, created, orders: orders.length, at: new Date().toISOString() };
+  return { added, updated, matched, shipped: ships.length, created, orders: synced, at: new Date().toISOString() };
 }
 
 // ── Purchase Orders LOG (admin only): this sheet is the record, nothing is kept in the database ──

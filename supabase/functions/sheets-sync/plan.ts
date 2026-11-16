@@ -4,6 +4,9 @@
 //   - a row typed by hand has the same customer + product → the row is claimed:
 //     its id goes in as "k:<id>" and the shop's wording stays
 //   - neither → a new row at the end of the order's quarter tab
+// Shipping is the one thing the sheet decides: a row that says จัดส่งแล้ว or
+// carries a parcel number, for an order the website still has open, comes back
+// in `ships` and the website marks that order shipped (see index.ts).
 
 export const MONTHS = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"];
 // Thai time (UTC+7) decides the quarter
@@ -35,7 +38,10 @@ export const FIELDS = [
   { id: "web", find: ["รหัสเว็บ"], head: "รหัสเว็บ (ห้ามแก้)" },
 ] as const;
 export type Field = typeof FIELDS[number]["id"];
-export type Want = Record<Field, string>;
+// open: not shipped / cancelled / on a delivery bill, so the sheet may ship it.
+// ro: ordered before the "from" date — its row is only read, never written or added.
+export type Want = Record<Field, string> & { open?: boolean; ro?: boolean };
+export type Ship = { id: string; tracking: string; name: string; product: string; tab: string; row: string };
 export type SheetTab = { title: string; values: string[][]; isNew: boolean };
 
 const CLAIMED = "k:";
@@ -54,6 +60,7 @@ export function planSheet(tabs: SheetTab[], wants: Map<string, Want[]>) {
   const preview = { rows: [] as Record<string, string>[], cells: [] as Record<string, string>[], matched: [] as Record<string, string>[], headers: [] as string[],
     tabs: [] as { tab: string; orders: number; added: number; updated: number; matched: number; isNew: boolean }[] };
   let added = 0, updated = 0, matched = 0;
+  const ships: Ship[] = [];
 
   const info = tabs.map((t) => {
     const head = (t.values[0] ?? []).map((h) => String(h ?? ""));
@@ -94,15 +101,29 @@ export function planSheet(tabs: SheetTab[], wants: Map<string, Want[]>) {
     }
   }
 
+  // "Shipped" as the shop writes it: the status, or a parcel number anywhere in the row
+  const sheetShip = (t: Tab, i: number) => {
+    const no = (t.values[i] ?? []).map((v) => String(v ?? "").trim()).find((v) => TRACKING_RE.test(v)) ?? "";
+    return no || (t.col.status >= 0 && /^จัดส่งแล้ว/.test(cell(t, i, "status").trim())) ? { tracking: no } : null;
+  };
+
   // Claim rows: the order's own tab first, across all orders, then the quarters
   // next to it (an order placed late June is often typed into the July tab)
   const claims = new Map<string, { t: Tab; i: number }>();
-  const take = (want: Want, ok: (t: Tab) => boolean) => {
+  const take = (want: Want, ok: (t: Tab, i: number) => boolean) => {
     if (byId.has(want.web) || claims.has(want.web)) return;
     const list = hand.get(matchKey(want.name, want.product));
-    const at = list ? list.findIndex((r) => ok(r.t)) : -1;
+    const at = list ? list.findIndex((r) => ok(r.t, r.i)) : -1;
     if (at >= 0) claims.set(want.web, list!.splice(at, 1)[0]);
   };
+  // Same customer + product bought twice: the order already shipped on the website
+  // takes the row that says shipped, so the open order is not paired with it
+  for (const [k, list] of wants) {
+    const near = quarterIndex(k);
+    for (const want of list) {
+      if (want.status === "จัดส่งแล้ว") take(want, (t, i) => near >= 0 && t.index >= 0 && Math.abs(t.index - near) <= 1 && !!sheetShip(t, i));
+    }
+  }
   for (const [k, list] of wants) for (const want of list) take(want, (t) => t.key === k);
   for (const [k, list] of wants) {
     const near = quarterIndex(k);
@@ -134,6 +155,14 @@ export function planSheet(tabs: SheetTab[], wants: Map<string, Want[]>) {
     for (const want of list) {
       const known = byId.get(want.web);
       const claim = claims.get(want.web);
+      // Shipped in the sheet, still open on the website → the website follows,
+      // and from here on the row is treated as the shipped order it now is
+      const at = claim ?? known, sent = at && want.open ? sheetShip(at.t, at.i) : null;
+      if (at && sent) {
+        ships.push({ id: want.web, tracking: sent.tracking, name: want.name, product: want.product, tab: at.t.title, row: String(at.i + 1) });
+        want.status = "จัดส่งแล้ว"; want.tracking = sent.tracking; want.open = false;
+      }
+      if (want.ro) continue;
       if (claim) {
         ensure(claim.t, "web");
         put(claim.t, "web", claim.i, CLAIMED + want.web);
@@ -159,11 +188,11 @@ export function planSheet(tabs: SheetTab[], wants: Map<string, Want[]>) {
         const r = own.next++;
         for (const f of FIELDS) put(own, f.id, r, want[f.id]);
         added++;
-        if (preview.rows.length < PREVIEW_MAX) preview.rows.push({ tab: own.title, row: String(r + 1), ...want });
+        if (preview.rows.length < PREVIEW_MAX) preview.rows.push({ tab: own.title, row: String(r + 1), ...Object.fromEntries(FIELDS.map((f) => [f.id, want[f.id]])) });
       }
     }
     preview.tabs.push({ tab: own.title, orders: list.length, added: added - before.added,
       updated: updated - before.updated, matched: matched - before.matched, isNew: own.isNew });
   }
-  return { data, added, updated, matched, preview };
+  return { data, added, updated, matched, ships, preview };
 }
