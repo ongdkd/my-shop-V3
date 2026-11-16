@@ -127,7 +127,18 @@ function loadGiftBase() {
     try { var res = JSON.parse(r); if (res.status === 'Success' && sheet === selectedSheetId) { giftBase = { yuan: res.yuan, full: res.full }; renderGiftBox(); renderGiftNudge(); } } catch (e) {}
   }).customerListTotals(sheet, name);
 }
-function giftMoney(n, cur) { return cur === 'CNY' ? '¥' + (Number(n) || 0).toLocaleString('th-TH', { maximumFractionDigits: 2 }) : shortPrice(n); }
+// Customers pay in baht, so a ¥ amount also shows roughly what it is in baht:
+// the middle ฿-per-¥ of this round's products, rounded up to the next ฿10.
+function bahtPerYuan() {
+  var r = products.filter(function(p) { return Number(p.yuan) > 0 && Number(p.price) > 0; })
+    .map(function(p) { return p.price / p.yuan; }).sort(function(a, b) { return a - b; });
+  return r.length ? r[Math.floor(r.length / 2)] : 0;
+}
+function giftMoney(n, cur, short) {
+  if (cur !== 'CNY') return shortPrice(n);
+  var yuan = '¥' + (Number(n) || 0).toLocaleString('th-TH', { maximumFractionDigits: 2 }), rate = bahtPerYuan();
+  return rate ? 'ประมาณ ' + shortPrice(Math.ceil(n * rate / 10) * 10) + (short ? '' : ' (' + yuan + ')') : yuan;
+}
 // Cart box: ✓ earned / "ซื้ออีก ¥38 รับ …" with a progress bar / sold out
 function renderGiftBox() {
   var box = document.getElementById('cartGifts'); if (!box) return;
@@ -148,7 +159,7 @@ function renderGiftBox() {
       more = '<div class="gift-more">อีก ' + escapeHtml(giftMoney(g.min - r.have % g.min, g.currency)) + ' รับเพิ่มอีกชิ้น</div>';
     }
     html += '<div class="gift-row ' + cls + '"><div class="gift-line"><span class="gift-name">' + escapeHtml(g.name) +
-      ' <small>(' + (g.every ? 'ทุก ๆ ' : 'ครบ ') + escapeHtml(giftMoney(g.min, g.currency)) + ')</small></span><span class="gift-state">' + escapeHtml(right) + '</span></div>' +
+      ' <small>(' + (g.every ? 'ทุก ๆ ' : 'ครบ ') + escapeHtml(giftMoney(g.min, g.currency, true)) + ')</small></span><span class="gift-state">' + escapeHtml(right) + '</span></div>' +
       (cls === 'next' || more ? '<div class="gift-bar"><i style="width:' + pct + '%"></i></div>' : '') + more + '</div>';
   });
   box.innerHTML = html; box.style.display = '';
@@ -188,7 +199,7 @@ function renderGiftNudge() {
   if (!next) {
     text = got.length ? '&#x1F389; ได้ของแถมครบแล้ว ขอบคุณนะคะ &#x1F496;' : '';
   } else {
-    var g = next.row.rule, name = '<b>' + escapeHtml(g.name) + '</b>', gap = '<b>' + escapeHtml(giftMoney(next.gap, g.currency)) + '</b>';
+    var g = next.row.rule, name = '<b>' + escapeHtml(g.name) + '</b>', gap = '<b>' + escapeHtml(giftMoney(next.gap, g.currency, true)) + '</b>';
     pct = Math.round(next.pct * 100);
     if (next.row.n > 0) text = 'เย้! ได้ ' + name + ' แล้ว ×' + next.row.n + ' &#x1F495; อีก ' + gap + ' รับเพิ่มอีกชิ้น';
     else if (!cart.length && next.row.have <= 0) text = '&#x1F380; ช้อปครบ ' + gap + ' รับ ' + name + ' ฟรีเลยน้า';
@@ -527,6 +538,21 @@ function setPendingOpt(s2,v){var p=findProductBySid(s2);if(p)p.pendingOption=v||
 function setPendingDep(s2,v){
   var p=findProductBySid(s2); if(!p) return;
   p.pendingDeposit=!!v;
+  if(Number(p.deposit)>0){
+    var mine=cart.filter(function(i){return i.productId===p.id;});
+    if(mine.some(function(i){return i.isDeposit!==p.pendingDeposit;})){
+      mine.forEach(function(i){i.isDeposit=p.pendingDeposit;i.unitPrice=i.isDeposit?i.depositPrice:i.fullPrice;});
+      // Two lines that now match (same option, same price type) become one
+      cart=cart.filter(function(i){
+        if(i.productId!==p.id) return true;
+        var first=mine.filter(function(m){return m.option===i.option;})[0];
+        if(first===i) return true;
+        first.qty+=i.qty; return false;
+      });
+      updateCartBadge();
+      showMessage(p.pendingDeposit?'เปลี่ยนสินค้าในตะกร้าเป็นมัดจำแล้วค่ะ':'เปลี่ยนสินค้าในตะกร้าเป็นราคาเต็มแล้วค่ะ','success');
+    }
+  }
   var row=document.querySelector('#productTable .atcbtn[data-psid="'+s2+'"]'); row=row&&row.closest('tr'); if(!row) return;
   var t=row.querySelector('.dep-toggle'); if(t){t.setAttribute('aria-pressed',p.pendingDeposit?'true':'false');t.classList.toggle('on',p.pendingDeposit);}
   var b=row.querySelector('.atcbtn');
@@ -559,13 +585,13 @@ function renderSummaryUI(cache) {
   document.getElementById('summaryContent').innerHTML=html;
   document.getElementById('totalPrice').textContent=cache.hasDeposit?formatCurrency(cache.total)+' (มัดจำ)':formatCurrency(cache.total);
   var form=document.getElementById('orderForm'); form.style.display='none'; form.classList.remove('is-ready');
-  document.getElementById('summary').style.display='flex'; setFabVisible(false);
+  document.getElementById('summary').style.display='flex'; setFabVisible(false); document.body.classList.add('on-summary');
 }
 
 function editOrder(){
   summaryCache=null;
   var form=document.getElementById('orderForm'); form.style.display='block'; form.classList.add('is-ready');
-  document.getElementById('summary').style.display='none'; setFabVisible(true);
+  document.getElementById('summary').style.display='none'; setFabVisible(true); document.body.classList.remove('on-summary');
 }
 
 function confirmOrder(){
@@ -627,6 +653,7 @@ function confirmDiscardCart(){
 }
 
 function resetForm(){
+  document.body.classList.remove('on-summary');
   cart=[];updateCartBadge();
   var s=document.getElementById('productSearch');if(s)s.value='';
   for(var i=0;i<products.length;i++){products[i].pendingOption=null;products[i].pendingDeposit=false;}
@@ -886,8 +913,9 @@ function selectOrderList(sheetId){
   if(!sheetId) return;
   var name=(document.getElementById('customerName').value||'').trim();
   var nameErr=customerNameError(name);
-  if(nameErr){showMessage(nameErr,'error');highlightInputError('customerName');return;}
   var phone=(document.getElementById('customerPhone').value||'').trim();
+  if(!name&&!phone){showMessage('กรุณากรอกชื่อลูกค้าและเบอร์โทรก่อนนะคะ','error');highlightInputError('customerPhone');highlightInputError('customerName');return;}
+  if(nameErr){showMessage(nameErr,'error');highlightInputError('customerName');return;}
   if(!phone){showMessage('กรุณากรอกเบอร์โทรก่อนเลือกรายการสั่งซื้อนะคะ','error');highlightInputError('customerPhone');return;}
   if(!isValidPhone(phone)){showMessage('เบอร์โทรไม่ถูกต้อง (06x/08x/09x 10 หลัก)','error');highlightInputError('customerPhone');return;}
   // Remember validated details so returning customers skip retyping
@@ -951,7 +979,7 @@ function buildSideMenuItems(){
 
 function switchOrderList(sheetId){
   if(!confirmDiscardCart()) return;
-  closeSideMenu(); cart=[];updateCartBadge();
+  closeSideMenu(); cart=[];updateCartBadge(); document.body.classList.remove('on-summary');
   var s=document.getElementById('productSearch');if(s)s.value='';
   summaryCache=null;currentOrder=null;
   document.getElementById('orderForm').style.display='none';

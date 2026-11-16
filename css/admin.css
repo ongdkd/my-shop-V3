@@ -1200,3 +1200,14 @@ body.touch-dragging *{-webkit-touch-callout:none;}
 @media (max-width:640px){.tag-word{flex-direction:column;align-items:stretch;}.tag-word-acts{justify-content:flex-start;}.tag-word-acts .btn{min-height:38px;}.prod-search{max-width:none;flex-basis:100%;}}
 .gift-ed-every{display:flex;align-items:center;gap:6px;margin-top:6px;font-size:0.78rem;color:var(--text-2);cursor:pointer;min-height:28px;}
 .gift-ed-every input{width:16px;height:16px;accent-color:var(--primary);}
+/* Phones — Orders page: the round chips explain themselves, so drop their heading
+   and tighten the gaps; the first order then starts higher on the screen */
+@media(max-width:560px){
+  .content:has(.ord-ctl) .section-card:has(>.slider-wrap)>.section-card-header{display:none;}
+  .content:has(.ord-ctl) .section-card:has(>.slider-wrap){padding-top:10px;padding-bottom:10px;margin-bottom:10px;}
+  .ord-ctl{gap:8px;padding:10px;margin-bottom:10px;}
+}
+/* Touch: a bigger tick box in the pick-many lists (the whole row is tappable too) */
+@media (hover:none),(pointer:coarse){.stm-row input{width:22px;height:22px;margin-top:1px;}}
+.olist-more{display:block;width:100%;margin-top:10px;min-height:44px;}
+.olist-more:disabled{border:none;background:none;color:var(--text-3);}

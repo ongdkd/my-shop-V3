@@ -242,8 +242,8 @@
         owed += restOf(o);
       });
       var mine = ctx.pays.filter(function (p) { return p.listId === l.id && !p.deliveryId; });
-      var sent = mine.length ? '✓ ส่งสลิปแล้ว ' + mine.length + ' ครั้ง' : 'ยังไม่ได้ส่งสลิป';
-      head.appendChild(h('div', 'st-card-meta' + (mine.length ? ' ok' : ''), tab.id === 'done' || tab.id === 'ship' ? pcs + ' ชิ้น · ' + baht(sum) : sent));
+      var sent = mine.length ? '✓ ส่งสลิปแล้ว ' + mine.length + ' ครั้ง' : tab.id === 'pay' ? 'ยังไม่ได้ส่งสลิป' : owed > 0 ? '✓ ชำระมัดจำแล้ว' : '✓ ชำระแล้ว';
+      head.appendChild(h('div', 'st-card-meta' + (mine.length || tab.id !== 'pay' ? ' ok' : ''), tab.id === 'done' || tab.id === 'ship' ? pcs + ' ชิ้น · ' + baht(sum) : sent));
       card.appendChild(head);
       // One parcel for the whole card: its status and tracking show once, under the items
       var parcels = {};

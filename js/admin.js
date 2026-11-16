@@ -1126,6 +1126,7 @@ function renderOrderLists() {
  
     var img = document.createElement('img');
     img.src = cdnThumb(item.cover || item.image, 600) || PLACEHOLDER; img.className = 'ol-card-img';
+    img.loading = 'lazy'; img.decoding = 'async'; // covers further down (old, hidden rounds) load only when scrolled to
     img.onerror = function() { this.src = PLACEHOLDER; };
     card.appendChild(img);
  
@@ -1737,7 +1738,7 @@ function buildItemSummary(orders) {
 }
 
 function renderOrdersTable(orders, holder, isAllView) {
-  holder.innerHTML = '';
+  holder.innerHTML = ''; _ordSearch = null;
   if (!orders || !orders.length) { holder.appendChild(div('state-empty', '&#x1F4ED; ยังไม่มีคำสั่งซื้อค่ะ')); return; }
 
   // Sort by timestamp descending so newest are at the top
@@ -1902,8 +1903,8 @@ function renderOrdersTable(orders, holder, isAllView) {
   }
 
   var list = div('olist'); list.id = 'ordersDataTable';
-  groups.forEach(function(g) {
-    var o0 = g.first, sum = 0, pcs = 0, owed = 0, search = [o0.customer, o0.remark, o0.shopName || ''];
+  function drawCard(g) {
+    var o0 = g.first, sum = 0, pcs = 0, owed = 0;
     var gc = div('ocard');
 
     var head = div('ocard-head');
@@ -1930,7 +1931,7 @@ function renderOrdersTable(orders, holder, isAllView) {
     // Each item has one status (shipped + tracking, cancelled, a custom
     // label, or waiting). When all items share one, the card shows it once.
     var stKeys = {};
-    g.items.forEach(function(o) { stKeys[statusKey(o)] = true; if (o.tracking) search.push(o.tracking); if (o.status) search.push(o.status); });
+    g.items.forEach(function(o) { stKeys[statusKey(o)] = true; });
     var oneStatus = Object.keys(stKeys).length === 1;
 
     var items = div('ocard-items');
@@ -1938,7 +1939,6 @@ function renderOrdersTable(orders, holder, isAllView) {
       var isDep = o.payType === 'Deposit';
       sum += Number(o.total) || 0; if (o.payType !== 'Gift') pcs += Number(o.qty) || 0;
       if (isDep && Number(o.totalFull) > Number(o.total)) owed += Number(o.totalFull) - Number(o.total);
-      search.push(o.product, tagSearchWords(o.product, o.listId));
       var it = div('oitem');
       if (!isAllView) {
         var sel = document.createElement('input'); sel.type = 'checkbox'; sel.className = 'order-sel';
@@ -2000,10 +2000,41 @@ function renderOrdersTable(orders, holder, isAllView) {
       (function(items) { return function() { openStatusModal(items); }; })(g.items)));
     gc.appendChild(ship);
 
-    gc.setAttribute('data-search', search.join(' ').toLowerCase());
-    list.appendChild(gc);
-  });
+    return gc;
+  }
+  // Cards are drawn ORD_PAGE at a time (a thousand at once is slow on phones):
+  // the next lot is added when the bottom comes near, or on a tap. Search looks
+  // through every order, drawn or not, then draws the matches the same way.
+  function groupSearch(g) {
+    if (g.search) return g.search;
+    var s = [g.first.customer, g.first.remark, g.first.shopName || ''];
+    g.items.forEach(function(o) { s.push(o.tracking || '', o.status || '', o.product, tagSearchWords(o.product, o.listId)); });
+    return (g.search = s.join(' ').toLowerCase());
+  }
+  var shown = groups, drawn = 0, refreshDelBtn = null;
+  var more = makeBtn('btn btn-ghost olist-more', '', function() { drawMore(); });
+  function drawMore(all) {
+    var end = all ? shown.length : Math.min(shown.length, drawn + ORD_PAGE), frag = document.createDocumentFragment();
+    for (; drawn < end; drawn++) frag.appendChild(drawCard(shown[drawn]));
+    list.appendChild(frag);
+    var left = shown.length - drawn;
+    more.style.display = left || !shown.length ? '' : 'none';
+    more.disabled = !left;
+    more.textContent = left ? 'แสดงอีก ' + Math.min(ORD_PAGE, left) + ' · เหลือ ' + left + ' คำสั่งซื้อ' : 'ไม่พบคำสั่งซื้อที่ค้นหา';
+  }
+  _ordSearch = function(term) {
+    term = String(term || '').toLowerCase().trim();
+    shown = term ? groups.filter(function(g) { return groupSearch(g).indexOf(term) !== -1; }) : groups;
+    drawn = 0; list.innerHTML = ''; drawMore();
+    if (el('orderSelAll')) el('orderSelAll').checked = false;
+    if (refreshDelBtn) refreshDelBtn();
+  };
+  drawMore();
   card.appendChild(list);
+  card.appendChild(more);
+  if (window.IntersectionObserver) {
+    new IntersectionObserver(function(en) { if (en[0].isIntersecting && drawn < shown.length) drawMore(); }, { rootMargin: '800px' }).observe(more);
+  }
 
   // Bottom bar (single list only — delete addresses that list's rows): select all + delete
   if (!isAllView) {
@@ -2022,7 +2053,7 @@ function renderOrdersTable(orders, holder, isAllView) {
   holder.appendChild(card);
 
   if (!isAllView) {
-    var refreshDelBtn = function() {
+    refreshDelBtn = function() {
       var n = list.querySelectorAll('.order-sel:checked').length;
       delSelBtn.disabled = !n;
       delSelBtn.innerHTML = '&#x1F5D1; ลบที่เลือก' + (n ? ' (' + n + ')' : '');
@@ -2036,9 +2067,10 @@ function renderOrdersTable(orders, holder, isAllView) {
     };
     card.addEventListener('change', function(e) {
       if (e.target.id === 'orderSelAll') {
-        // Select-all only applies to cards visible under the current search filter
+        // Select-all covers every order matching the current search, so the rest are drawn first
+        // ponytail: draws them all at once; fine for a rare bulk delete, slow past a few thousand
+        if (e.target.checked) drawMore(true);
         list.querySelectorAll('.ocard').forEach(function(c) {
-          if (c.style.display === 'none') return;
           c.querySelectorAll('.order-sel').forEach(function(cb) { cb.checked = e.target.checked; });
         });
       } else if (e.target.classList.contains('ocard-sel')) {
@@ -5025,7 +5057,10 @@ function confirmRemoveOrder(items, who, paid) {
   });
 }
 
+var ORD_PAGE = 100;
+var _ordSearch = null; // set by the order cards view, which searches its data instead of what is drawn
 function filterOrderRows(term) {
+  if (_ordSearch && document.querySelector('#ordersDataTable.olist')) return _ordSearch(term);
   term = term.toLowerCase();
   var rows = document.querySelectorAll('#ordersDataTable .ocard, #ordersDataTable .isum-row');
   for (var i = 0; i < rows.length; i++) {
@@ -8859,15 +8894,42 @@ function openPOSMode(listItem) {
 // NOTIFICATIONS — new web orders and slips. Checked every minute while the
 // page is open; the bell counts what arrived since the panel was last
 // opened. Desktop pop-ups + a sound once the admin allows them.
+// "Read up to" is saved per admin in app_settings (notif_seen:<email>), so
+// opening the bell on one device clears it on the others at their next check.
 // ════════════════════════════════
 var NOTIF_POLL_MS = 60000;
 var NOTIF_KEEP = 60;
 var _notif = { events: [], newest: '', loaded: false, title: document.title, audio: null };
-function notifSeen(v) {
-  try { if (v === undefined) return localStorage.getItem('adminNotifSeen') || ''; localStorage.setItem('adminNotifSeen', v); }
-  catch (e) { return ''; }
-}
 function notifNewer(a, b) { return !b || new Date(a) > new Date(b); }
+// This device's copy (instant), kept in step with the shared one below
+function notifSeen(v) {
+  try {
+    if (v === undefined) return localStorage.getItem('adminNotifSeen') || '';
+    if (!notifNewer(v, localStorage.getItem('adminNotifSeen') || '')) return;
+    localStorage.setItem('adminNotifSeen', v);
+  } catch (e) { return ''; }
+}
+var _notifKey = new Promise(function(resolve) {
+  google.script.run.withSuccessHandler(function(email) { resolve(email ? 'notif_seen:' + String(email).toLowerCase() : ''); })
+    .withFailureHandler(function() { resolve(''); }).getAdminEmail();
+});
+// Shared mark → this device, when another device read further
+function notifPull() {
+  return _notifKey.then(function(key) {
+    if (!key) return;
+    return apiCall('adminGetSetting', key).then(function(res) {
+      var at = res.status === 'Success' && res.value && res.value.at;
+      if (at) notifSeen(at);
+    });
+  });
+}
+// This device read further → shared mark (only ever moves forward)
+function notifPush() {
+  notifPull().then(function() { return _notifKey; }).then(function(key) {
+    var at = notifSeen();
+    if (key && at) apiCall('adminSaveSetting', key, { at: at });
+  });
+}
 function notifText(e) {
   if (e.type === 'order') return e.customer + ' สั่ง ' + e.pieces + ' ชิ้น · ' + baht(e.total);
   if (e.type === 'po_arrived') return 'ของสั่งซื้อถึงไทยแล้ว · ' + e.product + ' · ' + e.tracking;
@@ -8885,11 +8947,13 @@ function timeAgo(d) {
 
 function notifCheck() {
   if (document.hidden) return;
-  // First load: the last 7 days; then only what is newer than the newest seen
-  apiCall('adminGetNotifications', _notif.newest).then(function(res) {
+  // First load: the last 7 days; then only what is newer than the newest seen.
+  // The shared read mark comes along, so a bell cleared elsewhere clears here.
+  Promise.all([apiCall('adminGetNotifications', _notif.newest), notifPull()]).then(function(all) {
+    var res = all[0];
     if (res.status !== 'Success') return;
     var fresh = (res.events || []).filter(function(e) { return notifNewer(e.at, _notif.newest); });
-    if (!_notif.loaded && !notifSeen()) notifSeen(res.now); // first visit ever: start from now, not 7 days back
+    if (!_notif.loaded && !notifSeen()) { notifSeen(res.now); notifPush(); } // first visit ever: start from now, not 7 days back
     if (_notif.loaded && fresh.length) notifAnnounce(fresh);
     _notif.events = fresh.concat(_notif.events).slice(0, NOTIF_KEEP);
     if (fresh.length) _notif.newest = fresh[0].at;
@@ -8978,7 +9042,7 @@ function openNotif() {
   el('notifPanel').hidden = false;
   el('notifBtn').setAttribute('aria-expanded', 'true');
   // Everything listed now counts as read (the panel keeps the highlight until reopened)
-  if (_notif.events.length) notifSeen(_notif.events[0].at);
+  if (_notif.events.length) { notifSeen(_notif.events[0].at); notifPush(); }
   drawNotifBadge();
 }
 function closeNotif() {

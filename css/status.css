@@ -1,4 +1,7 @@
 /* Customer status / payment page. Colours and inputs come from index.css. */
+/* index.css locks html/body to one screen on phones (the shop scrolls inside its
+   own panels); this page scrolls as a normal page, so undo that here. */
+html, body { height: auto; min-height: 100%; overflow: visible; }
 .st-page { max-width: 720px; margin: 0 auto; padding: 20px 16px 48px; background: var(--surface); min-height: 100vh; min-height: 100dvh; }
 .st-back { display: inline-block; font-size: 0.82rem; color: var(--primary); text-decoration: none; font-weight: 600; margin-bottom: 10px; }
 .st-title { font-size: 1.5rem; font-weight: 700; line-height: 1.25; }

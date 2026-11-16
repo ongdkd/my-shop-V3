@@ -17,6 +17,13 @@ var PLACEHOLDER = 'https://www.svgrepo.com/show/508699/landscape-placeholder.svg
 // ENTRY POINT (called by parent admin page)
 // openPOS(products, listName, listId)
 // ══════════════════════════════════
+// Every product in a round is named "<round name> - <item>"; on the small cards
+// and cart rows only the item part fits, and it is the part that differs.
+function shortName(n) {
+  n = String(n || '');
+  if (!POS_LIST_NAME || n.indexOf(POS_LIST_NAME) !== 0) return n;
+  return n.slice(POS_LIST_NAME.length).replace(/^[\s\-–—:·]+/, '') || n;
+}
 function openPOS(products, listName, listId) {
   POS_PRODUCTS = (products || []).filter(function(p){ return p.status === 'Open'; });
   POS_LIST_NAME = listName || 'รายการสั่งซื้อ';
@@ -252,7 +259,7 @@ function renderProducts(prods) {
 
     var name = document.createElement('div');
     name.className = 'pos-prod-name';
-    name.textContent = p.name;
+    name.textContent = shortName(p.name);
     body.appendChild(name);
 
     var price = document.createElement('div');
@@ -627,7 +634,7 @@ function renderSideCart(totalQty, totalPrice) {
   POS_CART.forEach(function(item, idx) {
     var row = document.createElement('div'); row.className = 'pos-side-item';
     var info = document.createElement('div'); info.className = 'pos-side-info';
-    var nm = document.createElement('div'); nm.className = 'pos-side-name'; nm.textContent = item.product.name; info.appendChild(nm);
+    var nm = document.createElement('div'); nm.className = 'pos-side-name'; nm.textContent = shortName(item.product.name); info.appendChild(nm);
     var sub = document.createElement('div'); sub.className = 'pos-side-sub';
     sub.textContent = fmt(item.product.price) + (item.option ? ' · ' + item.option : ''); info.appendChild(sub);
     row.appendChild(info);
@@ -700,7 +707,7 @@ function renderSummary() {
 
     var info = document.createElement('div');
     info.className = 'sum-item-info';
-    var nm = document.createElement('div'); nm.className = 'sum-item-name'; nm.textContent = item.product.name; info.appendChild(nm);
+    var nm = document.createElement('div'); nm.className = 'sum-item-name'; nm.textContent = shortName(item.product.name); info.appendChild(nm);
     var pr = document.createElement('div'); pr.className = 'sum-item-price';
     pr.textContent = fmt(item.product.price) + (item.option ? ' · ' + item.option : '');
     info.appendChild(pr);
