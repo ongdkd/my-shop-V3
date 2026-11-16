@@ -56,7 +56,7 @@ button:focus-visible,a:focus-visible,.nav-item:focus-visible{outline:2px solid v
 .faye-help summary{display:block;list-style:none;cursor:pointer;}
 .faye-help summary::-webkit-details-marker{display:none;}
 .faye-help :focus-visible{outline:2px solid var(--text);outline-offset:3px;}
-.faye-sprite{--faye-size:120px;display:block;width:var(--faye-size);height:var(--faye-size);background:url('../img/faye-assistant.png?v=3') 0 0 / calc(4 * var(--faye-size)) calc(8 * var(--faye-size)) no-repeat;image-rendering:pixelated;}
+.faye-sprite{--faye-size:120px;display:block;width:var(--faye-size);height:var(--faye-size);background:url('../img/faye-assistant.png?v=4') 0 0 / calc(4 * var(--faye-size)) calc(8 * var(--faye-size)) no-repeat;image-rendering:pixelated;}
 .faye-help-panel{position:absolute;bottom:100%;right:0;width:min(330px,calc(100vw - 34px - env(safe-area-inset-right)));max-height:min(65dvh,calc(100dvh - 150px - env(safe-area-inset-bottom)));overflow:auto;padding:15px 16px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface);color:var(--text);box-shadow:var(--shadow-md);}
 .faye-help-panel h2{font-size:1rem;margin:0 0 8px;}
 .faye-reply{margin:0 0 10px;padding:8px 10px;border-radius:10px;background:var(--bg);font-size:.875rem;line-height:1.5;}
