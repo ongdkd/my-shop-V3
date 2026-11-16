@@ -348,3 +348,7 @@ button,.pos-prod-card,.qty-step-btn,.sum-qty-btn{touch-action:manipulation;}
   .pos-scroll-pad{height:16px;}
   .pos-search-bar{max-width:calc(100% - 354px);}
 }
+
+/* Shop QR: big enough to scan from across the counter */
+.pay-qr-wrap{width:min(280px,100%);height:auto;padding:0;overflow:hidden;}
+.pay-qr-wrap img{width:100%!important;height:auto!important;border-radius:0!important;}

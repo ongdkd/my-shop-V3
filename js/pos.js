@@ -839,7 +839,7 @@ function renderPayment() {
   var qrWrap = document.createElement('div');
   qrWrap.className = 'pay-qr-wrap';
   var qrImg = document.createElement('img');
-  qrImg.src = 'https://i.imgur.com/LDTUtnz.jpeg';
+  qrImg.src = 'img/pay-qr.png';
   qrImg.alt = 'QR ชำระเงินของร้าน';
   qrImg.style.cssText = 'width:168px;height:auto;border-radius:8px;display:block;margin:0 auto;';
   qrWrap.appendChild(qrImg);

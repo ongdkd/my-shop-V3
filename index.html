@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Mitr:wght@400;500;600&family=Noto+Sans+Thai:wght@300;400;500;600;700&family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://unpkg.com/@dotlottie/player-component@latest/dist/dotlottie-player.mjs" type="module"></script>
-<link rel="stylesheet" href="css/index.css?v=20261120a">
+<link rel="stylesheet" href="css/index.css?v=20261122a">
 <link rel="stylesheet" href="css/theme-pink.css?v=20261102c">
 </head>
 <body>
@@ -201,7 +201,11 @@
     </div>
     <div class="card payment-info">
       <h3>&#x1F4B3; ช่องทางการชำระเงิน</h3>
-      <img src="https://i.imgur.com/LDTUtnz.jpeg" alt="QR Code" class="qr-code" loading="lazy" decoding="async">
+      <a href="img/pay-qr.png" download="kagayaku-pay-qr.png" class="qr-link" aria-label="บันทึกรูป QR โอนเงิน">
+        <img src="img/pay-qr.png" alt="QR พร้อมเพย์ของร้าน สำหรับโอนเงิน" class="qr-code" width="570" height="565" decoding="async">
+      </a>
+      <p class="qr-hint">แตะ / กดค้างที่รูปเพื่อบันทึก แล้วเลือก “สแกนจากรูป” ในแอปธนาคาร</p>
+      <a class="btn-send-slip" id="sendSlipBtn" href="status.html">&#x1F4E4; โอนแล้ว? ส่งสลิปตรงนี้เลย</a>
       <ul>
         <li>TrueMoney: 0802927553</li>
         <li>ธนาคารกสิกร: 094-8-44664-2</li>
@@ -221,6 +225,6 @@
 <script src="js/config.js?v=20261031u"></script>
 <script src="js/api.js?v=20261121c"></script>
 <script src="js/tags.js?v=20261113a"></script>
-<script src="js/index.js?v=20261120a"></script>
+<script src="js/index.js?v=20261122a"></script>
 </body>
 </html>

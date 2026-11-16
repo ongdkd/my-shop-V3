@@ -447,3 +447,9 @@ body.has-gift-nudge .table-container { padding-bottom: 130px; }
 .full-line[hidden] { display: none; }
 .full-line b { color: var(--text); font-weight: 700; }
 #summaryFullLine { margin: 8px 2px 0; }
+
+/* Order complete: big shop QR (tap to save) and a button straight to the slip form */
+.qr-link { display: block; width: min(280px, 100%); margin: 14px auto 6px; border-radius: var(--radius-md); overflow: hidden; background: #fff; box-shadow: var(--shadow-md); }
+.qr-link .qr-code { width: 100%; height: auto; margin: 0; box-shadow: none; border-radius: 0; -webkit-touch-callout: default; }
+.qr-hint { text-align: center; font-size: 0.76rem; color: var(--text-3); margin: 0 0 12px; }
+.btn-send-slip { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 50px; margin: 4px 0 14px; padding: 0 18px; border-radius: 999px; background: linear-gradient(135deg, #F27FB0 0%, #E4639B 55%, #D9548E 100%); color: #fff; font-weight: 700; font-size: 0.95rem; text-decoration: none; box-shadow: 0 8px 22px rgba(228, 99, 155, 0.32); }

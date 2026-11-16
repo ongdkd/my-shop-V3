@@ -135,6 +135,10 @@
   }
 
   // ── Results ───────────────────────────────────────────────
+  // ?pay=<listId> (from the order-complete page): open the slip form for that order once
+  var autoPay = new URLSearchParams(location.search).get('pay');
+  if (autoPay) current.tab = 'pay';
+
   function render(res) {
     var out = $('stResult'); out.textContent = '';
     var orders = res.orders || [], pays = res.payments || [];
@@ -267,6 +271,7 @@
         var btns = h('div', 'st-foot-btns');
         btns.appendChild(payButton('🧾 ใบสั่งซื้อ', function () { openOrderSlip(l, sum, pcs); }, true));
         btns.appendChild(payButton('ส่งสลิป', function () { openPay({ listId: l.id, title: l.name, amount: sum }); }));
+        if (autoPay && l.id === autoPay) { autoPay = null; setTimeout(function () { openPay({ listId: l.id, title: l.name, amount: sum }); }, 0); }
         foot.appendChild(btns);
       } else if (tab.id === 'arrive') {
         foot.appendChild(amountBox(owed > 0 ? 'ส่วนที่เหลือ (ชำระเมื่อของถึงไทย) + ค่าส่ง' : 'ชำระครบแล้ว · รอค่าส่งเมื่อของถึงไทย',

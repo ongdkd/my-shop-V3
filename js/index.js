@@ -656,6 +656,8 @@ function onOrderSuccess(gifted){
     html+='</div>';
   }
   document.getElementById('orderSummary').innerHTML=html;
+  // Paid already? The status page opens the slip form for this order
+  document.getElementById('sendSlipBtn').href='status.html?name='+encodeURIComponent(currentOrder.customerName)+'&pay='+encodeURIComponent(selectedSheetId||'');
   document.getElementById('orderTotal').textContent=(hasDeposit?'ยอดรวมทั้งสิ้น: '+formatCurrency(total)+' (มัดจำ)':'ยอดรวมทั้งสิ้น: '+formatCurrency(total));
   showMessage('ยืนยันคำสั่งซื้อเรียบร้อยแล้ว','success');
   setTimeout(downloadReceipt,1500);
