@@ -242,7 +242,7 @@ function renderProducts(prods) {
     if (p.image) {
       var img = document.createElement('img');
       img.className = 'pos-prod-img';
-      img.src = cdnThumb(p.image, 400);
+      img.src = cdnThumb(p.image, 600); // cards are ~170px wide on a 3x phone screen
       img.loading = 'lazy';
       img.decoding = 'async';
       img.onerror = function() { this.src = PLACEHOLDER; };

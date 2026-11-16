@@ -435,6 +435,7 @@ function onProductsFetched(fetched) {
   document.getElementById('loading').style.display='none';
   var form=document.getElementById('orderForm'); form.style.display='block'; form.classList.add('is-ready');
   addSearchListeners();
+  renderGiftNudge(); // the baht amount needs this round's prices, which have only now arrived
 }
 
 function populateProductTable() {
@@ -462,7 +463,7 @@ function populateProductTable() {
     var row=tbody.insertRow();
     row.className = (soldOut ? 'sold-out' : '') + (hasDep ? '' : ' no-dep');
     row.innerHTML=
-      '<td class="prod-img-cell"><img src="'+escapeHtml(thumbImg(p.image, 120))+'" alt="'+escapeHtml(p.name||'')+'" class="product-image" loading="lazy" width="50" height="50" data-fb="1">'+(soldOut?'<span class="sold-out-tag">หมดแล้ว</span>':'')+'</td>'+
+      '<td class="prod-img-cell"><img src="'+escapeHtml(thumbImg(p.image, 600))+'" alt="'+escapeHtml(p.name||'')+'" class="product-image" loading="lazy" width="50" height="50" data-fb="1">'+(soldOut?'<span class="sold-out-tag">หมดแล้ว</span>':'')+'</td>'+
       '<td class="prod-name-cell"><span class="prod-name">'+escapeHtml(p.name||'')+'</span>'+optHtml+'</td>'+
       '<td class="center-align prod-price-cell">'+formatCurrency(Number(p.price)||0)+'</td>'+
       '<td class="center-align prod-dep-cell">'+(hasDep
