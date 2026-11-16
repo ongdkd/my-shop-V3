@@ -1819,7 +1819,8 @@ function renderOrdersTable(orders, holder, isAllView) {
   statRow.appendChild(makeStat('คำสั่งซื้อ', orders.length, 'primary'));
   statRow.appendChild(makeStat('ลูกค้า', Object.keys(uCust).length, ''));
   statRow.appendChild(makeStat('ชิ้น', totalItems, ''));
-  statRow.appendChild(makeStat('ยอดรวม', fmt(totalRev), 'success'));
+  // Green total = the whole order value: what was paid + what deposits still owe
+  statRow.appendChild(makeStat('ยอดรวม', fmt(totalRev + depOwed), 'success'));
   if (depSum > 0) {
     statRow.appendChild(makeStat('ยอดรวม (มัดจำ)', fmt(depSum), ''));
     statRow.appendChild(makeStat('ส่วนที่เหลือ (ยังไม่เก็บ)', fmt(depOwed), ''));
