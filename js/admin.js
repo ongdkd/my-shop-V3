@@ -98,6 +98,7 @@ if (menuBtn) menuBtn.onclick = toggleSidebar;
     if (document.getElementById('modal').classList.contains('open')) return;
     var t = e.touches[0], open = sidebar.classList.contains('open');
     if (!open && t.clientX > 32 && (scrollsSideways(e.target) || e.target.closest('input,textarea,select,[draggable=true]'))) return;
+    if (e.target.closest('#faye')) return; // carrying Faye is not a swipe
     s = { x: t.clientX, y: t.clientY, at: Date.now(), open: open };
   }, { passive: true });
   document.addEventListener('touchend', function(e) {
@@ -129,24 +130,36 @@ var _modalMousedownTarget = null;
 document.getElementById('modal').addEventListener('mousedown', function(e) { _modalMousedownTarget = e.target; });
 document.getElementById('modal').addEventListener('mouseup', function(e) { if (e.target === this && _modalMousedownTarget === this) closeModal(); _modalMousedownTarget = null; });
 document.getElementById('modalSave').onclick = function() { if (modalSaveFn) modalSaveFn(); };
+// ════════════════════════════════
+// FAYE — the shop's little helper. Shown on every admin screen; pick him up
+// and drop him anywhere (the spot is remembered on this device). Tap him for:
+// what's new, a customer / product search, shortcuts to every screen and
+// tips for the screen you're on. He speaks up when a new order or slip arrives.
+// ════════════════════════════════
+var fayeBox = el('faye');
 var fayeHelp = el('fayeHelp');
 var fayeSprite = fayeHelp.querySelector('.faye-sprite');
 var fayeReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+// Sprite rows: 0 blink, 1 wave, 2 music, 3 phone, 4 nap, 5 snack, 6 arms up, 7 sway
 var fayeIdleLoops = [[0, 1800], [2, 900], [3, 1200], [4, 2200], [5, 1500], [6, 1400], [7, 1600]];
-var fayeLastIdle = -1, fayeMotion, fayePaused = false;
+var fayeLastIdle = -1, fayeMotion, fayePaused = false, fayeHeld = false;
+function fayeStore(k, v) {
+  try { if (v === undefined) return localStorage.getItem(k); if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) {}
+  return null;
+}
 
 function playFaye(row, duration, iterations) {
   var size = fayeSprite.offsetWidth;
   var y = (-row * size) + 'px';
+  if (fayeMotion) fayeMotion.cancel();
   fayeMotion = fayeSprite.animate(
     [{ backgroundPosition: '0px ' + y }, { backgroundPosition: (-4 * size) + 'px ' + y }],
     { duration: duration, iterations: iterations, easing: 'steps(4, end)' }
   );
   return fayeMotion;
 }
-
 function playFayeIdle() {
-  if (fayeHelp.hidden || fayeHelp.open || document.hidden || fayeReducedMotion.matches || fayePaused) return;
+  if (fayeHeld || fayeHelp.open || document.hidden || fayeReducedMotion.matches || fayePaused) return;
   var pick = Math.floor(Math.random() * (fayeIdleLoops.length - (fayeLastIdle < 0 ? 0 : 1)));
   if (fayeLastIdle >= 0 && pick >= fayeLastIdle) pick++;
   fayeLastIdle = pick;
@@ -155,25 +168,199 @@ function playFayeIdle() {
   var repeats = min + Math.floor(Math.random() * (max - min + 1));
   playFaye(loop[0], loop[1], repeats).onfinish = playFayeIdle;
 }
-
 function resetFayeMotion(wave) {
   if (fayeMotion) { fayeMotion.cancel(); fayeMotion = null; }
-  if (!fayeHelp.hidden && !document.hidden && !fayeReducedMotion.matches && !fayePaused && wave) playFaye(1, 600, 1);
+  if (!document.hidden && !fayeReducedMotion.matches && !fayePaused && wave) playFaye(1, 600, 1).onfinish = playFayeIdle;
   else playFayeIdle();
 }
 
-fayeHelp.addEventListener('toggle', function() { resetFayeMotion(fayeHelp.open); });
+// ── Where he stands: saved as a share of the free space, so it survives
+// rotating the phone or resizing the window ──
+function fayePlace() {
+  var pos = null;
+  try { pos = JSON.parse(fayeStore('fayePos') || 'null'); } catch (e) {}
+  if (pos) {
+    var r = fayeBox.getBoundingClientRect();
+    fayeBox.style.left = Math.round(pos.x * Math.max(0, innerWidth - r.width)) + 'px';
+    fayeBox.style.top = Math.round(pos.y * Math.max(0, innerHeight - r.height)) + 'px';
+    fayeBox.style.right = 'auto'; fayeBox.style.bottom = 'auto';
+  } else {
+    fayeBox.style.left = fayeBox.style.top = fayeBox.style.right = fayeBox.style.bottom = '';
+  }
+  fayeSide();
+}
+// Open the panel (and the speech bubble) toward the roomier side of the screen
+function fayeSide() {
+  var r = fayeBox.getBoundingClientRect();
+  fayeBox.classList.toggle('below', r.top + r.height / 2 < innerHeight / 2);
+  fayeBox.classList.toggle('left', r.left + r.width / 2 < innerWidth / 2);
+}
+window.addEventListener('resize', fayePlace);
+
+// ── Pick up and drop ──
+(function() {
+  var summary = fayeHelp.querySelector('summary'), d = null, dragged = false;
+  summary.addEventListener('pointerdown', function(e) {
+    if (e.button) return;
+    var r = fayeBox.getBoundingClientRect();
+    d = { id: e.pointerId, x: e.clientX, y: e.clientY, dx: e.clientX - r.left, dy: e.clientY - r.top, w: r.width, h: r.height, live: false };
+  });
+  summary.addEventListener('pointermove', function(e) {
+    if (!d || e.pointerId !== d.id) return;
+    if (!d.live) {
+      if (Math.abs(e.clientX - d.x) < 6 && Math.abs(e.clientY - d.y) < 6) return;
+      d.live = true; fayeHeld = true;
+      try { summary.setPointerCapture(d.id); } catch (x) {}
+      fayeHelp.open = false; fayeBubbleHide();
+      fayeBox.classList.add('held');
+      if (!fayeReducedMotion.matches) playFaye(6, 700, Infinity); // arms up while carried
+    }
+    var x = Math.min(Math.max(0, e.clientX - d.dx), innerWidth - d.w);
+    var y = Math.min(Math.max(0, e.clientY - d.dy), innerHeight - d.h);
+    fayeBox.style.left = x + 'px'; fayeBox.style.top = y + 'px';
+    fayeBox.style.right = 'auto'; fayeBox.style.bottom = 'auto';
+  });
+  function drop(e) {
+    if (!d || e.pointerId !== d.id) return;
+    var was = d; d = null;
+    if (!was.live) return;
+    dragged = true; fayeHeld = false;
+    fayeBox.classList.remove('held');
+    var r = fayeBox.getBoundingClientRect();
+    fayeStore('fayePos', JSON.stringify({
+      x: innerWidth > r.width ? r.left / (innerWidth - r.width) : 0,
+      y: innerHeight > r.height ? r.top / (innerHeight - r.height) : 0
+    }));
+    fayeSide();
+    resetFayeMotion(true); // a little wave on landing
+  }
+  summary.addEventListener('pointerup', drop);
+  summary.addEventListener('pointercancel', drop);
+  // A drop must not also open the panel
+  summary.addEventListener('click', function(e) { if (dragged) { e.preventDefault(); dragged = false; } });
+  summary.addEventListener('contextmenu', function(e) { e.preventDefault(); });
+})();
+
+// ── Speech bubble (works while the panel is closed) ──
+var fayeBubbleTimer = null;
+function fayeSay(text, ms) {
+  var b = el('fayeBubble');
+  b.textContent = text; b.hidden = false;
+  fayeSide();
+  clearTimeout(fayeBubbleTimer);
+  fayeBubbleTimer = setTimeout(fayeBubbleHide, ms || 6000);
+  if (!fayeReducedMotion.matches && !fayePaused && !fayeHelp.open) playFaye(1, 600, 2).onfinish = playFayeIdle;
+}
+function fayeBubbleHide() { clearTimeout(fayeBubbleTimer); el('fayeBubble').hidden = true; }
+el('fayeBubble').addEventListener('click', function() { fayeBubbleHide(); fayeHelp.open = true; });
+
+// ── What's in the panel ──
+var FAYE_TIPS = {
+  common: [['ย้าย Faye ยังไง?', 'กดที่ตัวผมค้างไว้แล้วลากไปวางตรงไหนก็ได้เลยครับ ผมจะจำที่นั้นไว้ในเครื่องนี้']],
+  orderlists: [
+    ['สร้างรอบใหม่ยังไง?', 'กด “+ สร้างรายการใหม่” ที่แถบด้านบนครับ'],
+    ['จัดลำดับรอบยังไง?', 'กดค้างที่พื้นที่ว่างของการ์ด แล้วลากไปวางบนการ์ดอีกใบ ลำดับนี้คือลำดับที่ลูกค้าเห็นในหน้าร้านครับ'],
+    ['ซ่อนรอบจากลูกค้า?', 'กดปุ่มแว่นดำบนการ์ด รอบจะหายจากหน้าร้าน แต่หลังร้านยังเห็นและใช้งานได้ครับ']
+  ],
+  orders: [
+    ['หาออเดอร์เร็ว ๆ', 'พิมพ์ชื่อลูกค้า เบอร์ ชื่อสินค้า หรือแท็ก (เช่น ชื่อตัวละคร) ในช่องค้นหาได้เลยครับ หรือใช้ช่องค้นหาของผมก็ได้'],
+    ['ลูกค้าไม่จ่าย ลบบิลยังไง?', 'กด “🗑 ลบบิล” บนการ์ดของลูกค้าคนนั้น สินค้าจะคืนกลับเข้าสต็อกให้ครับ'],
+    ['ดูเฉพาะช่วงวันที่?', 'กดปุ่ม วันนี้ / 7 วัน / เดือนนี้ หรือเลือกวันที่ “ตั้งแต่ … ถึง …” ด้านบนครับ']
+  ],
+  products: [
+    ['จัดลำดับสินค้า?', 'กดค้างที่พื้นที่ว่างของสินค้า แล้วลากไปวางบนอีกชิ้นครับ'],
+    ['ค้นหาสินค้า?', 'ช่องค้นหาด้านบนหาได้ทั้งชื่อและแท็กครับ']
+  ],
+  status: [['ใส่ของลงบิลยังไง?', 'ลากรายการไปวางในบิล บนมือถือให้กดค้างแล้วลากครับ']],
+  slips: [['สลิปอยู่ผิดออเดอร์?', 'ลากสลิปไปวางบนออเดอร์หรือบิลที่ถูก หรือกดปุ่ม “ย้าย” ครับ']],
+  tags: [['คำที่ยังไม่รู้จักคืออะไร?', 'คำในชื่อสินค้าที่ยังไม่มีแท็ก กด “+ แท็ก” เพื่อสร้างใหม่ “= แท็ก” เพื่อเป็นอีกชื่อของแท็กเดิม หรือ “ข้าม” ถ้าไม่ใช่คำสำคัญครับ']]
+};
+function fayeGreeting() {
+  var h = new Date().getHours();
+  return h < 11 ? 'อรุณสวัสดิ์ครับ' : h < 17 ? 'สวัสดีตอนบ่ายครับ' : 'สวัสดีตอนเย็นครับ';
+}
+function fayeFill() {
+  var unread = typeof notifUnread === 'function' && _notif && _notif.loaded ? notifUnread() : 0;
+  el('fayeReply').textContent = fayeGreeting() + ' ' + (unread ? 'มีเรื่องใหม่ ' + unread + ' เรื่องครับ' : 'ตอนนี้ยังไม่มีอะไรใหม่ครับ ให้ผมช่วยอะไรดี?');
+  // What's new: the latest unread notifications
+  var news = el('fayeNews'); news.innerHTML = '';
+  if (unread) {
+    var seen = notifSeen();
+    _notif.events.filter(function(e) { return notifNewer(e.at, seen); }).slice(0, 3).forEach(function(e) {
+      var row = div('faye-news-item'); row.textContent = notifText(e);
+      row.appendChild(div('faye-news-time', escapeHtml(timeAgo(e.at))));
+      news.appendChild(row);
+    });
+    var all = makeBtn('btn btn-ghost btn-sm', 'ดูการแจ้งเตือนทั้งหมด', function() { fayeHelp.open = false; el('notifBtn').click(); });
+    all.type = 'button'; news.appendChild(all);
+  }
+  news.hidden = !unread;
+  // Shortcuts to every other screen, from the sidebar's own list
+  var go = el('fayeGo'); go.innerHTML = '';
+  document.querySelectorAll('.nav-item[data-panel]').forEach(function(n) {
+    var p = n.getAttribute('data-panel');
+    if (p === currentPanel) return;
+    var b = makeBtn('faye-go-btn', '', function() { fayeHelp.open = false; switchPanel(p); });
+    b.type = 'button'; b.textContent = n.textContent.trim(); go.appendChild(b);
+  });
+  var shop = document.createElement('a'); shop.className = 'faye-go-btn'; shop.href = 'index.html'; shop.target = '_blank'; shop.rel = 'noopener';
+  shop.textContent = '🛍 เปิดหน้าร้าน'; go.appendChild(shop);
+  // Tips for this screen
+  var tips = el('fayeTopics'); tips.innerHTML = '';
+  (FAYE_TIPS[currentPanel] || []).concat(FAYE_TIPS.common).forEach(function(t) {
+    var b = makeBtn('btn btn-ghost btn-sm', '', function() { el('fayeReply').textContent = t[1]; });
+    b.type = 'button'; b.textContent = t[0]; tips.appendChild(b);
+  });
+  el('fayeMini').textContent = fayeBox.classList.contains('mini') ? 'ขยาย Faye' : 'ย่อ Faye';
+}
+// Badge on Faye: unread count (kept in step with the bell)
+function fayeBadge() {
+  var n = typeof notifUnread === 'function' && _notif && _notif.loaded ? notifUnread() : 0, b = el('fayeBadge');
+  b.textContent = n > 9 ? '9+' : n; b.hidden = !n;
+}
+
+// Search: open all orders and type the words into that page's search box
+el('fayeFind').addEventListener('submit', function(e) {
+  e.preventDefault();
+  var q = el('fayeFindInput').value.trim(); if (!q) return;
+  fayeHelp.open = false;
+  selectedSheetId = 'ALL'; selectedSheetName = 'รวมทุกรายการ';
+  switchPanel('orders');
+  var tries = 0;
+  (function fill() {
+    var inp = document.querySelector('#content .search-row input');
+    if (inp && document.querySelector('#ordersDataTable')) { inp.value = q; filterOrderRows(q); inp.focus(); return; }
+    if (++tries < 60) setTimeout(fill, 250);
+  })();
+});
+
+fayeHelp.addEventListener('toggle', function() {
+  if (fayeHelp.open) { fayeBubbleHide(); fayeSide(); fayeFill(); }
+  resetFayeMotion(fayeHelp.open);
+});
 el('fayePause').addEventListener('click', function() {
   fayePaused = !fayePaused;
   this.setAttribute('aria-pressed', String(fayePaused));
+  this.textContent = fayePaused ? 'เล่นแอนิเมชัน' : 'พักแอนิเมชัน';
   resetFayeMotion(false);
 });
-fayeHelp.addEventListener('click', function(e) {
-  var topic = e.target.closest('[data-faye-reply]');
-  if (topic) el('fayeReply').textContent = topic.dataset.fayeReply;
+el('fayeMini').addEventListener('click', function() {
+  var mini = !fayeBox.classList.contains('mini');
+  fayeBox.classList.toggle('mini', mini);
+  fayeStore('fayeMini', mini ? '1' : null);
+  this.textContent = mini ? 'ขยาย Faye' : 'ย่อ Faye';
+  fayePlace(); resetFayeMotion(false);
+});
+el('fayeHome').addEventListener('click', function() {
+  fayeStore('fayePos', null); fayePlace(); resetFayeMotion(true);
 });
 fayeReducedMotion.addEventListener('change', function() { resetFayeMotion(false); });
 document.addEventListener('visibilitychange', function() { resetFayeMotion(false); });
+// Tap outside closes his panel
+document.addEventListener('pointerdown', function(e) { if (fayeHelp.open && !fayeBox.contains(e.target)) fayeHelp.open = false; });
+if (fayeStore('fayeMini') === '1') fayeBox.classList.add('mini');
+fayePlace();
+resetFayeMotion(false);
 
 // Escape closes the active admin controls, then Faye's help.
 document.addEventListener('keydown', function(e) {
@@ -904,9 +1091,7 @@ function closeModal() {
 
 function switchPanel(panel) {
   currentPanel = panel;
-  fayeHelp.hidden = panel !== 'orderlists';
-  if (fayeHelp.hidden) fayeHelp.open = false;
-  resetFayeMotion(false);
+  fayeHelp.open = false; // Faye stays on every screen; his panel closes on the way
   // Keep the URL in sync; replace on first load so back exits cleanly
   if (location.hash !== '#/' + panel) {
     if (!location.hash) history.replaceState(null, '', '#/' + panel);
@@ -1966,6 +2151,7 @@ function renderOrdersTable(orders, holder, isAllView) {
   }
 
   var list = div('olist'); list.id = 'ordersDataTable';
+  masonry(list);
   function drawCard(g) {
     var o0 = g.first, sum = 0, pcs = 0, owed = 0;
     var gc = div('ocard');
@@ -5126,6 +5312,30 @@ function confirmRemoveOrder(items, who, paid) {
 
 var ORD_PAGE = 100;
 var _ordSearch = null; // set by the order cards view, which searches its data instead of what is drawn
+// Masonry for a card grid: each card spans as many thin grid rows as it is tall,
+// so a short card no longer leaves a hole beside a tall one. The cards keep their
+// order in the page (search, select-all and drag still see a plain list). Only
+// active where the CSS makes the list a grid (wide screens).
+function masonry(list) {
+  if (!window.ResizeObserver) return;
+  function fit(card) {
+    var cs = getComputedStyle(list);
+    if (cs.display !== 'grid') { card.style.gridRowEnd = ''; return; }
+    var row = parseFloat(cs.gridAutoRows) || 4, gap = parseFloat(cs.getPropertyValue('--masonry-gap')) || 12;
+    card.style.gridRowEnd = 'span ' + Math.max(1, Math.ceil((card.getBoundingClientRect().height + gap) / row));
+  }
+  var ro = new ResizeObserver(function(entries) { entries.forEach(function(e) { fit(e.target); }); });
+  function watch(n) { if (n.nodeType === 1) { ro.observe(n); fit(n); } }
+  Array.prototype.forEach.call(list.children, watch);
+  new MutationObserver(function(ms) {
+    ms.forEach(function(m) {
+      Array.prototype.forEach.call(m.addedNodes, watch);
+      Array.prototype.forEach.call(m.removedNodes, function(n) { if (n.nodeType === 1) ro.unobserve(n); });
+    });
+  }).observe(list, { childList: true });
+  // The column width changes the heights; the observer catches that too
+}
+
 function filterOrderRows(term) {
   if (_ordSearch && document.querySelector('#ordersDataTable.olist')) return _ordSearch(term);
   term = term.toLowerCase();
@@ -9055,11 +9265,13 @@ function drawNotifBadge() {
   c.hidden = !n;
   el('notifBtn').setAttribute('aria-label', n ? 'การแจ้งเตือน ' + n + ' รายการใหม่' : 'การแจ้งเตือน');
   document.title = (n ? '(' + n + ') ' : '') + _notif.title;
+  fayeBadge();
 }
 
 function notifAnnounce(fresh) {
   var first = notifText(fresh[0]) + (fresh.length > 1 ? ' และอีก ' + (fresh.length - 1) + ' รายการ' : '');
   toast('🔔 ' + first, 'success');
+  fayeSay(first, 7000);
   if (_notif.audio) {
     try {
       var o = _notif.audio.createOscillator(), g = _notif.audio.createGain();

@@ -472,8 +472,9 @@
   // is only asked for with the final payment (a delivery bill)
   function openPay(target) {
     current.listId = target.listId; current.deliveryId = target.deliveryId || '';
-    current.slip = ''; current.ref = '';
+    current.slip = ''; current.ref = ''; current.payload = ''; current.due = target.amount || 0;
     $('payForm').reset();
+    $('payAmount').readOnly = false; $('payTime').readOnly = false;
     $('payTitle').textContent = target.address ? 'ส่งสลิป / ที่อยู่จัดส่ง' : 'ส่งสลิปโอนเงิน';
     $('payList').textContent = target.title + ' · ' + current.name;
     if (target.amount > 0) $('payAmount').value = Math.round(target.amount * 100) / 100;
@@ -558,7 +559,7 @@
         var d = c.getContext('2d').getImageData(0, 0, c.width, c.height);
         var code = jsQR(d.data, d.width, d.height, { inversionAttempts: i === sizes.length - 1 ? 'attemptBoth' : 'dontInvert' });
         var ref = code && code.data ? slipRef(code.data) : '';
-        if (ref) return ref;
+        if (ref) { current.payload = code.data; return ref; }
       }
       return '';
     }, function () { throw new Error('โหลดตัวอ่าน QR ไม่สำเร็จ กรุณาตรวจอินเทอร์เน็ตแล้วเลือกรูปใหม่'); });
@@ -570,6 +571,11 @@
     var prev = $('paySlipPreview');
     if (!f) { prev.hidden = true; return; }
     $('paySend').disabled = true;
+    // A new slip starts over: the amount and time are open again until it is checked
+    current.payload = '';
+    $('payAmount').readOnly = false; $('payTime').readOnly = false;
+    if (current.due > 0) $('payAmount').value = Math.round(current.due * 100) / 100;
+    $('payTime').value = localNow();
     $('payRef').textContent = 'กำลังอ่านสลิป...';
     loadImage(f).then(function (img) {
       current.slip = compress(img);
@@ -578,9 +584,10 @@
       if (!current.slip) throw new Error('รูปใหญ่เกินไป กรุณาครอปให้เหลือเฉพาะสลิป');
       return readQR(img).then(function (ref) {
         current.ref = ref;
-        $('payRef').textContent = ref ? '✓ เลขอ้างอิง ' + ref
+        $('payRef').textContent = ref ? 'กำลังตรวจสลิปกับธนาคาร...'
           : '✗ ไม่พบ QR ของสลิป — กรุณาใช้รูปสลิปจากแอปธนาคาร (แคปหน้าจอเต็ม ไม่ครอป QR มุมสลิปออก)';
         $('payRef').classList.toggle('bad', !ref);
+        return ref ? checkSlip(ref) : null;
       });
     }).catch(function (e) {
       $('payRef').textContent = '';
@@ -590,6 +597,42 @@
       $('paySend').disabled = !current.ref;
     });
   });
+
+  // Ask the bank about the slip: the real amount and time fill the form and can't be
+  // changed. A slip that is not a transfer to the shop, or is less than what is owed,
+  // can't be sent. If the check itself can't run, the database has the last word.
+  function bkkTime(iso) {
+    var d = new Date(iso); d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+    return d.toISOString().slice(0, 16);
+  }
+  // Slips already checked while this page is open: picking the same slip again
+  // (another try, or to fix the address) uses the earlier answer
+  var slipChecked = {};
+  function checkSlip(ref) {
+    var payload = current.payload;
+    var ask = slipChecked[payload] ? Promise.resolve(slipChecked[payload]) : call('verifySlip', payload);
+    return ask.then(function (res) {
+      if (res.status === 'Success') slipChecked[payload] = res;
+      if (current.ref !== ref) return; // another slip was picked meanwhile
+      var note = $('payRef');
+      if (res.status !== 'Success') {
+        if (res.code === 'slip') { current.ref = ''; note.textContent = '✗ ' + res.message; note.classList.add('bad'); }
+        else { note.textContent = '✓ เลขอ้างอิง ' + ref; note.classList.remove('bad'); }
+        return;
+      }
+      $('payAmount').value = Math.round(res.amount * 100) / 100; $('payAmount').readOnly = true;
+      $('payTime').value = bkkTime(res.date); $('payTime').readOnly = true;
+      var when = new Date(res.date).toLocaleString('th-TH', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+      if (current.due > 0 && res.amount < current.due - 0.01) {
+        current.ref = '';
+        note.textContent = '✗ ยอดในสลิป ' + baht(res.amount) + ' น้อยกว่ายอดที่ต้องโอน ' + baht(current.due) + ' กรุณาโอนให้ครบแล้วส่งสลิปใหม่';
+        note.classList.add('bad');
+        return;
+      }
+      note.textContent = '✓ ตรวจกับธนาคารแล้ว · ' + baht(res.amount) + ' · ' + when + (res.sender ? ' · จาก ' + res.sender : '');
+      note.classList.remove('bad');
+    });
+  }
 
   $('payCancel').onclick = function () { $('payDialog').close(); };
   // Tap an account number to copy it (digits only, ready to paste in a bank app)

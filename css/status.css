@@ -122,3 +122,5 @@ html, body { height: auto; min-height: 100%; overflow: visible; }
 .st-slip-img { display: block; width: 100%; max-height: 58dvh; object-fit: contain; margin-bottom: 14px; border: 1.5px solid var(--border); border-radius: var(--radius-md); background: #fff; -webkit-touch-callout: default; }
 .st-slip { overflow-y: auto; }
 a.st-btn { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
+/* Amount and time come from the bank once the slip is checked */
+.st-field input[readonly] { background: var(--surface-2); color: var(--text-2); }

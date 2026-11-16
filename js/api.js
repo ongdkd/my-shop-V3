@@ -749,6 +749,19 @@
       } catch (e) { return e.__json || err(e.message || e); }
     },
 
+    // Status page: ask the bank about a slip (verify-slip Edge Function → SlipOK).
+    // { amount, date, sender } when it is a real transfer to the shop; an error with
+    // code 'slip' when the slip is not acceptable, 'service' when the check can't run.
+    verifySlip: async function (payload) {
+      try {
+        requireSb();
+        var r = await sb.functions.invoke('verify-slip', { body: { payload: String(payload || '') } });
+        if (r.error || !r.data) return JSON.stringify({ status: 'Error', code: 'service', message: 'ตรวจสลิปไม่ได้ในขณะนี้' });
+        if (!r.data.ok) return JSON.stringify({ status: 'Error', code: r.data.code || 'slip', message: r.data.message || 'สลิปไม่ผ่านการตรวจ' });
+        return ok({ amount: r.data.amount, date: r.data.date, sender: r.data.sender || '', ref: r.data.ref });
+      } catch (e) { return JSON.stringify({ status: 'Error', code: 'service', message: String(e.message || e) }); }
+    },
+
     // What this customer already ordered in a list (¥ and full ฿), so the cart can
     // count gifts on the whole round. Zeros when unknown.
     customerListTotals: async function (sheetId, name) {

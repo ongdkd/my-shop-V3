@@ -14,7 +14,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&family=Sora:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-<link rel="stylesheet" href="css/admin.css?v=faye4">
+<link rel="stylesheet" href="css/admin.css?v=20261121b">
 </head>
 <body>
 <div id="toast" role="status" aria-live="polite"></div>
@@ -118,26 +118,36 @@
     <div class="content" id="content">
       <div class="state-loading"><div class="spinner"></div> กำลังโหลด...</div>
     </div>
-    <details id="fayeHelp" class="faye-help" hidden>
-      <summary aria-label="คุยกับ Faye"><span class="faye-sprite" aria-hidden="true"></span></summary>
-      <section class="faye-help-panel" aria-labelledby="fayeHelpHeading">
-        <h2 id="fayeHelpHeading">Faye</h2>
-        <p class="faye-reply" id="fayeReply" role="status">สวัสดีครับ วันนี้ให้ผมช่วยเรื่องไหนดี?</p>
-        <div class="faye-topics" aria-label="คำถามที่เลือกได้">
-          <button class="btn btn-ghost btn-sm" type="button" data-faye-reply="กด “สร้างรายการใหม่” ที่แถบด้านบนเพื่อเปิดรอบใหม่ครับ">สร้างรอบใหม่ยังไง?</button>
-          <button class="btn btn-ghost btn-sm" type="button" data-faye-reply="กด “คำสั่งซื้อ” บนการ์ดของรอบนั้น หรือไปหน้าคำสั่งซื้อแล้วเลือก “ทุกรายการ (รวม)” ครับ">ดูออเดอร์ที่ไหน?</button>
-          <button class="btn btn-ghost btn-sm" type="button" data-faye-reply="ไปที่หน้า “จัดการสถานะ” เพื่อดูความคืบหน้าการจัดส่งครับ">เช็กการจัดส่งยังไง?</button>
-        </div>
-        <div class="faye-links"><a href="#/orders">คำสั่งซื้อ</a><a href="#/status">จัดการสถานะ</a></div>
-        <button class="btn btn-ghost btn-sm faye-pause" type="button" id="fayePause" aria-pressed="false">พักแอนิเมชัน</button>
-      </section>
-    </details>
+    <div id="faye" class="faye">
+      <div class="faye-bubble" id="fayeBubble" role="status" hidden></div>
+      <details id="fayeHelp" class="faye-help">
+        <summary aria-label="คุยกับ Faye (กดค้างแล้วลากเพื่อย้าย)"><span class="faye-sprite" aria-hidden="true"></span><span class="faye-badge" id="fayeBadge" hidden></span></summary>
+        <section class="faye-help-panel" aria-labelledby="fayeHelpHeading">
+          <h2 id="fayeHelpHeading">Faye</h2>
+          <p class="faye-reply" id="fayeReply" role="status"></p>
+          <div class="faye-news" id="fayeNews" hidden></div>
+          <form class="faye-find" id="fayeFind" role="search">
+            <input type="search" id="fayeFindInput" placeholder="ค้นหาลูกค้า / เบอร์ / สินค้า" aria-label="ค้นหาในคำสั่งซื้อทุกรอบ" autocomplete="off">
+            <button class="btn btn-primary btn-sm" type="submit">ค้นหา</button>
+          </form>
+          <div class="faye-sub">ไปที่</div>
+          <div class="faye-go" id="fayeGo"></div>
+          <div class="faye-sub">เคล็ดลับหน้านี้</div>
+          <div class="faye-topics" id="fayeTopics" aria-label="คำถามที่เลือกได้"></div>
+          <div class="faye-tools">
+            <button class="btn btn-ghost btn-sm" type="button" id="fayeMini">ย่อ Faye</button>
+            <button class="btn btn-ghost btn-sm" type="button" id="fayePause" aria-pressed="false">พักแอนิเมชัน</button>
+            <button class="btn btn-ghost btn-sm" type="button" id="fayeHome">กลับมุมขวาล่าง</button>
+          </div>
+        </section>
+      </details>
+    </div>
   </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.7/dist/umd/supabase.min.js" integrity="sha384-BmlQlKlDvXvKoxkn5OQuUo/aJQCTXeB+Kls6EccBmG4Kf8AXvp89RtO9MtPxP/r5" crossorigin="anonymous"></script>
 <script src="js/config.js?v=20261031u"></script>
-<script src="js/api.js?v=20261119a"></script>
+<script src="js/api.js?v=20261121c"></script>
 <script>
 // Guard: must be signed in to view the admin panel
 if (window.__sb) {
@@ -150,6 +160,6 @@ if (window.__sb) {
 <script src="js/couriers.js?v=20261031a"></script>
 <script src="js/thai-address.js?v=20261031c"></script>
 <script src="js/tags.js?v=20261113a"></script>
-<script src="js/admin.js?v=20261120b"></script>
+<script src="js/admin.js?v=20261121b"></script>
 </body>
 </html>
