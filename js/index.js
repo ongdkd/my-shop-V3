@@ -115,7 +115,7 @@ function giftStatus(items) {
     r.add = r.win ? r.n - (had.indexOf(r) !== -1 ? r.n0 : 0) : 0;
     r.label = r.rule.name + (r.add > 1 ? ' ×' + r.add : '');
   });
-  return { rows: rows, mode: meta.giftMode, winners: winners.filter(function(r) { return r.add > 0; }) };
+  return { rows: rows, mode: meta.giftMode, yuan: yuan, full: full, winners: winners.filter(function(r) { return r.add > 0; }) };
 }
 var giftBase = { yuan: 0, full: 0 };
 function loadGiftBase() {
@@ -148,7 +148,10 @@ function renderGiftBox() {
   var box = document.getElementById('cartGifts'); if (!box) return;
   var st = giftStatus();
   if (!st) { box.style.display = 'none'; box.innerHTML = ''; return; }
-  var html = '<div class="gift-title">ของแถม' + (st.mode === 'best' ? ' <span class="gift-mode">รับ 1 ชิ้น (ชิ้นที่ดีที่สุดที่ถึง)</span>' : '') + '</div>';
+  // The yuan the gifts are counted on (this cart + earlier orders in the round)
+  var hasYuan = st.rows.some(function(r) { return r.rule.currency === 'CNY'; });
+  var spent = hasYuan ? '<span class="gift-spent">ยอดซื้อรวม <b>¥' + (Math.round(st.yuan * 100) / 100).toLocaleString('th-TH', { maximumFractionDigits: 2 }) + '</b></span>' : '';
+  var html = '<div class="gift-title"><span>ของแถม' + (st.mode === 'best' ? ' <span class="gift-mode">รับ 1 ชิ้น (ชิ้นที่ดีที่สุดที่ถึง)</span>' : '') + '</span>' + spent + '</div>';
   st.rows.forEach(function(r) {
     var g = r.rule, cls, right;
     if (r.out) { cls = 'out'; right = 'หมดแล้ว'; }
@@ -236,6 +239,13 @@ function updateCartBadge() {
   badge.textContent = n;
   if (n>0) badge.classList.add('visible'); else badge.classList.remove('visible');
   document.getElementById('cartTotal').textContent = formatCurrency(cartTotal());
+  // Deposits: say that the total is the deposit, and show the full price and what is left
+  var fullSum = 0, dep = false;
+  cart.forEach(function(ci) { fullSum += (Number(ci.fullPrice) || 0) * ci.qty; if (ci.isDeposit) dep = true; });
+  document.getElementById('cartTotalLabel').textContent = dep ? 'ยอดรวม (มัดจำ)' : 'ยอดรวม';
+  var fl = document.getElementById('cartFullLine');
+  fl.hidden = !dep;
+  if (dep) fl.innerHTML = '<span>ราคาเต็ม <b>' + formatCurrency(fullSum) + '</b></span><span>จ่ายส่วนที่เหลือทีหลัง <b>' + formatCurrency(fullSum - cartTotal()) + '</b></span>';
   document.getElementById('checkoutBtn').disabled = (cart.length===0);
 }
 
@@ -593,6 +603,9 @@ function renderSummaryUI(cache) {
   }
   document.getElementById('summaryContent').innerHTML=html;
   document.getElementById('totalPrice').textContent=cache.hasDeposit?formatCurrency(cache.total)+' (มัดจำ)':formatCurrency(cache.total);
+  var sFull=0; cache.items.forEach(function(it){sFull+=(Number(it.fullPrice)||0)*it.quantity;});
+  var sfl=document.getElementById('summaryFullLine'); sfl.hidden=!cache.hasDeposit;
+  if(cache.hasDeposit) sfl.innerHTML='<span>ราคาเต็ม <b>'+formatCurrency(sFull)+'</b></span><span>จ่ายส่วนที่เหลือทีหลัง <b>'+formatCurrency(sFull-cache.total)+'</b></span>';
   var form=document.getElementById('orderForm'); form.style.display='none'; form.classList.remove('is-ready');
   document.getElementById('summary').style.display='flex'; setFabVisible(false); document.body.classList.add('on-summary');
 }

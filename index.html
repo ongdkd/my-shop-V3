@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Mitr:wght@400;500;600&family=Noto+Sans+Thai:wght@300;400;500;600;700&family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://unpkg.com/@dotlottie/player-component@latest/dist/dotlottie-player.mjs" type="module"></script>
-<link rel="stylesheet" href="css/index.css?v=20261119c">
+<link rel="stylesheet" href="css/index.css?v=20261120a">
 <link rel="stylesheet" href="css/theme-pink.css?v=20261102c">
 </head>
 <body>
@@ -39,12 +39,13 @@
   </div>
   <div class="cart-footer">
     <div class="cart-total-row">
-      <span class="cart-total-label">ยอดรวม</span>
+      <span class="cart-total-label" id="cartTotalLabel">ยอดรวม</span>
       <div class="cart-total-right">
         <button class="cart-clear-btn" id="cartClearBtn">ล้างตะกร้า</button>
         <span class="cart-total-amount" id="cartTotal">฿0.00</span>
       </div>
     </div>
+    <div class="full-line" id="cartFullLine" hidden></div>
     <button class="cart-checkout-btn" id="checkoutBtn" disabled>ตรวจสอบคำสั่งซื้อ &#x2192;</button>
   </div>
 </div>
@@ -176,6 +177,7 @@
         <span class="summary-total-label">&#x1F4B3; ยอดรวมทั้งหมด</span>
         <span id="totalPrice" class="summary-total-amount"></span>
       </div>
+      <div class="full-line" id="summaryFullLine" hidden></div>
       <div class="summary-actions">
         <button class="btn-edit" id="editOrderBtn">&#x2190; แก้ไข</button>
         <button class="btn-confirm" id="confirmButton">ยืนยันและส่งคำสั่งซื้อ &#x2192;</button>
@@ -219,6 +221,6 @@
 <script src="js/config.js?v=20261031u"></script>
 <script src="js/api.js?v=20261119a"></script>
 <script src="js/tags.js?v=20261113a"></script>
-<script src="js/index.js?v=20261119d"></script>
+<script src="js/index.js?v=20261120a"></script>
 </body>
 </html>

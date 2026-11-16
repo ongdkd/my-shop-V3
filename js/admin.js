@@ -1803,9 +1803,14 @@ function renderOrdersTable(orders, holder, isAllView) {
   orders = ordersInRange(allOrders);
   if (!orders.length) { holder.appendChild(div('state-empty', 'ไม่มีคำสั่งซื้อในช่วงวันที่นี้')); return; }
 
-  var totalRev = 0, uCust = {}, totalItems = 0;
+  var totalRev = 0, uCust = {}, totalItems = 0, depSum = 0, depOwed = 0;
   for (var i = 0; i < orders.length; i++) {
     totalRev += Number(orders[i].total) || 0;
+    if (orders[i].payType === 'Deposit') { // deposits taken, and what is still to come on them
+      depSum += Number(orders[i].total) || 0;
+      var dFull = Number(orders[i].totalFull) || (Number(orders[i].fullPrice) || 0) * (Number(orders[i].qty) || 0);
+      if (dFull > Number(orders[i].total)) depOwed += dFull - Number(orders[i].total);
+    }
     uCust[orders[i].customer] = true;
     if (orders[i].payType !== 'Gift') totalItems += Number(orders[i].qty) || 0; // gifts aren't sold pieces
   }
@@ -1815,6 +1820,10 @@ function renderOrdersTable(orders, holder, isAllView) {
   statRow.appendChild(makeStat('ลูกค้า', Object.keys(uCust).length, ''));
   statRow.appendChild(makeStat('ชิ้น', totalItems, ''));
   statRow.appendChild(makeStat('ยอดรวม', fmt(totalRev), 'success'));
+  if (depSum > 0) {
+    statRow.appendChild(makeStat('ยอดรวม (มัดจำ)', fmt(depSum), ''));
+    statRow.appendChild(makeStat('ส่วนที่เหลือ (ยังไม่เก็บ)', fmt(depOwed), ''));
+  }
   holder.appendChild(statRow);
 
   var card = div('section-card');

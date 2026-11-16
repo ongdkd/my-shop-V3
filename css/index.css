@@ -437,3 +437,13 @@ body.has-gift-nudge .table-container { padding-bottom: 130px; }
 #cartItemsList { flex: none; overflow: visible; padding: 0; }
 #cartScroll .cart-empty { height: auto; padding: 48px 0; }
 #cartScroll .gift-box { margin: 12px 0 4px; }
+
+/* Gift box: yuan spent so far, beside the title */
+.gift-title { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.gift-spent { font-weight: 500; font-size: 0.78rem; color: var(--text-2); white-space: nowrap; }
+.gift-spent b { color: var(--primary-dark, #C94B82); font-weight: 700; }
+/* Deposit orders: full price and the rest, under the total */
+.full-line { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 2px 12px; margin: -6px 0 12px; font-size: 0.78rem; color: var(--text-2); }
+.full-line[hidden] { display: none; }
+.full-line b { color: var(--text); font-weight: 700; }
+#summaryFullLine { margin: 8px 2px 0; }
