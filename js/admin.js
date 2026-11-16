@@ -6576,7 +6576,13 @@ function renderStockCards(container, query) {
     card.setAttribute('aria-label', _whDelMode ? 'เลือกลบ ' + p.name : (hasKids ? 'เลือกแบบของ ' : 'เลือก ') + p.name);
 
     var img = div('wcard-img');
-    if (p.image) { var im = document.createElement('img'); im.src = cdnThumb(p.image, 480); im.alt = ''; im.loading = 'lazy'; img.appendChild(im); }
+    if (p.image) {
+      var im = document.createElement('img'); im.src = cdnThumb(p.image, 480); im.alt = ''; im.loading = 'lazy';
+      // The main picture can sit on a host that no longer answers: show a variant's picture instead
+      var kidPic = (p.children || []).map(function(c) { return c.image; }).filter(Boolean)[0];
+      im.onerror = function() { this.onerror = null; if (kidPic) this.src = cdnThumb(kidPic, 480); else this.style.visibility = 'hidden'; };
+      img.appendChild(im);
+    }
     else img.innerHTML = '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>';
     img.appendChild(div('wcard-check', sel ? '&#x2713;' : ''));
     if (p.status !== 'Open') img.appendChild(div('wcard-tag closed', 'ปิด'));
