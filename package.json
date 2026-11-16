@@ -5,7 +5,7 @@
     "syntax": "node --check js/api.js && node --check js/index.js && node --check js/pos.js && node --check js/admin.js",
     "test": "node scripts/check-project.mjs && node scripts/check-push.mjs && node --experimental-strip-types --no-warnings scripts/check-sheet-ship.mjs",
     "check": "npm run syntax && npm test",
-    "test:db": "node scripts/check-gifts.mjs"
+    "test:db": "node scripts/check-gifts.mjs && node scripts/check-stock-ship.mjs"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.2.17"

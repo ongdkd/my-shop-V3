@@ -587,6 +587,13 @@
   // products give each option's unsold units back to the matching
   // warehouse CHILD row (matched by barcode, then name). Options with no
   // matching child are left untouched so their counts are never lost.
+  // Pieces on the shelf already spoken for, by warehouse row id: what rounds still
+  // offer + what is sold and not yet shipped (supabase: admin_stock_reserved)
+  async function stockReserved() {
+    var r = await sb.rpc('admin_stock_reserved');
+    if (r.error) throw { __json: err('ยังไม่ได้รันไฟล์ supabase/migrations/2026-11-16b-ship-stock.sql ใน SQL Editor (' + r.error.message + ')') };
+    return r.data || {};
+  }
   async function performStockReturn(prods) {
     var singles = [], optionProds = [];
     (prods || []).forEach(function (p) {
@@ -677,18 +684,8 @@
       if (zo.error) throw { __json: err(zo.error.message) };
     }
 
-    var ups = [];
-    Object.keys(addById).forEach(function (sid2) {
-      var s = stockById[sid2];
-      // Unlimited warehouse rows stay unlimited — no number to add to
-      if (s && s.stock !== null && s.stock !== undefined) {
-        ups.push({ id: sid2, stock: Number(s.stock) + addById[sid2] });
-      }
-    });
-    if (ups.length) {
-      var u = await sb.from('stock_items').upsert(ups, { onConflict: 'id' });
-      if (u.error) throw { __json: err('ตั้งสต็อกรายการเป็น 0 แล้ว แต่บวกคืนคลังไม่ครบ: ' + u.error.message + ' — กรุณาตรวจคลังเอง') };
-    }
+    // The warehouse count is what is on the shelf (it only goes down when an order
+    // ships), so giving pieces back just frees them: zeroing the list stock is all
     return { returned: total, count: count };
   }
 
@@ -2314,6 +2311,7 @@
           .order('seq', { ascending: true });
         if (r.error) return err(r.error.message);
         var data = r.data || [];
+        var reserved = await stockReserved();
 
         var linked = await sb.from('products')
           .select('source_stock_item_id,list_id')
@@ -2350,7 +2348,8 @@
               id: c.code || '',
               name: c.name || '',
               image: c.image || '',
-              stock: c.stock === null || c.stock === undefined ? null : Number(c.stock)
+              stock: c.stock === null || c.stock === undefined ? null : Number(c.stock),
+              reserved: num(reserved[c.id])
             };
           });
           return {
@@ -2363,6 +2362,7 @@
             deposit: num(p.deposit),
             yuan: num(p.yuan),
             stock: p.stock === null || p.stock === undefined ? null : Number(p.stock),
+            reserved: num(reserved[p.id]),
             status: p.status || 'Open',
             linkedListCount: Object.keys(linkedListsByStock[p.id] || {}).length,
             linkedListIds: Object.keys(linkedListsByStock[p.id] || {}),
@@ -2660,7 +2660,11 @@
 
         // Validate everything and plan every write BEFORE touching the database,
         // so a bad item never leaves a half-done import
-        var inserts = [], updates = [], deductions = [];
+        // Moving pieces into a round reserves them; the warehouse count itself only
+        // goes down when an order ships. Free = on the shelf − already reserved.
+        var held = await stockReserved();
+        function free(x) { return Math.max(0, Number(x.stock) - num(held[x.id])); }
+        var inserts = [], updates = [];
         for (var i = 0; i < items.length; i++) {
           var item = items[i];
           var pid = _stockRowMap[item.parentRowIndex];
@@ -2672,10 +2676,9 @@
             var qty = Math.floor(Number(item.qty));
             if (!(qty >= 1)) return err('จำนวนต้องมากกว่า 0 ("' + p.name + '")');
             var tracked = isTracked(p.stock);
-            if (tracked && Number(p.stock) < qty) {
-              return err('สต็อกในคลังไม่พอสำหรับ "' + p.name + '" (เหลือ ' + Number(p.stock) + ' ชิ้น)');
+            if (tracked && free(p) < qty) {
+              return err('สต็อกในคลังไม่พอสำหรับ "' + p.name + '" (ว่าง ' + free(p) + ' ชิ้น)');
             }
-            if (tracked) deductions.push({ id: p.id, stock: Number(p.stock) - qty });
             var ex1 = exBySource[pid] || (p.code ? exByCode[String(p.code)] : null);
             if (ex1) {
               // Add to what is left in the list. Unlimited warehouse stock keeps
@@ -2706,10 +2709,9 @@
             var q = Math.floor(Number(item.childQty[childRows[c]]));
             if (kTracked) {
               if (!(q >= 1)) continue;
-              if (Number(k.stock) < q) {
-                return err('สต็อกในคลังไม่พอสำหรับ "' + p.name + ' — ' + k.name + '" (เหลือ ' + Number(k.stock) + ' ชิ้น)');
+              if (free(k) < q) {
+                return err('สต็อกในคลังไม่พอสำหรับ "' + p.name + ' — ' + k.name + '" (ว่าง ' + free(k) + ' ชิ้น)');
               }
-              deductions.push({ id: k.id, stock: Number(k.stock) - q });
             }
             chosen.push({ k: k, q: kTracked ? q : null });
           }
@@ -2764,14 +2766,7 @@
           if (up.error) return err('เพิ่มสต็อกให้สินค้าที่มีอยู่ไม่สำเร็จ: ' + up.error.message + ' — กรุณาตรวจสต็อกคลังและรายการ');
         }
 
-        // Deduct warehouse stock after the list was updated
-        if (deductions.length) {
-          var d = await sb.from('stock_items').upsert(deductions, { onConflict: 'id' });
-          if (d.error) {
-            return err('นำสินค้าเข้าแล้ว แต่ตัดสต็อกคลังไม่สำเร็จ: ' + d.error.message + ' — กรุณาปรับสต็อกคลังเอง');
-          }
-        }
-        return ok({ pushed: inserts.length + updates.length, added: inserts.length, merged: updates.length, deducted: deductions.length });
+        return ok({ pushed: inserts.length + updates.length, added: inserts.length, merged: updates.length });
       } catch (e) { return e.__json || err(e.message || e); }
     }
   };

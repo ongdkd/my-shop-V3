@@ -46,7 +46,8 @@ assert.ok(api.includes("r.error.code === 'PGRST204'"), 'warehouse imports must o
 assert.ok(admin.includes("withFailureHandler(function(error)"), 'warehouse imports must recover the button and show transport failures');
 assert.ok(admin.includes('appendLinkedProductSyncOption'), 'warehouse edit dialogs must expose the sync checkbox');
 assert.ok(admin.includes('_stockQtyMap[p.rowIndex] = s === null ? 1 : Math.max(1, s)'), 'finite warehouse stock must be the default import quantity');
-assert.ok(admin.includes('draft[c.rowIndex] = Number(c.stock);'), 'variant picker must start each variant at its full finite stock');
+assert.ok(admin.includes('draft[c.rowIndex] = whFree(c);'), 'variant picker must start each variant at everything that is free');
+assert.ok(!api.includes("from('stock_items').upsert"), 'moving or returning pieces must not change the warehouse count (shipping does, in the database)');
 const warehouseSync = api.slice(
   api.indexOf('adminSyncStockProductToLinked'),
   api.indexOf('adminAppendStockChild', api.indexOf('adminSyncStockProductToLinked'))

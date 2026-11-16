@@ -34,7 +34,18 @@ function makeDb(tables) {
   }
   return {
     from: query,
-    rpc: async () => ({ data: true, error: null }),
+    // admin_stock_reserved: what the rounds still offer, per warehouse row (the SQL
+    // also counts sold-but-unshipped orders; scripts/check-stock-ship.mjs covers that)
+    rpc: async (name) => {
+      if (name !== 'admin_stock_reserved') return { data: true, error: null };
+      const held = {}, add = (id, n) => { if (id && n > 0) held[id] = (held[id] || 0) + n; };
+      (tables.products || []).filter((p) => p.source_stock_item_id).forEach((p) => {
+        const det = p.option_details || [];
+        if (!det.length) return add(p.source_stock_item_id, Number(p.remaining));
+        det.forEach((o) => add((tables.stock_items.find((k) => k.parent_id === p.source_stock_item_id && (k.code === o.code || k.name === o.name)) || {}).id, Number(o.remaining)));
+      });
+      return { data: held, error: null };
+    },
     auth: { getSession: async () => ({ data: { session: { user: { email: 'a@b' } } } }) }
   };
 }
@@ -79,9 +90,11 @@ const listItems = (t) => t.products.filter((p) => p.list_id === 'L');
   ]);
   assert.equal(res.status, 'Success', res.message);
   assert.equal(res.added, 3); assert.equal(res.merged, 0);
-  assert.equal(stockOf(tables, 'S'), 6, 'single: warehouse loses qty');
+  // The warehouse count is what is on the shelf: moving pieces into a round only
+  // reserves them (the count goes down when an order ships — a database trigger)
+  assert.equal(stockOf(tables, 'S'), 10, 'single: still on the shelf');
   assert.equal(stockOf(tables, 'U'), null, 'unlimited stays unlimited');
-  assert.equal(stockOf(tables, 'V1'), 3, 'variant: only chosen amount leaves');
+  assert.equal(stockOf(tables, 'V1'), 5, 'variant: still on the shelf');
   assert.equal(stockOf(tables, 'V2'), 3, 'unchosen variant untouched');
   const [s, u, v] = listItems(tables);
   assert.equal(s.remaining, 4); assert.equal(u.remaining, null);
@@ -110,7 +123,13 @@ const listItems = (t) => t.products.filter((p) => p.list_id === 'L');
   assert.deepEqual(v.option_details.map((o) => [o.name, o.remaining]), [['Red', 3], ['Blue', 3]], 'existing variant summed, new one appended');
   assert.equal(v.remaining, 6);
   assert.equal(v.options, 'Red:V01,Blue:V02');
-  assert.equal(stockOf(tables, 'S'), 3); assert.equal(stockOf(tables, 'V1'), 2); assert.equal(stockOf(tables, 'V2'), 0);
+  assert.equal(stockOf(tables, 'S'), 10); assert.equal(stockOf(tables, 'V1'), 5); assert.equal(stockOf(tables, 'V2'), 3);
+  // 7 of the 10 are reserved now, so the same pieces cannot be moved in a second time
+  const third = await load(tables);
+  assert.deepEqual(third.stock.products.find((p) => p.stockItemId === 'S').reserved, 7);
+  const over = await third.call('adminPushStockToShop', 'L', [{ parentRowIndex: third.row('S'), qty: 4 }]);
+  assert.equal(over.status, 'Error'); assert.match(over.message, /ว่าง 3/);
+  assert.equal(listItems(tables)[0].remaining, 7, 'nothing added');
 }
 
 // 3) Older single listing without a warehouse link (same barcode) is merged and linked

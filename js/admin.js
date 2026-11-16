@@ -6410,13 +6410,21 @@ function loadStock(cb) {
 }
 
 function isTrackedStock(v) { return v !== null && v !== undefined && v !== ''; }
-// Total sellable pieces of a warehouse item (variants summed); null = unlimited somewhere
+// Pieces of one warehouse row that can still go into a round: on the shelf minus
+// what rounds already offer or have sold but not shipped. null = unlimited.
+function whFree(x) { return isTrackedStock(x.stock) ? Math.max(0, Number(x.stock) - (Number(x.reserved) || 0)) : null; }
+// Free pieces of a warehouse item (variants summed); null = unlimited somewhere
 function whStockOf(p) {
   if (p.children && p.children.length) {
     if (p.children.some(function(c) { return !isTrackedStock(c.stock); })) return null;
-    return p.children.reduce(function(s, c) { return s + (Number(c.stock) || 0); }, 0);
+    return p.children.reduce(function(s, c) { return s + whFree(c); }, 0);
   }
-  return isTrackedStock(p.stock) ? Number(p.stock) : null;
+  return whFree(p);
+}
+// The same item's shelf count and reserved pieces, for the card
+function whShelfOf(p) {
+  var rows = p.children && p.children.length ? p.children : [p];
+  return { shelf: rows.reduce(function(s, c) { return s + (Number(c.stock) || 0); }, 0), held: rows.reduce(function(s, c) { return s + (Number(c.reserved) || 0); }, 0) };
 }
 function whSoldOut(p) { var s = whStockOf(p); return s !== null && s <= 0; }
 function whInTarget(p) { return !!_whTarget && (p.linkedListIds || []).indexOf(_whTarget) !== -1; }
@@ -6580,7 +6588,8 @@ function renderStockCards(container, query) {
     var nm = div('wcard-name'); nm.textContent = p.name; nm.title = p.name; body.appendChild(nm);
     var meta = [baht(p.price)];
     if (hasKids) meta.push(p.children.length + ' แบบ');
-    meta.push(stockNow === null ? '∞' : 'เหลือ ' + stockNow);
+    var sh = whShelfOf(p);
+    meta.push(stockNow === null ? '∞' : 'ในคลัง ' + sh.shelf + (sh.held ? ' · จอง ' + sh.held + ' · ว่าง ' + stockNow : ''));
     body.appendChild(div('wcard-meta', escapeHtml(meta.join(' · '))));
 
     var foot = div('wcard-foot');
@@ -6669,7 +6678,7 @@ function openVariantPicker(p) {
   p.children.forEach(function(c) {
     if (cur) { if (cur[c.rowIndex]) draft[c.rowIndex] = cur[c.rowIndex]; }
     else if (!isTrackedStock(c.stock)) draft[c.rowIndex] = 1;                  // ∞ variants included
-    else if (Number(c.stock) > 0) draft[c.rowIndex] = Number(c.stock);         // default: everything in stock
+    else if (whFree(c) > 0) draft[c.rowIndex] = whFree(c);                     // default: everything that is free
   });
 
   el('modalBody').innerHTML = '';
@@ -6677,7 +6686,7 @@ function openVariantPicker(p) {
   if (whInTarget(p)) box.appendChild(div('vp-note', 'สินค้านี้อยู่ในรายการแล้ว — จำนวนที่เลือกจะถูกเพิ่มเข้าไปในสินค้าเดิม'));
   var tools = div('vp-tools');
   tools.appendChild(makeBtn('btn btn-ghost btn-sm', 'เลือกทั้งหมด', function() {
-    p.children.forEach(function(c) { if (!isTrackedStock(c.stock)) draft[c.rowIndex] = 1; else if (Number(c.stock) > 0) draft[c.rowIndex] = Number(c.stock); });
+    p.children.forEach(function(c) { if (!isTrackedStock(c.stock)) draft[c.rowIndex] = 1; else if (whFree(c) > 0) draft[c.rowIndex] = whFree(c); });
     drawRows();
   }));
   tools.appendChild(makeBtn('btn btn-ghost btn-sm', 'ล้าง', function() { draft = {}; drawRows(); }));
@@ -6688,7 +6697,7 @@ function openVariantPicker(p) {
   function drawRows() {
     list.innerHTML = '';
     p.children.forEach(function(c) {
-      var tracked = isTrackedStock(c.stock), have = tracked ? Number(c.stock) : null, out = tracked && have <= 0;
+      var tracked = isTrackedStock(c.stock), have = whFree(c), out = tracked && have <= 0;
       var row = div('vp-row' + (out ? ' out' : '') + (draft[c.rowIndex] ? ' on' : ''));
       var th = div('ep-vthumb'); if (c.image) { var im = document.createElement('img'); im.src = cdnThumb(c.image, 160); im.alt = ''; im.loading = 'lazy'; th.appendChild(im); }
       row.appendChild(th);
@@ -6751,7 +6760,7 @@ function whPickByCode(code) {
     return;
   }
   if (child) {
-    var have = isTrackedStock(child.stock) ? Number(child.stock) : null;
+    var have = whFree(child);
     var m = _stockVariantQty[parent.rowIndex] || (_stockVariantQty[parent.rowIndex] = {});
     if (have === null) m[child.rowIndex] = 1;
     else if ((m[child.rowIndex] || 0) >= have) { toast(child.name + ': มีในคลัง ' + have + ' ชิ้น', 'error'); return; }
