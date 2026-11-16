@@ -127,19 +127,23 @@ function loadGiftBase() {
     try { var res = JSON.parse(r); if (res.status === 'Success' && sheet === selectedSheetId) { giftBase = { yuan: res.yuan, full: res.full }; renderGiftBox(); renderGiftNudge(); } } catch (e) {}
   }).customerListTotals(sheet, name);
 }
-// Customers pay in baht, so a ¥ amount also shows roughly what it is in baht:
-// the middle ฿-per-¥ of this round's products, rounded up to the next ฿10.
+// Customers pay in baht but ¥ rules count yuan. The baht shown is the most it can
+// take: the gap at this round's highest ฿-per-¥, rounded up to ฿10 — spending that
+// much always reaches the gift (a little less is often enough), so it is no estimate.
 function bahtPerYuan() {
-  var r = products.filter(function(p) { return Number(p.yuan) > 0 && Number(p.price) > 0; })
-    .map(function(p) { return p.price / p.yuan; }).sort(function(a, b) { return a - b; });
-  return r.length ? r[Math.floor(r.length / 2)] : 0;
+  var top = 0;
+  products.forEach(function(p) { if (Number(p.yuan) > 0 && Number(p.price) > 0) top = Math.max(top, p.price / p.yuan); });
+  return top;
 }
-function giftMoney(n, cur, short) {
+function giftMoney(n, cur) {
   if (cur !== 'CNY') return shortPrice(n);
-  var yuan = '¥' + (Number(n) || 0).toLocaleString('th-TH', { maximumFractionDigits: 2 }), rate = bahtPerYuan();
-  return rate ? 'ประมาณ ' + shortPrice(Math.ceil(n * rate / 10) * 10) + (short ? '' : ' (' + yuan + ')') : yuan;
+  var rate = bahtPerYuan();
+  return rate ? shortPrice(Math.ceil(Math.round(n * rate * 100) / 1000) * 10) : '¥' + (Number(n) || 0).toLocaleString('th-TH', { maximumFractionDigits: 2 });
 }
-// Cart box: ✓ earned / "ซื้ออีก ¥38 รับ …" with a progress bar / sold out
+// "ของแถมโปสการ์ด…" → "โปสการ์ด…": the sentence around it already says ของแถม
+function giftName(g) { return String(g.name || '').replace(/^ของแถม\s*/, '') || 'ของแถม'; }
+// Cart box: one plain row per gift — got it / "ขาดอีก ฿300" with a thin bar / sold out —
+// and, under them, the cheapest product that reaches the next gift
 function renderGiftBox() {
   var box = document.getElementById('cartGifts'); if (!box) return;
   var st = giftStatus();
@@ -148,21 +152,37 @@ function renderGiftBox() {
   st.rows.forEach(function(r) {
     var g = r.rule, cls, right;
     if (r.out) { cls = 'out'; right = 'หมดแล้ว'; }
-    else if (r.win) { cls = 'win'; right = 'ได้รับ' + (r.n > 1 ? ' ×' + r.n : '') + ' ✓'; }
+    else if (r.win) { cls = 'win'; right = 'ได้แล้ว' + (r.n > 1 ? ' ×' + r.n : '') + ' ✓'; }
     else if (r.reached) { cls = 'pass'; right = 'ได้ชิ้นที่ใหญ่กว่า'; }
-    else { cls = 'next'; right = 'ซื้ออีก ' + giftMoney(g.min - r.have, g.currency); }
+    else { cls = 'next'; right = 'ขาดอีก ' + giftMoney(g.min - r.have, g.currency); }
     var pct = Math.max(0, Math.min(100, Math.round(r.have / g.min * 100)));
     // "Every" gifts keep going: show how far the next one is
     var more = '';
     if (cls === 'win' && g.every && (g.stock === null || r.n < g.stock)) {
       pct = Math.round((r.have % g.min) / g.min * 100);
-      more = '<div class="gift-more">อีก ' + escapeHtml(giftMoney(g.min - r.have % g.min, g.currency)) + ' รับเพิ่มอีกชิ้น</div>';
+      more = '<div class="gift-more">ขาดอีก ' + escapeHtml(giftMoney(g.min - r.have % g.min, g.currency)) + ' ได้เพิ่มอีกชิ้น</div>';
     }
-    html += '<div class="gift-row ' + cls + '"><div class="gift-line"><span class="gift-name">' + escapeHtml(g.name) +
-      ' <small>(' + (g.every ? 'ทุก ๆ ' : 'ครบ ') + escapeHtml(giftMoney(g.min, g.currency, true)) + ')</small></span><span class="gift-state">' + escapeHtml(right) + '</span></div>' +
+    html += '<div class="gift-row ' + cls + '"><div class="gift-line"><span class="gift-name">' + escapeHtml(giftName(g)) +
+      '</span><span class="gift-state">' + escapeHtml(right) + '</span></div>' +
       (cls === 'next' || more ? '<div class="gift-bar"><i style="width:' + pct + '%"></i></div>' : '') + more + '</div>';
   });
+  var next = giftNext(st), p = next && cart.length ? giftSuggest(next) : null;
+  if (p) {
+    html += '<button type="button" class="gift-tip" data-psid="' + sid(p.id) + '"><img src="' + escapeHtml(thumbImg(p.image, 160)) + '" alt="">' +
+      '<span class="gift-tip-text"><small>เพิ่มชิ้นนี้ก็ได้ของแถมเลย</small><b>' + escapeHtml(p.name || '') + '</b></span>' +
+      '<span class="gift-tip-price">' + shortPrice(p.price) + ' &rsaquo;</span></button>';
+  }
   box.innerHTML = html; box.style.display = '';
+  var tip = box.querySelector('.gift-tip');
+  if (tip) tip.onclick = function() { closeCart(); showProduct(tip.getAttribute('data-psid')); };
+}
+// Bring a product card into view and flash it (clears a search / tag that hides it)
+function showProduct(psid) {
+  var btn = document.querySelector('#productTable .atcbtn[data-psid="' + psid + '"]');
+  var row = btn && btn.closest('tr'); if (!row) return;
+  if (row.style.display === 'none') { var s = document.getElementById('productSearch'); if (s) s.value = ''; activeTag = ''; applyProductTags(); }
+  row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  row.classList.remove('gn-flash'); void row.offsetWidth; row.classList.add('gn-flash');
 }
 
 // The gift closest to being earned: { row, gap, pct } — null when nothing is left to earn
@@ -188,37 +208,25 @@ function giftSuggest(next) {
   });
   return pick;
 }
-// Strip above the cart button: "อีก ¥38 รับ … ฟรี" with a bunny hopping to the gift
+// One line above the cart button: "ขาดอีก ฿300 จะได้ของแถม … ฟรี". Tap → the cart,
+// where every gift and the suggested product are listed.
 function renderGiftNudge() {
   var box = document.getElementById('giftNudge'); if (!box) return;
-  var st = selectedSheetId ? giftStatus() : null;
-  document.body.classList.toggle('has-gift-nudge', !!st);
-  if (!st) { box.hidden = true; box.innerHTML = ''; return; }
-  var next = giftNext(st), got = st.rows.filter(function(r) { return r.win; });
-  var text, pct = 100, tip = '';
-  if (!next) {
-    text = got.length ? '&#x1F389; ได้ของแถมครบแล้ว ขอบคุณนะคะ &#x1F496;' : '';
-  } else {
-    var g = next.row.rule, name = '<b>' + escapeHtml(g.name) + '</b>', gap = '<b>' + escapeHtml(giftMoney(next.gap, g.currency, true)) + '</b>';
-    pct = Math.round(next.pct * 100);
-    if (next.row.n > 0) text = 'เย้! ได้ ' + name + ' แล้ว ×' + next.row.n + ' &#x1F495; อีก ' + gap + ' รับเพิ่มอีกชิ้น';
-    else if (!cart.length && next.row.have <= 0) text = '&#x1F380; ช้อปครบ ' + gap + ' รับ ' + name + ' ฟรีเลยน้า';
-    else text = (pct >= 70 ? 'อีกนิดเดียว! ' : '') + 'ซื้อเพิ่มอีก ' + gap + ' รับ ' + name + ' ฟรี &#x1F380;';
-    var p = cart.length ? giftSuggest(next) : null;
-    if (p) tip = '<button type="button" class="gn-pick" data-psid="' + sid(p.id) + '">&#x1F4A1; เพิ่ม &ldquo;' + escapeHtml(p.name || '') + '&rdquo; ก็ถึงเลย <span aria-hidden="true">&rsaquo;</span></button>';
+  var st = selectedSheetId ? giftStatus() : null, text = '', pct = 100;
+  if (st) {
+    var next = giftNext(st), got = st.rows.filter(function(r) { return r.win; });
+    if (!next) text = got.length ? 'ได้ของแถมครบแล้ว ✓' : '';
+    else {
+      var g = next.row.rule, gap = '<b>' + escapeHtml(giftMoney(next.gap, g.currency)) + '</b>';
+      pct = Math.round(next.pct * 100);
+      text = next.row.n > 0 ? 'ได้ของแถมแล้ว ×' + next.row.n + ' · ขาดอีก ' + gap + ' ได้เพิ่มอีกชิ้น'
+        : (!cart.length && next.row.have <= 0 ? 'ซื้อครบ ' : 'ขาดอีก ') + gap + ' จะได้ของแถม ' + escapeHtml(giftName(g)) + ' ฟรี';
+    }
   }
-  if (!text) { box.hidden = true; box.innerHTML = ''; document.body.classList.remove('has-gift-nudge'); return; }
-  box.innerHTML = '<div class="gn-text">' + text + '</div>' +
-    '<div class="gn-track' + (next ? '' : ' full') + '" aria-hidden="true"><i style="width:' + pct + '%"></i><span class="gn-runner" style="left:' + pct + '%">&#x1F430;</span><span class="gn-goal">&#x1F381;</span></div>' + tip;
-  box.hidden = false;
-  var b = box.querySelector('.gn-pick');
-  if (b) b.onclick = function() {
-    var btn = document.querySelector('#productTable .atcbtn[data-psid="' + b.getAttribute('data-psid') + '"]');
-    var row = btn && btn.closest('tr'); if (!row) return;
-    if (row.style.display === 'none') { var s = document.getElementById('productSearch'); if (s) s.value = ''; activeTag = ''; applyProductTags(); }
-    row.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    row.classList.remove('gn-flash'); void row.offsetWidth; row.classList.add('gn-flash');
-  };
+  document.body.classList.toggle('has-gift-nudge', !!text);
+  box.hidden = !text;
+  box.innerHTML = text ? '<span class="gn-text">' + text + '</span><span class="gn-go" aria-hidden="true">&rsaquo;</span><i class="gn-line" style="width:' + pct + '%"></i>' : '';
+  box.onclick = openCart;
 }
 
 function updateCartBadge() {
