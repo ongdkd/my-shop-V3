@@ -129,12 +129,62 @@ var _modalMousedownTarget = null;
 document.getElementById('modal').addEventListener('mousedown', function(e) { _modalMousedownTarget = e.target; });
 document.getElementById('modal').addEventListener('mouseup', function(e) { if (e.target === this && _modalMousedownTarget === this) closeModal(); _modalMousedownTarget = null; });
 document.getElementById('modalSave').onclick = function() { if (modalSaveFn) modalSaveFn(); };
-// Escape closes the modal (or the mobile sidebar)
+var fayeHelp = el('fayeHelp');
+var fayeSprite = fayeHelp.querySelector('.faye-sprite');
+var fayeReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+var fayeIdleLoops = [[0, 1800], [2, 900], [3, 1200], [4, 2200], [5, 1500], [6, 1400], [7, 1600]];
+var fayeLastIdle = -1, fayeMotion, fayePaused = false;
+
+function playFaye(row, duration, iterations) {
+  var size = fayeSprite.offsetWidth;
+  var y = (-row * size) + 'px';
+  fayeMotion = fayeSprite.animate(
+    [{ backgroundPosition: '0px ' + y }, { backgroundPosition: (-4 * size) + 'px ' + y }],
+    { duration: duration, iterations: iterations, easing: 'steps(4, end)' }
+  );
+  return fayeMotion;
+}
+
+function playFayeIdle() {
+  if (fayeHelp.hidden || fayeHelp.open || document.hidden || fayeReducedMotion.matches || fayePaused) return;
+  var pick = Math.floor(Math.random() * (fayeIdleLoops.length - (fayeLastIdle < 0 ? 0 : 1)));
+  if (fayeLastIdle >= 0 && pick >= fayeLastIdle) pick++;
+  fayeLastIdle = pick;
+  var loop = fayeIdleLoops[pick];
+  var min = Math.ceil(5000 / loop[1]), max = Math.floor(15000 / loop[1]);
+  var repeats = min + Math.floor(Math.random() * (max - min + 1));
+  playFaye(loop[0], loop[1], repeats).onfinish = playFayeIdle;
+}
+
+function resetFayeMotion(wave) {
+  if (fayeMotion) { fayeMotion.cancel(); fayeMotion = null; }
+  if (!fayeHelp.hidden && !document.hidden && !fayeReducedMotion.matches && !fayePaused && wave) playFaye(1, 600, 1);
+  else playFayeIdle();
+}
+
+fayeHelp.addEventListener('toggle', function() { resetFayeMotion(fayeHelp.open); });
+el('fayePause').addEventListener('click', function() {
+  fayePaused = !fayePaused;
+  this.setAttribute('aria-pressed', String(fayePaused));
+  resetFayeMotion(false);
+});
+fayeHelp.addEventListener('click', function(e) {
+  var topic = e.target.closest('[data-faye-reply]');
+  if (topic) el('fayeReply').textContent = topic.dataset.fayeReply;
+});
+fayeReducedMotion.addEventListener('change', function() { resetFayeMotion(false); });
+document.addEventListener('visibilitychange', function() { resetFayeMotion(false); });
+
+// Escape closes the active admin controls, then Faye's help.
 document.addEventListener('keydown', function(e) {
   if (e.key !== 'Escape') return;
   if (document.getElementById('imageActionPicker')) closeImageActionPicker();
   else if (document.getElementById('modal').classList.contains('open')) closeModal();
   else if (sidebar.classList.contains('open')) toggleSidebar();
+  else if (fayeHelp.open) {
+    fayeHelp.open = false;
+    fayeHelp.querySelector('summary').focus();
+  }
 });
 // ── Hash routing — the URL mirrors the open panel (#/products, #/orders …)
 // so a refresh keeps your place and the back button navigates panels ──
@@ -854,6 +904,9 @@ function closeModal() {
 
 function switchPanel(panel) {
   currentPanel = panel;
+  fayeHelp.hidden = panel !== 'orderlists';
+  if (fayeHelp.hidden) fayeHelp.open = false;
+  resetFayeMotion(false);
   // Keep the URL in sync; replace on first load so back exits cleanly
   if (location.hash !== '#/' + panel) {
     if (!location.hash) history.replaceState(null, '', '#/' + panel);
