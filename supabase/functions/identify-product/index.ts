@@ -27,12 +27,14 @@ const MATCH_MODEL = Deno.env.get("GEMINI_MATCH_MODEL") || "gemini-flash-latest";
 // One Gemini call. The free tier allows only a few requests per minute and a
 // lookup makes up to 3, so on a per-minute 429 wait as long as Google asks
 // (max 20 s) and retry once. A daily-limit 429 is returned straight away.
-async function gemini(payload: unknown, model = GEMINI_MODEL, retry = true): Promise<Response> {
+async function gemini(payload: unknown, model = GEMINI_MODEL, retry = true, ms = 25_000): Promise<Response> {
   for (let attempt = 0; ; attempt++) {
     const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": GEMINI_KEY },
       body: JSON.stringify(payload),
+      // A stalled call would otherwise run until Supabase kills the request
+      signal: AbortSignal.timeout(ms),
     });
     if (r.status !== 429 || attempt > 0 || !retry) return r;
     const info = await r.clone().text();
@@ -80,7 +82,7 @@ const BROWSER = {
 };
 const httpsOnly = (u?: string) => (u && u.startsWith("https://") ? u : "");
 // Video / social sites: their preview image is a thumbnail, not a product photo
-const NOT_PRODUCT = /(^|.)(youtube.com|youtu.be|ytimg.com|tiktok.com|tiktokcdn.com|instagram.com|cdninstagram.com|facebook.com|fbcdn.net|x.com|twitter.com|twimg.com|reddit.com|redd.it)$/i;
+const NOT_PRODUCT = /(^|.)(youtube.com|youtu.be|ytimg.com|tiktok.com|tiktokcdn.com|tiktokcdn-us.com|instagram.com|cdninstagram.com|facebook.com|fbcdn.net|x.com|twitter.com|twimg.com|reddit.com|redd.it)$/i;
 const productUrl = (u: string) => { try { return !NOT_PRODUCT.test(new URL(u).hostname); } catch { return false; } };
 
 // Store pages that show this product, each with its best copy of the photo
@@ -264,10 +266,12 @@ ${known ? `It was identified as: "${known}".
 ` : ""}Read the packaging text, logos, character and series, then you MUST use Google Search (do not answer from memory) to find this exact product on store or maker pages. Search in the language printed on the package (Korean / Japanese / Chinese) as well as in English, and put the exact text printed on it, including small print, in your queries (e.g. the product line name + its Korean / Japanese title). Take the series from what the search results say, not from memory.
 ${NAME_PARTS}
 Reply with one line of JSON only: {"series": "...", "type_th": "...", "product": "..."}`;
+  // No retry: the free tier's Google Search limit is separate from the model's,
+  // and once it is used up a retry 10–20 s later fails the same way
   const r = await gemini({
     contents: [{ parts: [{ inline_data: { mime_type: photo.mime, data: photo.b64 } }, { text: prompt }] }],
     tools: [{ google_search: {} }],
-  });
+  }, GEMINI_MODEL, false);
   const body = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(`Gemini ${r.status}: ${body.error?.message ?? ""}`);
   const cand = body.candidates?.[0] ?? {};
@@ -318,9 +322,10 @@ ${MATCH_RULE}`;
       responseSchema: { type: "OBJECT", properties: MATCH_FIELDS, required: MATCH_ORDER, propertyOrdering: MATCH_ORDER },
     },
   };
-  // No waiting on Flash (5 / min): when it is busy, Flash-Lite checks instead
-  let r = await gemini(payload, MATCH_MODEL, false);
-  if (!r.ok && MATCH_MODEL !== GEMINI_MODEL) r = await gemini(payload); // stronger model unavailable / out of quota
+  // No waiting on Flash (5 / min, often 12–37 s): when it is busy or slow, Flash-Lite checks instead
+  let r = await gemini(payload, MATCH_MODEL, false, 12_000).catch(() => null);
+  if (!r?.ok && MATCH_MODEL !== GEMINI_MODEL) r = await gemini(payload); // stronger model slow / unavailable / out of quota
+  if (!r) return -1;
   const body = await r.json().catch(() => ({}));
   if (!r.ok) return -1; // the name is already found; a missing photo is not an error
   let out: Record<string, unknown> = {};
@@ -418,11 +423,16 @@ Deno.serve(async (req) => {
     // No pages (common for Korean / Japanese goods; Cloud Vision's index is much
     // smaller than Google Lens) → the Google search is slow, so start it now,
     // next to the naming and photo check instead of after them
-    const searching = clues.titles.length ? null : geminiSearch(photo).catch(() => null);
-    // Naming and the photo check do not depend on each other: run them together
+    const searchFailed = (e: unknown) => (console.log("gemini search failed", String((e as Error)?.message || e)), null);
+    const searching = clues.titles.length ? null : geminiSearch(photo).catch(searchFailed);
+    // Naming and the photo check do not depend on each other: run them together.
+    // No pages → a name that came with real search results beats a guess from
+    // weak clues, so name from the photo only when the search finds nothing
     const [guess, index] = await Promise.all([
-      pickName(photo, clues),
-      clues.candidates.length ? matchImage(photo, clues.candidates) : Promise.resolve(-1),
+      searching
+        ? searching.then((g) => (g?.sources.length && g.name ? g.name : pickName(photo, clues)))
+        : pickName(photo, clues),
+      clues.candidates.length ? within(30_000, matchImage(photo, clues.candidates), -1) : Promise.resolve(-1),
     ]);
     ms.nameAndCheck = Date.now() - started;
     const pick = clues.candidates[index];
@@ -432,15 +442,13 @@ Deno.serve(async (req) => {
       return reply({ name: guess, imageUrl: pick.imageUrl, pageUrl: pick.pageUrl, imageData: dataUrl(pick.photo) });
     }
     // ponytail: 30 s for the slow route; past that the admin gets the name and keeps their own photo
-    const g = await within(started + 30_000 - Date.now(), searching ?? geminiSearch(photo, guess).catch(() => null), null);
+    const g = await within(started + 30_000 - Date.now(), searching ?? geminiSearch(photo, guess).catch(searchFailed), null);
     ms.search = Date.now() - started;
-    // A name that came with real search results beats a guess when reverse search found no pages
-    const name = searching && g?.sources.length && g.name ? g.name : guess;
-    if (!name) return reply({ error: "ระบุสินค้าไม่ได้ ลองถ่ายให้เห็นแพ็กเกจชัดขึ้น" });
+    if (!guess) return reply({ error: "ระบุสินค้าไม่ได้ ลองถ่ายให้เห็นแพ็กเกจชัดขึ้น" });
     const found = g ? await within(started + 30_000 - Date.now(), photoFromPages(photo, g.sources), NO_PHOTO) : NO_PHOTO;
     ms.total = Date.now() - started;
     console.log("timing", ms);
-    return reply({ name, ...found });
+    return reply({ name: guess, ...found });
   } catch (e) {
     const msg = String((e as Error).message || e);
     if (/Gemini 429/.test(msg)) return reply({ error: "AI ใช้เกินโควตาฟรีของ Gemini — รอ 1 นาทีแล้วลองใหม่ (ถ้ายังไม่ได้ แปลว่าครบโควตาวันนี้แล้ว)" });

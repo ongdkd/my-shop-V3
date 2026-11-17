@@ -155,9 +155,11 @@ function fayeStore(k, v) {
 // One-shot reaction (wakes him first if he's napping)
 function fayeDo(id) {
   if (!faye || fayePaused || fayeHeld) return;
-  faye.wake();
+  faye.wake(); fayeSyncNap();
   try { faye.play(id); } catch (e) {}
 }
+// 💬 next to Faye shows only while he's awake (CSS also hides it when held or chat is open)
+function fayeSyncNap() { fayeBox.classList.toggle('napping', !!(faye && faye.asleep)); }
 
 // ── Nap: nothing tapped, typed or scrolled for a while → yawn and curl up.
 // Any touch on the page wakes him (rub eyes, stretch, stand up). ──
@@ -166,7 +168,7 @@ function fayeNapLater() {
   clearTimeout(fayeNapTimer);
   fayeNapTimer = setTimeout(function() {
     if (!faye || fayeHeld || fayeHelp.open || fayePaused || document.hidden) return fayeNapLater();
-    faye.doze();
+    faye.doze(); fayeSyncNap();
   }, FAYE_NAP_MS);
 }
 function fayeNudge(e) {
@@ -174,6 +176,7 @@ function fayeNudge(e) {
     var now = Date.now(); if (now - fayeLastNudge < 1000) return; fayeLastNudge = now;
   }
   if (faye && faye.asleep && e.type !== 'pointermove' && e.type !== 'scroll') faye.wake();
+  fayeSyncNap();
   fayeNapLater();
 }
 ['pointerdown', 'keydown', 'wheel', 'scroll', 'pointermove'].forEach(function(t) {
@@ -312,7 +315,134 @@ function fayeChat(you, reply) {
   y.textContent = you || ''; y.hidden = !you;
   r.textContent = reply;
   r.style.animation = 'none'; void r.offsetWidth; r.style.animation = ''; // replay the pop
+  var a = el('fayeActs'); a.innerHTML = ''; a.hidden = true;
 }
+
+// ── Ask Faye: a type box. Simple commands are matched in the page; anything else
+// goes to the faye-chat function (Gemini), which only picks ONE action from a fixed
+// list. The page then looks the data up itself (js/faye-brain.js), so the AI never
+// sees shop data. This version only reads and opens screens — it changes nothing. ──
+var _fayeAsked = '', _fayePrev = '', _fayeOrders = null, _fayeOrdersAt = 0, _fayeKeep = false;
+// Faye answers in his panel; acts: [[label, fn], …] become buttons under the answer
+function fayeTell(text, acts) {
+  if (!fayeHelp.open) { _fayeKeep = true; fayeHelp.open = true; } // reopening must not reset him to the greeting
+  fayeChat(_fayeAsked, text);
+  var box = el('fayeActs');
+  (acts || []).forEach(function(a) {
+    var b = makeBtn('faye-go-btn', '', a[1]); b.type = 'button'; b.textContent = a[0]; box.appendChild(b);
+  });
+  box.hidden = !box.children.length;
+}
+// ponytail: all orders are re-read at most once a minute per question; a server-side lookup if the shop outgrows it
+function fayeOrders(cb) {
+  if (_fayeOrders && Date.now() - _fayeOrdersAt < 60000) return cb(_fayeOrders);
+  var bad = function() { fayeTell('โหลดคำสั่งซื้อไม่สำเร็จ ลองใหม่อีกครั้งนะครับ'); };
+  google.script.run.withSuccessHandler(function(r) {
+    var res = {}; try { res = JSON.parse(r); } catch (e) {}
+    if (res.status !== 'Success') return bad();
+    _fayeOrders = res.orders || []; _fayeOrdersAt = Date.now(); cb(_fayeOrders);
+  }).withFailureHandler(bad).adminGetAllOrders();
+}
+function fayePanels() {
+  return Array.prototype.map.call(document.querySelectorAll('.nav-item[data-panel]'), function(n) {
+    return { id: n.getAttribute('data-panel'), label: n.textContent.trim() };
+  });
+}
+function fayeFindOrders(q) { el('fayeFindInput').value = q; el('fayeFind').requestSubmit(); }
+function fayeDay(d) { return new Date(d + 'T00:00:00').toLocaleDateString('th-TH', { day: 'numeric', month: 'short' }); }
+function fayeRun(a) {
+  var B = window.FayeBrain;
+  if (a.do === 'goto' && VALID_PANELS.indexOf(a.panel) !== -1) {
+    switchPanel(a.panel); fayeSay(a.say || 'มาแล้วครับ', 5000, 'yes');
+  } else if (a.do === 'find_orders' && (a.query || a.customer)) {
+    fayeFindOrders(a.query || a.customer); fayeSay(a.say || 'ค้นให้แล้วครับ', 5000, 'yes');
+  } else if (a.do === 'ship_status' && a.customer) {
+    fayeOrders(function(orders) {
+      var c = B.customer(orders, a.customer);
+      if (!c.names.length) return fayeTell('ไม่เจอลูกค้าชื่อ “' + a.customer + '” ในคำสั่งซื้อครับ');
+      if (!c.rows.length) {
+        return fayeTell('เจอ ' + c.names.length + ' คนที่ชื่อคล้ายกัน หมายถึงคนไหนครับ?', c.names.slice(0, 6).map(function(n) {
+          return [n, function() { fayeRun({ do: 'ship_status', customer: n }); }];
+        }));
+      }
+      var live = c.rows.filter(function(o) { return o.status !== 'ยกเลิก'; });
+      var sent = live.filter(function(o) { return o.shippedAt; }).length;
+      // What is still on the way first, then the newest shipped
+      var rows = live.slice().sort(function(x, y) { return (x.shippedAt ? 1 : 0) - (y.shippedAt ? 1 : 0) || String(y.shippedAt || y.timestamp).localeCompare(String(x.shippedAt || x.timestamp)); });
+      var lines = rows.slice(0, 8).map(function(o) {
+        return '• ' + o.product + ' ×' + o.qty + ' — ' + B.stage(o) + (o.tracking ? ' (' + o.tracking + ')' : '');
+      });
+      if (rows.length > 8) lines.push('…และอีก ' + (rows.length - 8) + ' รายการ');
+      fayeTell(c.names[0] + ': ' + live.length + ' รายการ · จัดส่งแล้ว ' + sent + ' · ยังไม่ส่ง ' + (live.length - sent) + '\n' + lines.join('\n'),
+        [['เปิดออเดอร์ของ ' + c.names[0], function() { fayeFindOrders(c.names[0]); }]]);
+    });
+  } else if (a.do === 'sales') {
+    var today = B.day(new Date().toISOString()), ok = /^\d{4}-\d{2}-\d{2}$/;
+    var from = ok.test(a.from) ? a.from : today, to = ok.test(a.to) ? a.to : from;
+    if (from > to) { var sw = from; from = to; to = sw; }
+    fayeOrders(function(orders) {
+      var s = B.sales(orders, from, to);
+      var row = function(name, g) { return name + ': ' + g.lines + ' รายการ ' + g.qty + ' ชิ้น ' + baht(g.baht); };
+      fayeTell('ยอดขาย ' + fayeDay(from) + (to !== from ? ' – ' + fayeDay(to) : '') + '\n' +
+        row('หน้าเว็บ', s.web) + '\n' + row('หน้าร้าน (POS)', s.pos) + '\nรวม ' + baht(s.web.baht + s.pos.baht) +
+        (s.noPrice ? '\n(ไม่นับ ' + s.noPrice + ' รายการที่ไม่มีราคา)' : ''));
+    });
+  } else if (a.do === 'waiting') {
+    fayeOrders(function(orders) {
+      var w = B.waiting(orders), n = w.reduce(function(t, g) { return t + g.lines; }, 0);
+      fayeTell(n ? 'รอจัดส่ง ' + n + ' รายการ\n' + w.slice(0, 8).map(function(g) { return '• ' + g.round + ': ' + g.lines + ' รายการ (' + g.customers + ' คน)'; }).join('\n') +
+        (w.length > 8 ? '\n…และอีก ' + (w.length - 8) + ' รอบ' : '') : 'ไม่มีออเดอร์รอจัดส่งครับ');
+    });
+  } else if (a.do === 'low_stock' || a.do === 'stock_of' || a.do === 'add_stock') {
+    if (a.do === 'add_stock' && !a.item) { // no item named: the same form as "+ เพิ่มสินค้า" on the stock page
+      switchPanel('stock'); openCreateStockModal(); return fayeSay(a.say || 'เปิดฟอร์มเพิ่มสินค้าให้แล้วครับ', 5000, 'yes');
+    }
+    loadStock(function() {
+      var line = function(r) { return '• ' + r.name + ': ' + (r.free === null ? 'ไม่จำกัด' : 'ในคลัง ' + r.shelf + (r.held ? ' · จอง ' + r.held + ' · ว่าง ' + r.free : '')); };
+      if (a.do === 'low_stock') {
+        var low = B.lowStock(stockCache);
+        return fayeTell(low.length ? 'ใกล้หมด (ว่างไม่เกิน 3 ชิ้น) ' + low.length + ' รายการ\n' + low.slice(0, 10).map(line).join('\n') +
+          (low.length > 10 ? '\n…และอีก ' + (low.length - 10) + ' รายการ' : '') : 'ยังไม่มีชิ้นไหนใกล้หมดครับ',
+          [['ไปคลังสินค้า', function() { switchPanel('stock'); }]]);
+      }
+      var rows = B.findItems(stockCache, a.item);
+      if (!rows.length) {
+        return fayeTell('ไม่เจอ “' + a.item + '” ในคลังครับ', [['เพิ่มเป็นสินค้าใหม่', function() { fayeRun({ do: 'add_stock', item: '' }); }]]);
+      }
+      if (a.do === 'stock_of') {
+        return fayeTell(rows.slice(0, 10).map(line).join('\n') + (rows.length > 10 ? '\n…และอีก ' + (rows.length - 10) + ' รายการ' : ''));
+      }
+      var open = function(r) {
+        switchPanel('stock');
+        openQuickRestock(r.parent, r.child);
+        var q = el('qrAdd'); // the form only opens — saving is still the admin's own tap
+        if (q && a.qty > 0) { q.value = a.qty; q.dispatchEvent(new Event('input')); }
+        fayeSay('เปิดฟอร์มเพิ่มสต็อก ' + r.name + ' ให้แล้วครับ ตรวจแล้วกดบันทึกได้เลย', 6000, 'yes');
+      };
+      if (rows.length === 1) return open(rows[0]);
+      fayeTell('เจอ ' + rows.length + ' รายการ จะเพิ่มชิ้นไหนครับ?', rows.slice(0, 8).map(function(r) { return [r.name, function() { open(r); }]; }));
+    });
+  } else {
+    fayeTell(a.say || 'ผมยังทำเรื่องนี้ไม่ได้ครับ');
+  }
+}
+el('fayeAsk').addEventListener('submit', function(e) {
+  e.preventDefault();
+  var inp = el('fayeAskInput'), text = inp.value.trim(); if (!text) return;
+  inp.value = '';
+  _fayeAsked = text;
+  var cmd = window.FayeBrain.local(text, fayePanels());
+  if (cmd) return fayeRun(cmd);
+  fayeChat(text, '…');
+  var prev = _fayePrev; _fayePrev = text;
+  var tips = (FAYE_TIPS[currentPanel] || []).concat(FAYE_TIPS.common);
+  google.script.run.withSuccessHandler(function(r) {
+    var res = {}; try { res = JSON.parse(r); } catch (x) {}
+    if (res.status !== 'Success') return fayeTell(res.message || 'ผมตอบไม่ได้ ลองใหม่อีกครั้งนะครับ');
+    fayeRun(res.action || {});
+  }).withFailureHandler(function() { fayeTell('ผมตอบไม่ได้ ลองใหม่อีกครั้งนะครับ'); })
+    .adminFayeAsk(text, { panels: fayePanels(), tips: tips, prev: prev });
+});
 function fayeMenuLabel(id, text) { el(id).querySelector('.faye-lbl').textContent = text; }
 function fayeView(name) {
   name = name || 'main';
@@ -400,7 +530,7 @@ el('fayeFind').addEventListener('submit', function(e) {
 });
 
 fayeHelp.addEventListener('toggle', function() {
-  if (fayeHelp.open) { fayeBubbleHide(); fayeSide(); fayeFill(); }
+  if (fayeHelp.open) { fayeBubbleHide(); fayeSide(); if (_fayeKeep) _fayeKeep = false; else fayeFill(); }
   if (fayeHelp.open) fayeDo('hello');
 });
 el('fayePause').addEventListener('click', function() {

@@ -23,7 +23,7 @@
     ['flower','Smelling a flower','flower',3150],
     ['photo','Taking a photo','photo',3000],
     ['strum','Playing ukulele','strum',1920],
-    ['plane','Paper plane','plane',2950],
+    ['plane','Paper plane','plane',4700],
     ['bubble','Blowing bubbles','hum',2400],
     ['rain','Watching the rain','stand',3200],
     ['toeTap','Tapping a foot','stand',1050],
@@ -51,6 +51,26 @@
     reactions:Object.freeze(reactions.map(([id])=>id)),
   });
   const idleCycle=groups.idle.filter(id=>id!=='page'&&id!=='sleep'&&id!=='sip'&&id!=='wake');
+  const props={
+    game:'console',read:'book',page:'book',tea:'mug',sip:'mug',snack:'cookie',flower:'flower',
+    photo:'camera',strum:'ukulele',plane:'paper',process:'notebook',letter:'letter',
+  };
+  const propPixels={
+    console:[['111111','101101','111111'],'#376ea9'],
+    book:[['11011','11111','11111','01110'],'#f2d6a4'],
+    mug:[['11100','10111','11101','11111','01100'],'#f2d6a4'],
+    cookie:[['01110','11011','11101','01110'],'#ed8a93'],
+    flower:[['0100','1110','0100','0110','0100'],'#f7d8aa'],
+    camera:[['011000','111111','110011','110011','111111'],'#619fd4'],
+    ukulele:[['00001','00010','00100','01100','11100','11000'],'#f2d6a4'],
+    paper:[['00001111','00111110','11111100','00111000','00011000'],'#fff1d7'],
+    notebook:[['01011','11111','11111','01110'],'#619fd4'],
+    letter:[['111111','110011','101101','111111'],'#f7d8aa'],
+  };
+  const propTargets={
+    console:[63,129],book:[64,130],mug:[67,116],cookie:[66,109],flower:[66,107],
+    camera:[66,103],ukulele:[66,122],paper:[24,105],notebook:[69,118],letter:[35,106],
+  };
   const glyphs = {
     note:['00110','00101','00100','11100','11100'],
     z:['1111','0010','0100','1111'],
@@ -63,14 +83,18 @@
     spark:['010','111','010'],
     bubble:['01110','11001','10001','10001','01110'],
     droplet:['01','01','10'],
-    planeBody:['00001111','00111110','11111100','00111000','00011000'],
-    planeFold:['00000000','00000000','00111000','00010000','00000000'],
     petal:['010','111','010'],
     steam:['010','100','010','001','010'],
     check:['00001','00010','10100','01000'],
   };
   const palette={ink:'#43251d',peach:'#ffa87d',pink:'#ed7c86',blue:'#388aa9',gold:'#ffd79a',cream:'#fff1d7'};
   const atlas = [
+    ['bag-poses.png',[
+      ['planeWatch',173,20,315,551,324,41],
+      ['planeLower',750,21,315,550,323,41],
+      ['bagReach',175,648,314,549,329,41],
+      ['bagLift',750,648,316,549,329,41],
+    ]],
     ['prop-motion.png',[
       ['snackBite',164,19,320,558,334,41,320,0],
       ['strumDown',738,19,321,558,334,41,321,0],
@@ -129,10 +153,10 @@
   }
   const W=144,H=164, FLOOR=150, TAU=2*Math.PI;
   const seated = new Set(['sleep','game','book','awake','eyeRub','wakeStretch']);
-  const grounded = new Set(['stand','tea','music','think','wave','yawn','hum','fidget','search','write','idea','snack','flower','photo','strum','plane','shrug','sneeze','letter']);
+  const grounded = new Set(['stand','tea','music','think','wave','yawn','hum','fidget','search','write','idea','snack','flower','photo','strum','plane','shrug','sneeze','letter','planeWatch','planeLower','bagReach','bagLift']);
   const headPixels=68, headHeight=71;
   // Match the jacket and hips to Breathe. Raised arms and seated knees retain more width.
-  const waistScale={crouch:.95,sleep:.91,game:.89,book:.90,held:.85,tea:.84,music:.84,think:.84,wave:.86,yawn:.95,hum:.89,fidget:.87,pageLift:.90,pageSweep:.90,search:.91,write:.89,writeUp:.89,idea:.90,awake:.91,eyeRub:.91,wakeStretch:.93,snack:.91,flower:.89,photo:.91,strum:.91,plane:.90,shrug:.91,sneeze:.91,letter:.90,snackBite:.91,strumDown:.91,planeRelease:.90,flowerLow:.89};
+  const waistScale={crouch:.95,sleep:.91,game:.89,book:.90,held:.85,tea:.84,music:.84,think:.84,wave:.86,yawn:.95,hum:.89,fidget:.87,pageLift:.90,pageSweep:.90,search:.91,write:.89,writeUp:.89,idea:.90,awake:.91,eyeRub:.91,wakeStretch:.93,snack:.91,flower:.89,photo:.91,strum:.91,plane:.90,shrug:.91,sneeze:.91,letter:.90,snackBite:.91,strumDown:.91,planeRelease:.90,flowerLow:.89,planeWatch:.91,planeLower:.91,bagReach:.90,bagLift:.90};
   // Iris rectangles in the source artwork. The eyelids use neighboring skin colors.
   const eyes={
     snack:[[272,282,27,32,'#ffd2bf'],[347,282,26,32,'#ffd1bf']],
@@ -161,6 +185,12 @@
     [0,'sleep'],[.14,'awake'],[.21,'awake'],[.29,'eyeRub'],[.43,'eyeRub'],
     [.50,'awake'],[.60,'wakeStretch'],[.69,'wakeStretch'],[.76,'awake'],
     [.85,'crouch'],[.94,'stand'],[1,'stand'],
+  ];
+
+  const planeFrames=[
+    [0,'plane'],[.19,'plane'],[.27,'planeRelease'],[.40,'planeRelease'],
+    [.48,'planeWatch'],[.60,'planeWatch'],[.68,'planeLower'],[.73,'planeLower'],
+    [.79,'bagReach'],[.85,'bagReach'],[.91,'bagLift'],[.95,'bagLift'],[1,'plane'],
   ];
 
   function transitionPose(transition,now) {
@@ -194,7 +224,7 @@
     const events=new AbortController(),signal=events.signal;
     let art,dead=false,frame,last=0,dirty=true,mode='idle', current=actions.breathe;
     let started=clock(), next=Infinity, x=0,y=0, moved=false, pointer=null, carry=0;
-    let idleIndex=1,thinkIndex=0,transition=null,bridge=null,visual=null,afterDrag=null;
+    let idleIndex=1,thinkIndex=0,transition=null,bridge=null,visual=null,afterDrag=null,bagIntro=null;
     let swing=0,swingVelocity=0,lastTick=null;
     let activity={automatic:auto,linked:false,returning:false},following=null;
     let napping=false,paused=false,resting=false;
@@ -212,11 +242,14 @@
     }
     function select(id) {
       const now=clock();
+      if(bagIntro&&now>=started) bagIntro=null;
       const yawnFinished=current.id==='yawn'&&now-started>=current.duration*.86;
       const wakePose=current.id==='wake'
         ? now-started>=current.duration*.94?'stand':visual?.layers.reduce((a,b)=>a.alpha>b.alpha?a:b).pose
         : null;
-      const from=transition?transitionPose(transition,now):yawnFinished?'stand':wakePose??current.pose;
+      const shown=visual?.layers.reduce((a,b)=>a.alpha>b.alpha?a:b).pose;
+      const from=transition?transitionPose(transition,now):yawnFinished?'stand':
+        wakePose??((bagIntro||current.id==='plane')&&shown?shown:current.pose);
       const to=id==='wake'?'sleep':actions[id].pose;
       const changingCarry=(to==='carry')!==(current.pose==='carry');
       const changingThought=groups.thinking.includes(id)&&grounded.has(from)&&from!==to;
@@ -226,9 +259,15 @@
       const sitDown=(grounded.has(from)||from==='crouch')&&seated.has(to);
       const standUp=(seated.has(from)||from==='crouch')&&grounded.has(to);
       const interruptible=!pointer&&!['grab','drag','drop','hello','celebrate','settle'].includes(id);
-      transition=interruptible&&!reduced.matches&&(sitDown||standUp)?{from,to,start:now}:null;
-      current=actions[id];started=now+(transition?transitionMs:0);dirty=true;
-      host.dispatchEvent(new CustomEvent('faye:state',{detail:{mode,id,label:current.label}}));
+      const outgoing=bagIntro?bagIntro.held:current.id==='plane'&&from!=='plane'?null:props[current.id];
+      const incoming=props[id];
+      const switchProp=interruptible&&!reduced.matches&&id!==current.id&&outgoing!==incoming&&(outgoing||incoming);
+      bagIntro=switchProp?buildBagIntro(from,to,outgoing,incoming,now):null;
+      if(bagIntro) bridge=null;
+      transition=!bagIntro&&interruptible&&!reduced.matches&&(sitDown||standUp)?{from,to,start:now}:null;
+      const preludeMs=bagIntro?.duration??(transition?transitionMs:0);
+      current=actions[id];started=now+preludeMs;dirty=true;
+      host.dispatchEvent(new CustomEvent('faye:state',{detail:{mode,id,label:current.label,preludeMs}}));
     }
     function scheduleActivity(id,{automatic=false,linked=false,returning=false}={}) {
       select(id);
@@ -241,7 +280,7 @@
       if(id==='tea'&&!returning) following='sip';
       if(linked&&id==='page'&&!automatic) following='read';
       if(linked&&id==='sip') following='tea';
-      const oneCycle=following!==null||id==='wake'||(linked&&id==='page')||returning||groups.reactions.includes(id);
+      const oneCycle=following!==null||id==='wake'||(id==='plane'&&automatic)||(linked&&id==='page')||returning||groups.reactions.includes(id);
       next=oneCycle?started+(id==='sleep'?sleepMs:current.duration):automatic?started+(mode==='idle'?7600:4000):Infinity;
       if(id==='sleep'&&napping) next=Infinity; // a nap lasts until wake()
     }
@@ -260,7 +299,7 @@
     }
     function play(id) {
       if(!actions[id]) throw new RangeError('Unknown Faye animation: '+id);
-      if(pointer) return;
+      if(pointer||bagIntro&&current.id===id&&clock()<started) return;
       scheduleActivity(id);
     }
     function setMode(value) {
@@ -483,28 +522,96 @@
           Math.round(left*scale)+twitch,y-spr.body,Math.round(width*scale),end-y);
       }
     }
-    const born=clock();
-    function drawWake(now) {
-      const p=clamp((now-started)/current.duration,0,1);
-      if(reduced.matches) {
-        drawSprite('awake');
-        return;
+    function buildBagIntro(from,to,outgoing,incoming,now) {
+      let at=0;
+      const frames=[[0,from]];
+      function append(duration,pose) {
+        at+=duration;
+        frames.push([at,pose]);
       }
-      const nextIndex=wakeFrames.findIndex(([time])=>time>p);
-      const lastIndex=wakeFrames.length-1;
-      const index=nextIndex<0?lastIndex:nextIndex-1;
-      const [start,from]=wakeFrames[index];
-      const [end,to]=wakeFrames[Math.min(index+1,lastIndex)];
-      const progress=end===start?1:ease((p-start)/(end-start));
-      const bodyHeight=Math.round(mix(art[from].body,art[to].body,progress));
+      if(seated.has(from)) append(135,'crouch');
+      const putAwayAt=at+100;
+      append(205,'bagReach');
+      append(90,'bagReach');
+      const takeOutAt=at;
+      if(incoming) append(205,'bagLift');
+      if(seated.has(to)) append(135,'crouch');
+      append(205,to);
+      return {frames,outgoing,incoming,putAwayAt,takeOutAt,start:now,duration:at,held:outgoing,
+        initialTilt:visual?.tilt??0,initialX:visual?.x??W/2};
+    }
+    function drawTimedPoses(frames,time,tilt=0,x=W/2) {
+      const nextIndex=frames.findIndex(([at])=>at>time);
+      const lastIndex=frames.length-1;
+      const index=nextIndex<0?lastIndex:Math.max(0,nextIndex-1);
+      const [start,from]=frames[index];
+      const [end,to]=frames[Math.min(index+1,lastIndex)];
+      const progress=end===start?1:ease(clamp((time-start)/(end-start),0,1));
+      const bodyHeight=Math.round(mix(art[from].body??41,art[to].body??41,progress));
       const layers=from===to?[{pose:from,alpha:1}]:[
         {pose:from,alpha:1-progress},{pose:to,alpha:progress},
       ].filter(layer=>layer.alpha>.01);
-      // Only the visible leg/body height changes as the knees straighten. The head stays 71 px tall.
-      const rubbing=layers.find(layer=>layer.pose==='eyeRub')?.alpha??0;
-      const tilt=.019*rubbing*Math.sin((p-.29)*TAU*15);
-      drawFrame({layers,additive:layers.length>1,x:W/2,y:FLOOR-bodyHeight,
+      drawFrame({layers,additive:layers.length>1,x,y:FLOOR-bodyHeight,
         tilt,sx:1,sy:1,flutter:0,bodyHeight});
+    }
+    function drawProp(kind,x,y,size=1,alpha=1) {
+      const [pixels,color]=propPixels[kind];
+      ctx.globalAlpha=clamp(alpha,0,1);
+      for(let row=0;row<pixels.length;row++) {
+        for(let col=0;col<pixels[row].length;col++) {
+          if(pixels[row][col]!=='1') continue;
+          ctx.fillStyle=palette.ink;
+          ctx.fillRect(Math.round(x)+col*size-1,Math.round(y)+row*size-1,size+2,size+2);
+        }
+      }
+      ctx.fillStyle=color;
+      for(let row=0;row<pixels.length;row++) {
+        for(let col=0;col<pixels[row].length;col++) {
+          if(pixels[row][col]==='1') ctx.fillRect(Math.round(x)+col*size,Math.round(y)+row*size,size,size);
+        }
+      }
+      ctx.globalAlpha=1;
+    }
+    function drawBagIntro(now) {
+      const intro=bagIntro;
+      const elapsed=now-intro.start;
+      const settle=ease(clamp(elapsed/210,0,1));
+      drawTimedPoses(intro.frames,elapsed,intro.initialTilt*(1-settle),mix(intro.initialX,W/2,settle));
+      const store=(elapsed-intro.putAwayAt)/190;
+      const retrieve=(elapsed-intro.takeOutAt)/(intro.duration-intro.takeOutAt);
+      if(intro.outgoing&&store>=0&&store<1) {
+        const p=ease(store);
+        const [x,y]=propTargets[intro.outgoing];
+        drawProp(intro.outgoing,mix(x,85,p),mix(y,130,p),1,(1-store)*1.18);
+      }
+      if(elapsed>=intro.takeOutAt) intro.held=retrieve>=.16?intro.incoming:null;
+      if(intro.incoming&&retrieve>=0&&retrieve<1)
+        drawRetrievedProp(intro.incoming,retrieve);
+    }
+    function drawRetrievedProp(kind,time) {
+      const [targetX,targetY]=propTargets[kind];
+      const lifted=ease(clamp(time/.53,0,1)), extended=ease(clamp((time-.53)/.47,0,1));
+      const x=mix(mix(85,63,lifted),targetX,extended);
+      const y=mix(mix(130,116,lifted),targetY,extended);
+      drawProp(kind,x,y,kind==='paper'&&time>.67?2:1,clamp(time*6,0,1)*(1-Math.pow(time,5)));
+    }
+    function drawPlane(p) {
+      if(reduced.matches) {drawSprite('plane');return;}
+      const throwTilt=.06*Math.exp(-180*(p-.26)**2)-.041*Math.exp(-240*(p-.20)**2);
+      drawTimedPoses(planeFrames,p,throwTilt);
+      if(p>=.27&&p<.60) {
+        const q=(p-.27)/.33;
+        drawProp('paper',mix(23,-19,q),105-Math.sin(q*Math.PI*.73)*34-q*21,2,1);
+      }
+      if(p>=.85) drawRetrievedProp('paper',(p-.85)/.15);
+    }
+
+    const born=clock();
+    function drawWake(now) {
+      const p=clamp((now-started)/current.duration,0,1);
+      if(reduced.matches) {drawSprite('awake');return;}
+      const rub=ease(clamp(Math.min((p-.21)/.08,(.50-p)/.07),0,1));
+      drawTimedPoses(wakeFrames,p,.019*rub*Math.sin((p-.29)*TAU*15));
     }
     let drawTime=0;
     function detailFor(id,p,now) {
@@ -538,7 +645,6 @@
           const stroke=(p*4)%1;
           alternate='strumDown';amount=ease(clamp(Math.min((stroke-.17)/.10,(.75-stroke)/.20),0,1));break;
         }
-        case 'plane':alternate='planeRelease';amount=pulse(.33,.38,.88,.99);break;
         case 'shrug':alternate='stand';amount=1-pulse(.04,.25,.59,.97);break;
         case 'sneeze':alternate='stand';amount=1-pulse(.16,.36,.55,.86);break;
         case 'letter':alternate='stand';amount=1-pulse(.01,.14,.79,.98);break;
@@ -553,6 +659,10 @@
     function draw(now) {
       drawTime=now;
       ctx.clearRect(0,0,W,H);
+      if(bagIntro) {
+        if(now<started&&!reduced.matches) {drawBagIntro(now);return;}
+        bagIntro=null;
+      }
       if(transition) {
         if(now<started&&!reduced.matches) {
           drawSprite(transitionPose(transition,now));
@@ -563,6 +673,7 @@
       }
       const {id,pose,duration}=current;
       if(id==='wake') {drawWake(now);return;}
+      if(id==='plane') {drawPlane(((now-started)%duration)/duration);return;}
       const shot=groups.reactions.includes(id)&&id!=='drag';
       const p=reduced.matches?(shot ? .52 : .3):(shot?clamp((now-started)/duration,0,1):((now-started)%duration)/duration);
       const s=Math.sin(p*TAU),c=Math.cos(p*TAU), hop=Math.sin(p*Math.PI);
@@ -601,7 +712,6 @@
         case 'flower':tilt=-.045*hop;break;
         case 'photo':tilt=.045*Math.exp(-130*(p-.51)**2);break;
         case 'strum':tilt=.024*s;break;
-        case 'plane':tilt=.10*Math.exp(-55*(p-.41)**2)-.04*Math.exp(-80*(p-.25)**2);break;
         case 'bubble':tilt=.016*s;break;
         case 'rain':tilt=-.022*hop;break;
         case 'shrug':dy=-2*hop;tilt=.043*hop;break;
@@ -672,17 +782,6 @@
           if(beat>.22) mark('note',103+Math.round(beat*10),115-Math.round(beat*21),palette.pink,1,1-beat);
           break;
         }
-        case 'plane':
-          if(p>=.38&&p<.89) {
-            const q=(p-.38)/.51;
-            const x=26-Math.round(45*q),y=102-Math.round(Math.sin(q*Math.PI*.73)*39+q*22);
-            for(const [dx,dy] of [[-1,0],[1,0],[0,-1],[0,1]])
-              mark('planeBody',x+dx,y+dy,palette.ink,2,1);
-            mark('planeBody',x,y,palette.cream,2,1);
-            mark('planeFold',x,y,palette.peach,2,1);
-            if(q>.09) mark('dot',x+17,y+5,palette.blue,1,.38);
-          }
-          break;
         case 'bubble':
           if(p>.18&&p<.80) {
             const q=(p-.18)/.62;
@@ -758,7 +857,7 @@
       carry*=Math.exp(-8*dt);
       swingVelocity=(swingVelocity+(carry-swing)*54*dt)*Math.exp(-7*dt);
       swing=clamp(swing+swingVelocity*dt,-.22,.22);
-      const interval=bridge||pointer||current.id==='drop'||current.id==='wake'?1000/40:1000/30;
+      const interval=bridge||bagIntro||pointer||current.id==='drop'||current.id==='wake'||current.id==='plane'?1000/40:1000/30;
       if(dirty||(!paused&&!reduced.matches&&raw-last>=interval)) {draw(now);last=raw;dirty=false;}
       frame=requestAnimationFrame(tick);
     }

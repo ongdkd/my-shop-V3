@@ -2072,6 +2072,22 @@
       } catch (e) { return e.__json || err(e.message || e); }
     },
 
+    // Ask Faye — Supabase Edge Function "faye-chat" turns a typed sentence into one
+    // action ({ do, say, customer, item, qty, panel, from, to, query }); see the function.
+    adminFayeAsk: async function (text, ctx) {
+      try {
+        requireSb(); await requireAdmin();
+        var r = await sb.functions.invoke('faye-chat', { body: Object.assign({ text: String(text || '') }, ctx || {}) });
+        if (r.error) {
+          var st = r.error.context && r.error.context.status;
+          return err(st === 404 ? 'ยังไม่ได้ deploy ฟังก์ชัน faye-chat' : 'AI ไม่ตอบ' + (st ? ' (' + st + ')' : '') + ' ลองใหม่อีกครั้งนะครับ');
+        }
+        var d = r.data || {};
+        if (!d.ok) return err(d.message || 'AI ตอบไม่ได้');
+        return ok({ action: d });
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
     // iShip shipping — Supabase Edge Function "iship" (holds the iShip token).
     // action: couriers | quote | create | trace | pickup; see the function.
     adminIship: async function (action, payload) {

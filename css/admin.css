@@ -64,6 +64,12 @@ button:focus-visible,a:focus-visible,.nav-item:focus-visible{outline:2px solid v
 .faye.held summary{cursor:grabbing;}
 .faye.held .faye-stage{filter:drop-shadow(0 12px 10px rgba(74,46,61,.25));}
 .faye-badge{position:absolute;top:6%;right:14%;min-width:22px;height:22px;padding:0 6px;border-radius:999px;background:var(--primary);color:#fff;font-size:.72rem;font-weight:700;line-height:22px;text-align:center;border:2px solid #fff;box-shadow:var(--shadow-sm);}
+.faye-ready{position:absolute;top:14%;left:2%;width:30px;height:30px;border-radius:50%;background:var(--surface);border:1.5px solid var(--primary);box-shadow:var(--shadow-sm);font-size:.95rem;line-height:27px;text-align:center;animation:fayeReady 2.4s ease-in-out infinite;pointer-events:none;}
+.faye.left .faye-ready{left:auto;right:2%;}
+.faye.mini .faye-ready{width:22px;height:22px;font-size:.7rem;line-height:19px;top:0;}
+.faye.napping .faye-ready,.faye.held .faye-ready,.faye-help[open] .faye-ready{display:none;}
+@keyframes fayeReady{0%,100%{transform:translateY(0);}50%{transform:translateY(-4px);}}
+@media(prefers-reduced-motion:reduce){.faye-ready{animation:none;}}
 .faye-help-panel{position:absolute;bottom:100%;right:0;width:min(340px,calc(100vw - 24px));max-height:min(70dvh,calc(100dvh - 150px));overflow:auto;padding:15px 16px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface);color:var(--text);box-shadow:var(--shadow-md);}
 .faye.below .faye-help-panel{bottom:auto;top:100%;}
 .faye.left .faye-help-panel{right:auto;left:0;}
@@ -92,6 +98,12 @@ button:focus-visible,a:focus-visible,.nav-item:focus-visible{outline:2px solid v
 .faye-find{display:flex;gap:6px;}
 .faye-find input{flex:1;min-width:0;min-height:38px;padding:0 12px;border:1.5px solid var(--border);border-radius:999px;background:var(--surface-2);font:inherit;font-size:.85rem;color:var(--text);}
 .faye-find input:focus{outline:none;border-color:var(--primary);}
+/* Ask Faye: the type box under his reply, and the buttons an answer can carry */
+.faye-ask{margin-bottom:10px;}
+.faye-reply{white-space:pre-line;overflow-wrap:anywhere;}
+.faye-acts{display:flex;flex-wrap:wrap;gap:6px;}
+.faye-acts[hidden]{display:none;}
+.faye-acts .faye-go-btn{max-width:100%;}
 .faye-sub{margin:4px 0 6px;font-size:.72rem;font-weight:700;color:var(--text-3);}
 .faye-go{display:grid;grid-template-columns:1fr 1fr;gap:6px;}
 .faye-go-btn{min-height:36px;padding:6px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);color:var(--text);font:inherit;font-size:.8rem;text-align:left;text-decoration:none;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
