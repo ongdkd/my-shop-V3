@@ -177,7 +177,10 @@ function fayeNudge(e) {
   if (e.type === 'pointermove' || e.type === 'scroll') { // cheap: at most once a second
     var now = Date.now(); if (now - fayeLastNudge < 1000) return; fayeLastNudge = now;
   }
-  if (faye && faye.asleep && e.type !== 'pointermove' && e.type !== 'scroll') faye.wake();
+  if (faye && faye.asleep && e.type !== 'pointermove' && e.type !== 'scroll') {
+    faye.wake();
+    if (!fayeHelp.open && !fayePaused) setTimeout(function() { if (el('fayeBubble').hidden) fayeSay(fayeLine('wake'), 4000, false); }, 2600);
+  }
   fayeSyncNap();
   fayeNapLater();
 }
@@ -186,6 +189,29 @@ function fayeNudge(e) {
 });
 document.addEventListener('visibilitychange', function() { if (!document.hidden) fayeNapLater(); });
 fayeNapLater();
+
+// ── Personality (js/faye-voice.js): pokes and things he says on his own ──
+var fayeTapAt = 0, fayePokeAt = 0, fayePokes = 0;
+function fayePoke(n) {
+  if (!faye || fayePaused) return;
+  var t = window.FayeVoice ? FayeVoice.tap(n) : { text: 'หืม?', anim: 'surprise' };
+  faye.wake(); fayeSyncNap();
+  try { faye.play(t.anim); } catch (x) {}
+  if (fayeHelp.open) fayeSays(t.text); else fayeSay(t.text, 3000, false);
+}
+// Every 3–6 minutes, if he's awake and nothing else is going on, he says something
+var FAYE_REMARK_MS = [3 * 60000, 6 * 60000], fayeRemarkTimer = null;
+function fayeRemarkLater() {
+  clearTimeout(fayeRemarkTimer);
+  fayeRemarkTimer = setTimeout(function() {
+    fayeRemarkLater();
+    if (!faye || !window.FayeVoice || faye.asleep || fayeHeld || fayePaused || fayeHelp.open || document.hidden) return;
+    if (!el('fayeBubble').hidden || document.querySelector('#modal.open')) return;
+    var text = FayeVoice.idle(faye.current, currentPanel, new Date().getHours());
+    if (text) fayeSay(text, 5000, false);
+  }, FAYE_REMARK_MS[0] + Math.random() * (FAYE_REMARK_MS[1] - FAYE_REMARK_MS[0]));
+}
+fayeRemarkLater();
 
 // ── Busy: while the page waits on the server for a moment, he thinks ──
 var fayeBusyTimer = null;
@@ -264,7 +290,18 @@ window.addEventListener('resize', fayePlace);
   summary.addEventListener('pointerup', drop);
   summary.addEventListener('pointercancel', drop);
   // A drop must not also open the panel
-  summary.addEventListener('click', function(e) { if (dragged) { e.preventDefault(); dragged = false; } });
+  summary.addEventListener('click', function(e) {
+    if (dragged) { e.preventDefault(); dragged = false; return; }
+    // Tapping him again quickly is a poke: he reacts instead of opening/closing his panel
+    var now = Date.now();
+    if (now - fayeTapAt < 650) {
+      e.preventDefault();
+      if (now - fayePokeAt > 4000) fayePokes = 0;
+      fayePokes++; fayePokeAt = now;
+      fayePoke(fayePokes);
+    }
+    fayeTapAt = now;
+  });
   summary.addEventListener('contextmenu', function(e) { e.preventDefault(); });
 })();
 
@@ -276,8 +313,13 @@ function fayeSay(text, ms, anim) {
   fayeSide();
   clearTimeout(fayeBubbleTimer);
   fayeBubbleTimer = setTimeout(fayeBubbleHide, ms || 6000);
-  fayeDo(anim || 'hello');
+  if (anim !== false) fayeDo(anim || 'hello');
+  else if (faye && faye.talk) faye.talk(Math.max(650, Math.min(2100, text.length * 26)));
 }
+// A line from his voice (js/faye-voice.js); '' when there is none
+function fayeLine(kind, key) { return window.FayeVoice ? FayeVoice.line(kind, key) : ''; }
+// A last cheeky line under one of his answers
+function fayeQuip(key) { var q = fayeLine('quip', key); return q ? '\n\n' + q : ''; }
 function fayeBubbleHide() { clearTimeout(fayeBubbleTimer); el('fayeBubble').hidden = true; }
 el('fayeBubble').addEventListener('click', function() { fayeBubbleHide(); fayeHelp.open = true; });
 
@@ -391,7 +433,8 @@ function fayeWaiting() {
 function fayeChat(you, reply) { if (you) fayeYou(you); return fayeSays(reply); }
 function fayeGreet() {
   var unread = fayeUnread();
-  fayeSays(fayeGreeting() + ' ' + (unread ? 'มีเรื่องใหม่ ' + unread + ' เรื่องครับ ให้ผมช่วยอะไรดี?' : 'ให้ผมช่วยอะไรดีครับ?'));
+  var hi = window.FayeVoice ? FayeVoice.line('greet', FayeVoice.part(new Date().getHours())) : fayeGreeting() + ' ให้ผมช่วยอะไรดีครับ?';
+  fayeSays(hi + (unread ? '\nมีเรื่องใหม่ ' + unread + ' เรื่องนะ ดูที่ ☰ เมนู → มีอะไรใหม่' : ''));
 }
 el('fayeClear').addEventListener('click', function() {
   el('fayeLog').innerHTML = ''; _fayePending = null; fayeGreet();
@@ -462,7 +505,8 @@ function fayeRun(a) {
       var row = function(name, g) { return name + ': ' + g.lines + ' รายการ ' + g.qty + ' ชิ้น ' + baht(g.baht); };
       fayeTell('ยอดขาย ' + fayeDay(from) + (to !== from ? ' – ' + fayeDay(to) : '') + '\n' +
         row('หน้าเว็บ', s.web) + '\n' + row('หน้าร้าน (POS)', s.pos) + '\nรวม ' + baht(s.web.baht + s.pos.baht) +
-        (s.noPrice ? '\n(ไม่นับ ' + s.noPrice + ' รายการที่ไม่มีราคา)' : ''));
+        (s.noPrice ? '\n(ไม่นับ ' + s.noPrice + ' รายการที่ไม่มีราคา)' : '') +
+        fayeQuip(s.web.baht + s.pos.baht > 0 ? 'salesUp' : 'salesZero'));
     });
   } else if (a.do === 'buy_list') {
     // What to buy for a round — the numbers of "สรุปตามสินค้า" on the orders page
@@ -493,6 +537,7 @@ function fayeRun(a) {
         'ต้องสั่ง ' + r.items.length + ' สินค้า · รวม ' + r.qty + ' ชิ้น\n' + r.items.map(line).join('\n');
       if (r.gifts.length) text += '\n\nของแถม ' + r.giftQty + ' ชิ้น\n' + r.gifts.map(line).join('\n');
       if (r.cancelled) text += '\n\n(ไม่นับ ' + r.cancelled + ' รายการที่ยกเลิก)';
+      text += fayeQuip('buyList');
       fayeTell(text, round && round.listId ? [['เปิดสรุปตามสินค้าของรอบนี้', function() {
         selectedSheetId = round.listId; selectedSheetName = round.name; _ordView = 'items'; switchPanel('orders');
       }]] : []);
@@ -501,7 +546,7 @@ function fayeRun(a) {
     fayeOrders(function(orders) {
       var w = B.waiting(orders), n = w.reduce(function(t, g) { return t + g.lines; }, 0);
       fayeTell(n ? 'รอจัดส่ง ' + n + ' รายการ\n' + w.slice(0, 8).map(function(g) { return '• ' + g.round + ': ' + g.lines + ' รายการ (' + g.customers + ' คน)'; }).join('\n') +
-        (w.length > 8 ? '\n…และอีก ' + (w.length - 8) + ' รอบ' : '') : 'ไม่มีออเดอร์รอจัดส่งครับ');
+        (w.length > 8 ? '\n…และอีก ' + (w.length - 8) + ' รอบ' : '') + fayeQuip('waitingMany') : 'ไม่มีออเดอร์รอจัดส่งครับ' + fayeQuip('waitingNone'));
     });
   } else if (a.do === 'low_stock' || a.do === 'stock_of' || a.do === 'add_stock') {
     if (a.do === 'add_stock' && !a.item) { // no item named: the same form as "+ เพิ่มสินค้า" on the stock page
@@ -512,7 +557,7 @@ function fayeRun(a) {
       if (a.do === 'low_stock') {
         var low = B.lowStock(stockCache);
         return fayeTell(low.length ? 'ใกล้หมด (ว่างไม่เกิน 3 ชิ้น) ' + low.length + ' รายการ\n' + low.slice(0, 10).map(line).join('\n') +
-          (low.length > 10 ? '\n…และอีก ' + (low.length - 10) + ' รายการ' : '') : 'ยังไม่มีชิ้นไหนใกล้หมดครับ',
+          (low.length > 10 ? '\n…และอีก ' + (low.length - 10) + ' รายการ' : '') + fayeQuip('lowSome') : 'ยังไม่มีชิ้นไหนใกล้หมดครับ' + fayeQuip('lowNone'),
           [['ไปคลังสินค้า', function() { switchPanel('stock'); }]]);
       }
       var rows = B.findItems(stockCache, a.item);
@@ -717,6 +762,11 @@ function toast(msg, type, action) {
   if (_toastTimer) clearTimeout(_toastTimer);
   _toastTimer = setTimeout(function() { el.classList.remove('show'); el.style.pointerEvents = ''; _toastTimer = null; }, action ? 7000 : 3500);
   if (typeof fayeDo === 'function') fayeDo(type === 'error' ? 'oops' : 'yes'); // nod at good news, "oops" at errors
+  // …and now and then a word of his own (not every time, or it gets old)
+  if (typeof fayeLine === 'function' && !fayeHelp.open && document.getElementById('fayeBubble').hidden && !(faye && faye.asleep) &&
+      Math.random() < (type === 'error' ? .6 : .3)) {
+    setTimeout(function() { if (document.getElementById('fayeBubble').hidden) fayeSay(fayeLine('toast', type === 'error' ? 'error' : 'success'), 4000, false); }, 900);
+  }
 }
 
 // ── Beep — runs in parent window where AudioContext is already unlocked ──
@@ -9587,7 +9637,11 @@ function drawNotifBadge() {
 function notifAnnounce(fresh) {
   var first = notifText(fresh[0]) + (fresh.length > 1 ? ' และอีก ' + (fresh.length - 1) + ' รายการ' : '');
   toast('🔔 ' + first, 'success');
-  fayeSay(first, 7000, 'letter'); // a new order or slip: he brings the letter
+  // a new order or slip: he says something about it, then the notice itself
+  var ev = fresh[0], kind = ev.type === 'order' || ev.type === 'po_arrived' || ev.type === 'delivered' ? ev.type : ev.deliveryId ? 'remaining' : 'slip';
+  var anim = { order: 'letter', slip: 'celebrate', remaining: 'yes', po_arrived: 'hello', delivered: 'celebrate' }[kind];
+  var say = fayeLine('event', kind);
+  fayeSay((say ? say + '\n' : '') + first, 8000, anim);
   if (_notif.audio) {
     try {
       var o = _notif.audio.createOscillator(), g = _notif.audio.createGain();

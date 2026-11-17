@@ -1299,7 +1299,7 @@ body.touch-dragging *{-webkit-touch-callout:none;}
 .faye.loading .faye-ready,.faye.napping .faye-ready,.faye.held .faye-ready,.faye-help[open] .faye-ready{display:none;}
 @keyframes fayeReady{0%,100%{transform:translateY(0);}50%{transform:translateY(-3px);}}
 @keyframes fayeDots{0%,60%{opacity:1;}61%,100%{opacity:.25;}}
-.faye-bubble{position:absolute;bottom:calc(100% + 12px);right:12px;width:max-content;max-width:min(260px,calc(100vw - 48px));padding:8px 11px;background:#fcf4ec;color:#34140c;font-size:.82rem;line-height:1.45;cursor:pointer;border-radius:0;box-shadow:0 -3px 0 0 #34140c,0 3px 0 0 #34140c,-3px 0 0 0 #34140c,3px 0 0 0 #34140c,inset 0 -3px 0 0 #fcd4c4,6px 6px 0 0 rgba(52,20,12,.18);animation:fayePixPop .24s steps(3,end);}
+.faye-bubble{white-space:pre-line;position:absolute;bottom:calc(100% + 12px);right:12px;width:max-content;max-width:min(260px,calc(100vw - 48px));padding:8px 11px;background:#fcf4ec;color:#34140c;font-size:.82rem;line-height:1.45;cursor:pointer;border-radius:0;box-shadow:0 -3px 0 0 #34140c,0 3px 0 0 #34140c,-3px 0 0 0 #34140c,3px 0 0 0 #34140c,inset 0 -3px 0 0 #fcd4c4,6px 6px 0 0 rgba(52,20,12,.18);animation:fayePixPop .24s steps(3,end);}
 .faye-bubble::after{content:'';position:absolute;right:22px;bottom:-6px;width:3px;height:3px;box-shadow:0px -3px 0 0 #fcf4ec,3px -3px 0 0 #fcf4ec,-3px 0px 0 0 #34140c,0px 0px 0 0 #fcf4ec,3px 0px 0 0 #fcf4ec,6px 0px 0 0 #34140c,0px 3px 0 0 #34140c,3px 3px 0 0 #fcf4ec,6px 3px 0 0 #34140c,3px 6px 0 0 #34140c,6px 6px 0 0 #34140c;}
 .faye.below .faye-bubble{bottom:auto;top:calc(100% + 12px);}
 .faye.below .faye-bubble::after{bottom:auto;top:-6px;transform:scaleY(-1);}

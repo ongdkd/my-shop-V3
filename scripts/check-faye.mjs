@@ -77,4 +77,22 @@ assert.equal(F.buyList(round, '', 'L1').qty, 10);                 // the round o
 assert.equal(F.buyList(round, 'shutline').rounds.length, 1);      // "Other" has no Shutline in its name
 assert.equal(F.buyList(round, 'sticker').byProduct, true);        // no round: falls back to product names
 assert.equal(F.buyList(round, 'sticker').qty, 9);
+
+// Faye's voice (js/faye-voice.js)
+const V = createRequire(import.meta.url)('../js/faye-voice.js');
+for (const [kind, pool] of Object.entries(V.LINES)) {
+  const lists = Array.isArray(pool) ? { '': pool } : pool;
+  for (const [key, list] of Object.entries(lists)) {
+    assert.ok(list.length > 0, kind + '.' + key + ' has lines');
+    for (const l of list) assert.ok(typeof l === 'string' && l.trim() && l.length <= 80, kind + '.' + key + ': ' + l);
+    assert.equal(new Set(list).size, list.length, kind + '.' + key + ' has no duplicates');
+  }
+}
+for (const k of ['order', 'slip', 'remaining', 'po_arrived', 'delivered']) assert.ok(V.line('event', k));
+for (const k of ['salesUp', 'salesZero', 'waitingMany', 'waitingNone', 'lowSome', 'lowNone', 'buyList']) assert.ok(V.line('quip', k));
+for (const h of [0, 4, 5, 10, 11, 13, 14, 17, 18, 21, 22, 23]) { assert.ok(V.line('greet', V.part(h))); assert.ok(V.line('time', V.part(h))); }
+let prev = ''; for (let i = 0; i < 30; i++) { const l = V.line('wake'); assert.notEqual(l, prev); prev = l; } // never twice in a row
+assert.equal(V.line('event', 'nope'), '');
+assert.deepEqual(V.tap(1), { text: V.TAPS[0][0], anim: V.TAPS[0][1] });
+assert.equal(V.tap(99).text, V.TAPS[V.TAPS.length - 1][0]);       // more taps: stays at the last reaction
 console.log('check-faye: ok');
