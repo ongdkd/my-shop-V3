@@ -51,25 +51,84 @@
     reactions:Object.freeze(reactions.map(([id])=>id)),
   });
   const idleCycle=groups.idle.filter(id=>id!=='page'&&id!=='sleep'&&id!=='sip'&&id!=='wake');
+  const authored = {
+    'idle-breath': ['inhale','exhale','weightShift','tapFoot'],
+    transition: ['anticipate','hopUp','land','standSettle'],
+    look: ['lookLeft','lookRight','lookUp','lookNod'],
+    stargaze: ['starUpLeft','starUp','starUpRight','starSigh'],
+    wave: ['waveLift','waveLeft','waveRight','palmHighFive'],
+    cheer: ['cheerJump','cheerLand','laughBack','laughForward'],
+    feelings: ['feelSurprise','feelOops','feelBlush','feelNo'],
+    sneeze: ['sneezeIn','sneezeHold','sneezeRelease','sneezeAfter'],
+    'carry-motion': ['carryGrab','carryLeft','carryRight','carryLand'],
+    letter: ['letterHide','letterOffer','shrugStart','shrugFull'],
+    think: ['ponderLeft','ponderRight','ideaLift','ideaPoint'],
+    search: ['searchLeft','searchRight','searchFront','searchFound'],
+    write: ['writeFast','writeCheek','writeHead','writeProud'],
+    sleep: ['yawnStart','yawnFull','sleepIn','sleepOut'],
+    wake: ['awake','eyeRub','wakeStretch','wakeRise'],
+    tea: ['teaBlow','teaDrink','teaSigh','teaPeek'],
+    music: ['vibeLeft','vibeRight','humOpen','humSmile'],
+    game: ['gameFocus','gameLeft','gameRight','gameWin'],
+    'daydream-stretch': ['dreamClasp','dreamLean','stretchUp','stretchSide'],
+    outdoors: ['rainUmbrella','rainCatch','bubbleBlow','bubbleWatch'],
+    'snack-photo': ['cookieChew','cookieLick','photoShoot','photoCheck'],
+    extras: ['bagTwist','bagSwing','flowerSniff','ukuleleSing'],
+    reading: ['bookRead','bookPinch','bookLift','bookSweep'],
+    'paper-plane': ['planeHold','planeRelease','planeWatch','planeLower'],
+    'satchel-motion': ['bagReach','bagOpen','bagLift','bagClose'],
+    'bag-mug-cookie': ['bagMugHalf','bagMugChest','bagCookieHalf','bagCookieChest'],
+    'bag-camera-flower': ['bagCameraHalf','bagCameraChest','bagFlowerHalf','bagFlowerChest'],
+    'bag-ukulele-letter': ['bagUkuleleHalf','bagUkuleleChest','bagLetterHalf','bagLetterChest'],
+    'bag-notebook-plane': ['bagNotebookHalf','bagNotebookChest','bagPlaneHalf','bagPlaneChest'],
+    'bag-console-book': ['bagConsoleHalf','bagConsoleSit','bagBookHalf','bagBookSit'],
+    'bag-empty': ['bagLook','bagFlap','bagRise','bagPat'],
+    'hobby-motion': ['flowerLow','flowerNear','strumReady','strumDown'],
+    talk: ['talkClosed','talkHalf','talkWide','talkBlink'],
+  };
+  const clips = {
+    breathe:['inhale','exhale','inhale','exhale','inhale','exhale'], vibe:['vibeLeft','vibeRight','vibeLeft','vibeRight'],
+    sleep:['sleepIn','sleepOut','sleepIn','sleepOut'], game:['gameFocus','gameLeft','gameRight','gameWin'],
+    page:['bookRead','bookPinch','bookLift','bookSweep'],
+    tea:['teaBlow','teaPeek','teaBlow','teaSigh','teaPeek'], daydream:['dreamClasp','dreamLean','dreamClasp','dreamLean'],
+    stretch:['anticipate','stretchUp','stretchSide','stretchUp'], yawn:['yawnStart','yawnFull','yawnStart','yawnFull','talkClosed'],
+    peek:['lookLeft','lookRight','lookLeft','lookRight'], hum:['humOpen','humSmile','humOpen','humSmile'],
+    sway:['weightShift','exhale','weightShift','inhale'], fidget:['bagTwist','bagSwing','bagTwist','bagSwing'],
+    stargaze:['starUpLeft','starUp','starUpRight','starSigh'],
+    sip:['teaBlow','teaDrink','teaSigh','teaDrink','teaPeek'],
+    snack:['cookieChew','cookieLick','cookieChew','cookieLick'],
+    flower:['flowerLow','flowerNear','flowerLow','flowerNear','flowerLow','flowerNear'],
+    photo:['photoShoot','photoCheck','photoShoot','photoCheck'],
+    strum:['strumReady','strumDown','strumReady','strumDown'],
+    bubble:['bubbleBlow','bubbleWatch','bubbleBlow','bubbleWatch'],
+    rain:['rainUmbrella','rainCatch','rainUmbrella','rainCatch','rainUmbrella','rainCatch'],
+    toeTap:['exhale','tapFoot','exhale','tapFoot'],
+    ponder:['ponderLeft','ponderRight','ponderLeft','ponderRight'], search:['searchLeft','searchRight','searchFront','searchFound'],
+    process:['writeFast','writeCheek','writeHead','writeProud'],
+    idea:['ideaLift','ideaPoint','ideaLift','ideaPoint','ideaPoint','ideaLift'],
+    hello:['waveLift','waveLeft','waveRight','waveLeft','waveRight','waveLift'],
+    celebrate:['cheerJump','cheerLand','cheerJump','cheerLand'], surprise:['anticipate','feelSurprise','feelSurprise','standSettle'],
+    oops:['feelOops','feelOops','talkClosed'], grab:['carryGrab'], drag:['carryLeft','carryRight'],
+    drop:['carryLand','land','standSettle'], settle:['standSettle','talkClosed'], shrug:['shrugStart','shrugFull','shrugFull','talkClosed'],
+    sneeze:['sneezeIn','sneezeHold','sneezeRelease','sneezeAfter'],
+    letter:['letterHide','letterOffer','letterOffer','letterHide','letterOffer'], laugh:['laughBack','laughForward','laughBack','laughForward'],
+    yes:['talkClosed','lookNod','talkClosed','lookNod','talkClosed'], no:['talkClosed','feelNo','talkClosed','feelNo'],
+    blush:['talkClosed','feelBlush','feelBlush','talkClosed','standSettle'],
+    highFive:['waveLift','palmHighFive','palmHighFive','waveLift'],
+  };
   const props={
     game:'console',read:'book',page:'book',tea:'mug',sip:'mug',snack:'cookie',flower:'flower',
     photo:'camera',strum:'ukulele',plane:'paper',process:'notebook',letter:'letter',
   };
   const propPixels={
-    console:[['111111','101101','111111'],'#376ea9'],
-    book:[['11011','11111','11111','01110'],'#f2d6a4'],
-    mug:[['11100','10111','11101','11111','01100'],'#f2d6a4'],
-    cookie:[['01110','11011','11101','01110'],'#ed8a93'],
-    flower:[['0100','1110','0100','0110','0100'],'#f7d8aa'],
-    camera:[['011000','111111','110011','110011','111111'],'#619fd4'],
-    ukulele:[['00001','00010','00100','01100','11100','11000'],'#f2d6a4'],
-    paper:[['00001111','00111110','11111100','00111000','00011000'],'#fff1d7'],
-    notebook:[['01011','11111','11111','01110'],'#619fd4'],
-    letter:[['111111','110011','101101','111111'],'#f7d8aa'],
+    paper:[['00001111','00111110','11111100','00111000','00010000'],'#fff1d7'],
   };
-  const propTargets={
-    console:[63,129],book:[64,130],mug:[67,116],cookie:[66,109],flower:[66,107],
-    camera:[66,103],ukulele:[66,122],paper:[24,105],notebook:[69,118],letter:[35,106],
+  const bagPoses={
+    mug:['bagMugHalf','bagMugChest'], cookie:['bagCookieHalf','bagCookieChest'],
+    camera:['bagCameraHalf','bagCameraChest'], flower:['bagFlowerHalf','bagFlowerChest'],
+    ukulele:['bagUkuleleHalf','bagUkuleleChest'], letter:['bagLetterHalf','bagLetterChest'],
+    notebook:['bagNotebookHalf','bagNotebookChest'], paper:['bagPlaneHalf','bagPlaneChest'],
+    console:['bagConsoleHalf','bagConsoleSit'], book:['bagBookHalf','bagBookSit'],
   };
   const glyphs = {
     note:['00110','00101','00100','11100','11100'],
@@ -88,116 +147,52 @@
     check:['00001','00010','10100','01000'],
   };
   const palette={ink:'#43251d',peach:'#ffa87d',pink:'#ed7c86',blue:'#388aa9',gold:'#ffd79a',cream:'#fff1d7'};
-  const atlas = [
-    ['bag-poses.png',[
-      ['planeWatch',173,20,315,551,324,41],
-      ['planeLower',750,21,315,550,323,41],
-      ['bagReach',175,648,314,549,329,41],
-      ['bagLift',750,648,316,549,329,41],
-    ]],
-    ['prop-motion.png',[
-      ['snackBite',164,19,320,558,334,41,320,0],
-      ['strumDown',738,19,321,558,334,41,321,0],
-      ['planeRelease',137,647,347,557,335,41,320,27],
-      ['flowerLow',738,647,321,557,335,41,321,0],
-    ]],
-    ['extras-a.png',[
-      ['snack',165,22,318,554,328,41], ['flower',767,22,318,554,329,41],
-      ['photo',165,649,318,553,329,41], ['strum',767,649,320,553,329,41],
-    ]],
-    ['extras-b.png',[
-      ['plane',96,18,388,570,344,41,331,57], ['shrug',721,18,332,570,344,41],
-      ['sneeze',124,656,353,581,356,41,335,18], ['letter',645,658,418,579,348,41,338,80],
-    ]],
-
-    ['eye-rub.png',[['eyeRub',155,56,792,1248,804,27]]],
-    ['wake.png',[
-      ['awake',242,41,518,816,531,27],
-      ['wakeStretch',1027,41,520,816,531,27],
-    ]],
-    ['thinking.png',[
-      ['search',116,22,340,568,346,41,329,0], ['write',730,21,324,569,341,41],
-      ['writeUp',129,678,325,569,338,41], ['idea',717,678,324,569,334,41],
-    ]],
-    ['idle-details.png',[
-      ['hum',292,15,285,466,292,41],
-      ['fidget',932,15,285,466,292,41],
-      ['pageLift',292,526,286,467,289,29],
-      ['pageSweep',932,525,286,468,290,29],
-    ]],
-    ['carry.png',[['carry',214,41,772,947]]],
-    ['yawn.png',[['yawn',297,97,660,1088,688,41]]],
-    ['faye.png',[['stand',298,98,659,1086,690,41]]],
-    ['crouch.png',[['crouch',297,103,660,1051,681,35]]],
-    ['poses-a.png',[
-      ['sleep',291,21,296,450,300,27], ['game',936,21,296,451,294,28],
-      ['book',290,531,292,462,293,29], ['held',940,516,285,466,285,41],
-    ]],
-    ['poses-b.png',[
-      ['tea',162,11,313,595,320,41], ['music',712,11,318,595,331,41],
-      ['think',154,673,317,595,315,41], ['wave',672,673,361,595,324,41,317,44],
-    ]],
-  ];
   let imagePromise;
   function loadArt() {
     if (imagePromise) return imagePromise;
-    imagePromise = Promise.all(atlas.map(async ([file,sprites])=>{
+    imagePromise = Promise.all(Object.entries(authored).map(async ([file,poses])=>{
       const img = new Image();
-      img.src = new URL('assets/'+file+version,base);
+      img.src = new URL('assets/'+file+'.png'+version,base);
       await img.decode();
-      return sprites.map(([name,l,t,w,h,neck,body,headWidth=w,headLeft=0])=>[
-        name,{img,l,t,w,h,neck,body,headWidth,headCenter:headLeft+headWidth/2},
-      ]);
+      return poses.map((pose,i)=>[pose,{img,left:i%2*288,top:Math.floor(i/2)*328}]);
     })).then(items=>Object.fromEntries(items.flat())).catch(error=>{imagePromise=undefined;throw error});
     return imagePromise;
   }
   const W=144,H=164, FLOOR=150, TAU=2*Math.PI;
   const seated = new Set(['sleep','game','book','awake','eyeRub','wakeStretch']);
-  const grounded = new Set(['stand','tea','music','think','wave','yawn','hum','fidget','search','write','idea','snack','flower','photo','strum','plane','shrug','sneeze','letter','planeWatch','planeLower','bagReach','bagLift']);
-  const headPixels=68, headHeight=71;
-  // Match the jacket and hips to Breathe. Raised arms and seated knees retain more width.
-  const waistScale={crouch:.95,sleep:.91,game:.89,book:.90,held:.85,tea:.84,music:.84,think:.84,wave:.86,yawn:.95,hum:.89,fidget:.87,pageLift:.90,pageSweep:.90,search:.91,write:.89,writeUp:.89,idea:.90,awake:.91,eyeRub:.91,wakeStretch:.93,snack:.91,flower:.89,photo:.91,strum:.91,plane:.90,shrug:.91,sneeze:.91,letter:.90,snackBite:.91,strumDown:.91,planeRelease:.90,flowerLow:.89,planeWatch:.91,planeLower:.91,bagReach:.90,bagLift:.90};
-  // Iris rectangles in the source artwork. The eyelids use neighboring skin colors.
-  const eyes={
-    snack:[[272,282,27,32,'#ffd2bf'],[347,282,26,32,'#ffd1bf']],
-    strum:[[873,909,27,32,'#ffd5c4'],[948,909,27,32,'#ffd2c1']],
-    plane:[[265,288,29,33,'#f8d4c2'],[341,288,29,33,'#fad6c8']],
-    shrug:[[835,288,29,33,'#f9d6c6'],[912,287,29,34,'#f8d0c2']],
-    letter:[[842,928,30,33,'#f7d2c2'],[920,928,29,33,'#fcd5c7']],
-    stand:[[517,633,58,69,'#f6d6c9'],[674,632,56,70,'#f5d5c9']],
-    crouch:[[516,633,59,72,'#f5d2c7'],[674,633,56,72,'#f6d3c7']],
-    game:[[1034,260,26,30,'#fddbcd'],[1104,260,27,30,'#fce1d4']],
-    book:[[387,766,27,30,'#f8d9cd'],[456,766,27,30,'#f7e0d6']],
-    held:[[1038,731,26,29,'#fed5c4'],[1105,731,26,29,'#fad8cb']],
-    search:[[211,291,25,34,'#f5ccc4'],[274,294,26,34,'#f9d1c4']],
-    write:[[848,303,27,29,'#f6ccc1'],[918,299,28,31,'#fad3ca']],
-    writeUp:[[249,955,26,31,'#f8ccbf'],[319,954,28,31,'#f6d2ca']],
-    idea:[[838,931,28,31,'#fcd4c7'],[910,926,29,34,'#fcd0c5']],
-    fidget:[[1030,251,26,28,'#facfc1'],[1098,251,26,28,'#fbd4c2']],
-    tea:[[266,275,28,31,'#f7d0c2'],[340,275,28,31,'#f9d6c9']],
-    think:[[283,937,27,29,'#f9d2c5'],[350,929,27,31,'#fccbbf']],
-    wave:[[815,926,30,32,'#fbcec1'],[891,932,29,32,'#f7d0c2']],
-    carry:[[455,659,48,45,'#fad1c7'],[596,653,53,48,'#fad2c7']],
-  };
+  const grounded = new Set(['stand','tea','music','think','wave','yawn','hum','fidget','search','write','idea','snack','flower','photo','strum','plane','shrug','sneeze','letter']);
   const presses=[[.12,.17,-1],[.22,.27,1],[.32,.36,1],[.52,.58,-1],[.65,.70,1],[.80,.86,-1]];
-  const transitionMs=350,sleepMs=6500;
+  const transitionMs=800,bagFrameMs=150,sleepMs=6500;
+  const transitionFrames=['anticipate','hopUp','land','standSettle'];
   const wakeFrames=[
-    [0,'sleep'],[.14,'awake'],[.21,'awake'],[.29,'eyeRub'],[.43,'eyeRub'],
-    [.50,'awake'],[.60,'wakeStretch'],[.69,'wakeStretch'],[.76,'awake'],
-    [.85,'crouch'],[.94,'stand'],[1,'stand'],
+    [0,'sleepOut'],[.12,'awake'],[.25,'eyeRub'],[.47,'awake'],
+    [.54,'wakeStretch'],[.75,'wakeRise'],[.86,'standSettle'],[.94,'talkClosed'],
   ];
-
+  const readFrames=[
+    [0,'bookRead'],[780,'bookPinch'],[1310,'bookLift'],
+    [1800,'bookSweep'],[2330,'bookRead'],[3050,'bookPinch'],
+  ];
   const planeFrames=[
-    [0,'plane'],[.19,'plane'],[.27,'planeRelease'],[.40,'planeRelease'],
-    [.48,'planeWatch'],[.60,'planeWatch'],[.68,'planeLower'],[.73,'planeLower'],
-    [.79,'bagReach'],[.85,'bagReach'],[.91,'bagLift'],[.95,'bagLift'],[1,'plane'],
+    [0,'planeHold'],[.16,'planeRelease'],[.32,'planeWatch'],[.48,'planeLower'],
+    [.64,'bagReach'],[.73,'bagOpen'],[.81,'bagPlaneHalf'],[.94,'bagPlaneChest'],
   ];
+  const neutralTalk=new Set(['inhale','exhale','weightShift','tapFoot','talkClosed','standSettle']);
+  const mouthFrames=['talkClosed','talkHalf','talkWide','talkHalf'];
+  // Coordinates on the sheets' 72×82 logical pixel grid, measured over each visible iris.
+  const eyelids={
+    inhale:[[29,35,4,3],[40,35,3,3]],
+    exhale:[[28,36,4,4],[38,37,4,3]],
+    weightShift:[[28,36,4,4],[39,36,3,4]],
+    tapFoot:[[29,36,4,4],[40,36,3,4]],
+    lookLeft:[[26,36,3,4],[35,36,3,4]],
+    lookRight:[[36,36,3,4],[45,35,3,4]],
+    talkClosed:[[29,38,4,4],[40,38,4,4]],
+  };
 
   function transitionPose(transition,now) {
     const progress=(now-transition.start)/transitionMs;
-    if(progress<.18) return transition.from;
-    if(progress<.76) return 'crouch';
-    return transition.to;
+    const index=Math.min(3,Math.max(0,Math.floor(progress*4)));
+    return transition.rising&&index===0?'bagRise':transitionFrames[index];
   }
 
   // interactive:false leaves the pointer to the page (the admin page moves Faye's
@@ -227,7 +222,9 @@
     let idleIndex=1,thinkIndex=0,transition=null,bridge=null,visual=null,afterDrag=null,bagIntro=null;
     let swing=0,swingVelocity=0,lastTick=null;
     let activity={automatic:auto,linked:false,returning:false},following=null;
-    let napping=false,paused=false,resting=false;
+    let napping=false,paused=false,resting=false,talkStart=0,talkEnd=0;
+    const blinkGap=()=>3000+Math.random()*3000;
+    let nextBlink=t0+blinkGap(),blinkUntil=0;
     const restFor=()=>rest?rest[0]+Math.random()*Math.max(0,rest[1]-rest[0]):7600;
     const clamp=(n,lo,hi)=>Math.max(lo,Math.min(hi,n));
     function position(px,py) {
@@ -237,35 +234,35 @@
     }
     function startBridge(from,to,now,duration,thinking=false) {
       if(!from||reduced.matches) return null;
-      if(from.layers.length===1&&from.layers[0].pose===to) return null;
+      if(from.pose===to) return null;
       return {from,to,start:now,duration,thinking};
     }
     function select(id) {
       const now=clock();
       if(bagIntro&&now>=started) bagIntro=null;
       const yawnFinished=current.id==='yawn'&&now-started>=current.duration*.86;
-      const wakePose=current.id==='wake'
-        ? now-started>=current.duration*.94?'stand':visual?.layers.reduce((a,b)=>a.alpha>b.alpha?a:b).pose
-        : null;
-      const shown=visual?.layers.reduce((a,b)=>a.alpha>b.alpha?a:b).pose;
-      const from=transition?transitionPose(transition,now):yawnFinished?'stand':
-        wakePose??((bagIntro||current.id==='plane')&&shown?shown:current.pose);
+      const wakeFinished=current.id==='wake'&&now-started>=current.duration*.86;
+      const shown=visual?.pose??'inhale';
+      const from=bagIntro?(bagIntro.seated?'book':'stand'):yawnFinished||wakeFinished?'stand':current.pose;
       const to=id==='wake'?'sleep':actions[id].pose;
+      const firstPose=id==='wake'?'sleepOut':id==='plane'?'planeHold':id==='read'?'bookRead':clips[id][0];
       const changingCarry=(to==='carry')!==(current.pose==='carry');
       const changingThought=groups.thinking.includes(id)&&grounded.has(from)&&from!==to;
-      if(changingCarry) bridge=startBridge(visual,to,now,to==='carry'?245:325);
-      else if(changingThought) bridge=startBridge(visual,to,now,280,true);
-      else if(bridge?.to!==to) bridge=null;
+      if(changingCarry) bridge=startBridge(visual,firstPose,now,to==='carry'?245:325);
+      else if(changingThought) bridge=startBridge(visual,firstPose,now,430,true);
+      else if(bridge?.to!==firstPose) bridge=null;
       const sitDown=(grounded.has(from)||from==='crouch')&&seated.has(to);
       const standUp=(seated.has(from)||from==='crouch')&&grounded.has(to);
       const interruptible=!pointer&&!['grab','drag','drop','hello','celebrate','settle'].includes(id);
-      const outgoing=bagIntro?bagIntro.held:current.id==='plane'&&from!=='plane'?null:props[current.id];
+      const planeInHand=['planeHold',...bagPoses.paper].includes(shown);
+      const outgoing=bagIntro?bagIntro.held:current.id==='plane'&&!planeInHand?null:props[current.id];
       const incoming=props[id];
       const switchProp=interruptible&&!reduced.matches&&id!==current.id&&outgoing!==incoming&&(outgoing||incoming);
-      bagIntro=switchProp?buildBagIntro(from,to,outgoing,incoming,now):null;
+      const continueBag=interruptible&&!reduced.matches&&bagIntro&&incoming&&bagIntro.incoming===incoming;
+      if(!continueBag) bagIntro=switchProp?buildBagIntro(from,to,outgoing,incoming,now,shown):null;
       if(bagIntro) bridge=null;
-      transition=!bagIntro&&interruptible&&!reduced.matches&&(sitDown||standUp)?{from,to,start:now}:null;
-      const preludeMs=bagIntro?.duration??(transition?transitionMs:0);
+      transition=!bagIntro&&interruptible&&!reduced.matches&&(sitDown||standUp)?{start:now,rising:standUp}:null;
+      const preludeMs=bagIntro?bagIntro.start+bagIntro.duration-now:transition?transitionMs:0;
       current=actions[id];started=now+preludeMs;dirty=true;
       host.dispatchEvent(new CustomEvent('faye:state',{detail:{mode,id,label:current.label,preludeMs}}));
     }
@@ -343,7 +340,12 @@
       select(moved?'drop':'settle');
       next=started+current.duration;
     }
-    function pause(value) {paused=!!value;dirty=true;}
+    function pause(value) {paused=!!value;if(paused) talkEnd=0;dirty=true;}
+    function talk(ms=1000) {
+      talkStart=clock();
+      talkEnd=ms>0&&!paused&&!reduced.matches?talkStart+Math.min(ms,3000):0;
+      dirty=true;
+    }
     function mark(name,x,y,color,size=2,alpha=1) {
       ctx.globalAlpha=clamp(alpha,0,1);
       ctx.fillStyle=color;
@@ -352,95 +354,27 @@
       }));
       ctx.globalAlpha=1;
     }
-    function drawEyelids(pose,spr,left,width,headSourceHeight,blink) {
-      if(!blink||!eyes[pose]) return;
-      const scaleX=width/spr.w,scaleY=headHeight/headSourceHeight;
-      for(const [x,y,w,h,skin] of eyes[pose]) {
-        const x0=left+Math.ceil((x-spr.l)*scaleX-.5);
-        const x1=left+Math.ceil((x+w-spr.l)*scaleX-.5);
-        const y0=-headHeight+Math.ceil((y-spr.t)*scaleY-.5);
-        const y1=-headHeight+Math.ceil((y+h-spr.t)*scaleY-.5);
-        const covered=blink===2?y1-y0:Math.ceil((y1-y0)/2);
-        ctx.fillStyle=skin;
-        ctx.fillRect(x0,y0,x1-x0,covered);
-        ctx.fillStyle='#47271e';
-        ctx.fillRect(x0,y0+covered-1,x1-x0,1);
-        if(blink===2) ctx.fillRect(x0+1,y0+covered,Math.max(2,x1-x0-2),1);
-      }
-    }
-    function drawGamePress(press) {
-      if(!press) return;
-      const x=press<0?-9:7;
-      ctx.fillStyle='#74bde8';
-      ctx.fillRect(x-1,5,2,1);
-      ctx.fillStyle='#78453a';
-      ctx.fillRect(press<0?x-2:x,6,3,3);
-      ctx.fillStyle='#fddcce';
-      ctx.fillRect(press<0?x-2:x,7,3,2);
-      ctx.fillStyle='#efab98';
-      ctx.fillRect(press<0?x:x,8,1,1);
-    }
-    function drawCarry(spr,flutter,detail) {
-      const scale=headPixels/674;
-      const chin=771-spr.t;
-      const left=-Math.round((549-spr.l)*scale);
-      const width=Math.round(spr.w*scale);
-      const limbHeight=Math.round((spr.h-chin)*scale);
-      ctx.drawImage(spr.img,spr.l,spr.t,spr.w,chin,left,-headHeight,width,headHeight);
-      drawEyelids('carry',spr,left,width,chin,detail?.blink);
-      for(let row=0;row<limbHeight;row++) {
-        const top=chin+Math.floor(row*(spr.h-chin)/limbHeight);
-        const bottom=chin+Math.floor((row+1)*(spr.h-chin)/limbHeight);
-        const kick=Math.round(flutter*Math.pow(row/limbHeight,1.5));
-        ctx.drawImage(spr.img,spr.l,spr.t+top,spr.w,bottom-top,left+kick,row,width,1);
-      }
-    }
     function drawFrame(frame) {
+      const animate=!reduced.matches&&!paused;
+      const beingCarried=current.id==='grab'||current.id==='drag';
+      const speaking=drawTime<talkEnd&&animate&&!beingCarried&&!pointer;
+      const beat=Math.floor((drawTime-talkStart)/105);
+      const neutral=neutralTalk.has(frame.pose);
+      const pose=speaking&&neutral?mouthFrames[beat%mouthFrames.length]:frame.pose;
+      const {img,left,top}=art[pose];
+      const breathing=animate&&!beingCarried&&frame.pose!=='cheerJump';
+      const bob=breathing?(speaking&&!neutral?-(beat%2):Math.cos((drawTime-t0)*TAU/2400)<0?-1:0):0;
       ctx.save();
-      ctx.translate(Math.round(frame.x),Math.round(frame.y));
+      ctx.translate(Math.round(frame.x),Math.round(frame.y)+bob);
       ctx.rotate(frame.tilt);
-      ctx.scale(frame.sx,frame.sy);
-      // Sum the two pose opacities on the cleared canvas to keep shared pixels solid.
-      if(frame.additive) ctx.globalCompositeOperation='lighter';
-      for(const {pose,alpha,detail} of frame.layers) {
-        ctx.globalAlpha=alpha;
-        const spr=art[pose];
-        if(pose==='carry') drawCarry(spr,frame.flutter,detail);
-        else {
-          const scale=headPixels/spr.headWidth;
-          const width=Math.round(spr.w*scale);
-          const left=-Math.round(spr.headCenter*scale);
-          ctx.save();
-          const headPose=pose==='pageLift'||pose==='pageSweep'?'book':pose==='strumDown'?'strum':pose;
-          const head=art[headPose];
-          const headWidth=Math.round(head.w*headPixels/head.headWidth);
-          const headLeft=-Math.round(head.headCenter*headPixels/head.headWidth);
-          ctx.save();
-          if(detail?.headX||detail?.headY) ctx.translate(detail.headX,detail.headY);
-          if(detail?.headTilt) ctx.rotate(detail.headTilt);
-          ctx.drawImage(head.img,head.l,head.t,head.w,head.neck,headLeft,-headHeight,headWidth,headHeight);
-          drawEyelids(headPose,head,headLeft,headWidth,head.neck,detail?.blink);
-          if(detail?.blush) {
-            const alpha=ctx.globalAlpha;
-            ctx.globalAlpha=alpha*detail.blush;
-            ctx.fillStyle='#f28c98';
-            ctx.fillRect(-13,-9,4,2);ctx.fillRect(9,-9,4,2);
-            ctx.globalAlpha=alpha;
-          }
-          if(pose==='snackBite'&&detail?.chew!==undefined) {
-            ctx.fillStyle='#fbd1c1';
-            ctx.fillRect(-3,-6,7,4);
-            ctx.fillStyle='#63352a';
-            ctx.fillRect(-1,-4,3+detail.chew,1);
-            if(detail.chew) ctx.fillRect(0,-3,3,1);
-          }
-          ctx.restore();
-          const height=frame.bodyHeight??spr.body;
-          ctx.translate(0,height);
-          if(height!==spr.body) ctx.scale(1,height/spr.body);
-          drawBody(pose,spr,left,width,detail);
-          ctx.restore();
-          if(pose==='game') drawGamePress(detail?.press);
+      ctx.drawImage(img,left,top,288,328,-W/2,41-FLOOR,W,H);
+      if(animate&&!beingCarried&&drawTime<blinkUntil&&eyelids[pose]) {
+        for(const [x,y,w,h] of eyelids[pose]) {
+          const left=x*2-W/2,top=y*2+41-FLOOR;
+          ctx.fillStyle='#fcd4c4';
+          ctx.fillRect(left,top,w*2,h*2);
+          ctx.fillStyle='#34140c';
+          ctx.fillRect(left,top+2,w*2,2);
         }
       }
       ctx.restore();
@@ -448,111 +382,55 @@
     }
     const mix=(from,to,p)=>from+(to-from)*p;
     const ease=p=>p*p*(3-2*p);
-    function drawSprite(pose,dx=0,dy=0,tilt=0,sx=1,sy=1,flutter=0,detail=null) {
-      const target={
-        layers:[{pose,alpha:1,detail}], x:W/2+dx, y:FLOOR-(art[pose].body??41)+dy, tilt,sx,sy,flutter,
-      };
-      if(pose==='yawn'&&!reduced.matches) {
-        const amount=detail?.yawn??0;
-        target.layers=[{pose:'stand',alpha:1-amount,detail},{pose,alpha:amount}]
-          .filter(layer=>layer.alpha>.01);
-      }
-      const page=reduced.matches&&current.id==='page'?'pageSweep':detail?.page;
-      if(page) target.layers=[{pose:page,alpha:1,detail}];
-      if(pose==='write'&&detail?.pencilUp) target.layers=[{pose:'writeUp',alpha:1,detail}];
-      if(detail?.alternate&&detail.amount>0) {
-        target.layers=[{pose,alpha:1-detail.amount,detail},{pose:detail.alternate,alpha:detail.amount,detail}]
-          .filter(layer=>layer.alpha>.01);
-        target.additive=target.layers.length>1;
-      }
+    function drawSprite(pose,dy=0,tilt=0) {
+      const target={pose,x:W/2,y:FLOOR-41+dy,tilt};
       if(!bridge||reduced.matches) {drawFrame(target);return;}
       const p=clamp((drawTime-bridge.start)/bridge.duration,0,1);
       if(p===1) {bridge=null;drawFrame(target);return;}
       const progress=ease(p);
       const reveal=bridge.thinking?progress:ease(clamp((p-.22)/.53,0,1));
       const from=bridge.from;
-      const weights=new Map(from.layers.map(layer=>[layer.pose,{...layer,alpha:layer.alpha*(1-reveal)}]));
-      for(const layer of target.layers) {
-        const existing=weights.get(layer.pose)?.alpha??0;
-        weights.set(layer.pose,{...layer,alpha:existing+layer.alpha*reveal});
-      }
-      const layers=[...weights.values()].filter(layer=>layer.alpha>.01);
-      const interpolated={layers,additive:bridge.thinking};
-      if(from.bodyHeight!==undefined) interpolated.bodyHeight=mix(from.bodyHeight,art[pose].body??41,progress);
-      for(const key of ['x','y','tilt','sx','sy','flutter']) interpolated[key]=mix(from[key],target[key],progress);
-      // A small wind-up and follow-through keeps the body turn readable, with the face pinned.
-      if(!bridge.thinking) interpolated.tilt+=(pose==='carry'?-.13:.11)*Math.sin(p*TAU)*Math.sin(p*Math.PI);
+      const interpolated={pose:reveal<.5?from.pose:target.pose};
+      for(const key of ['x','y','tilt']) interpolated[key]=mix(from[key],target[key],progress);
+      if(!bridge.thinking) interpolated.tilt+=.11*Math.sin(p*TAU)*Math.sin(p*Math.PI);
       drawFrame(interpolated);
     }
-    // Raise the connected sleeves and mug together. The waist, legs, and feet stay planted.
-    function teaRow(row,lift) {
-      const amount=row<=7?mix(.42,1,row/7):row<=16?1:Math.max(0,1-(row-16)/13);
-      return row-Math.round(lift*amount);
-    }
-    function drawBody(pose,spr,left,width,detail) {
-      const lift=detail?.lift??0;
-      const sourceHeight=spr.h-spr.neck;
-      const sourceTop=spr.t+spr.neck;
-      const waist=waistScale[pose];
-      if(!waist) {
-        if(detail?.toe) {
-          const shoeHeight=6;
-          const start=Math.round(sourceHeight*(spr.body-shoeHeight)/spr.body);
-          const mid=Math.round(spr.w/2);
-          const split=Math.round(width/2);
-          ctx.drawImage(spr.img,spr.l,sourceTop,spr.w,start,left,-spr.body,width,spr.body-shoeHeight);
-          ctx.drawImage(spr.img,spr.l,sourceTop+start,mid,sourceHeight-start,left,-shoeHeight-detail.toe,split,shoeHeight);
-          ctx.drawImage(spr.img,spr.l+mid,sourceTop+start,spr.w-mid,sourceHeight-start,left+split,-shoeHeight,width-split,shoeHeight);
-        } else ctx.drawImage(spr.img,spr.l,sourceTop,spr.w,sourceHeight,left,-spr.body,width,spr.body);
-        return;
+    function buildBagIntro(from,to,outgoing,incoming,now,shown) {
+      const wasSeated=seated.has(from);
+      const frames=[{pose:shown,held:outgoing,seated:wasSeated}];
+      function append(pose,held=null,low=false) {
+        if(frames.at(-1).pose!==pose) frames.push({pose,held,seated:low});
       }
-      for(let row=0;row<spr.body;row++) {
-        const p=row/(spr.body-1);
-        const blend=Math.max(0,Math.min(1,p/.35,(1-p)/.16));
-        const scale=1-(1-waist)*blend;
-        const top=Math.floor(row*sourceHeight/spr.body);
-        const bottom=Math.floor((row+1)*sourceHeight/spr.body);
-        const y=lift?teaRow(row,lift):row;
-        const end=lift?teaRow(row+1,lift):row+1;
-        // The torso stays centered while the sleeve, hand, and bag charm twitch together.
-        const handMotion=pose==='fidget'?detail?.fidget:detail?.handMotion;
-        const center=pose==='fidget'?.48:.31;
-        const twitch=Math.round((handMotion??0)*Math.max(0,1-Math.abs(p-center)/.29));
-        if(end>y) ctx.drawImage(spr.img,spr.l,sourceTop+top,spr.w,bottom-top,
-          Math.round(left*scale)+twitch,y-spr.body,Math.round(width*scale),end-y);
-      }
-    }
-    function buildBagIntro(from,to,outgoing,incoming,now) {
-      let at=0;
-      const frames=[[0,from]];
-      function append(duration,pose) {
-        at+=duration;
-        frames.push([at,pose]);
-      }
-      if(seated.has(from)) append(135,'crouch');
-      const putAwayAt=at+100;
-      append(205,'bagReach');
-      append(90,'bagReach');
-      const takeOutAt=at;
-      if(incoming) append(205,'bagLift');
-      if(seated.has(to)) append(135,'crouch');
-      append(205,to);
-      return {frames,outgoing,incoming,putAwayAt,takeOutAt,start:now,duration:at,held:outgoing,
-        initialTilt:visual?.tilt??0,initialX:visual?.x??W/2};
+      if(outgoing) {
+        const [half,ready]=bagPoses[outgoing];
+        // A seated prop's ready drawing also works in reverse as he starts to rise.
+        if(shown!==half) append(ready,outgoing,wasSeated);
+        append(half,outgoing);
+        append('bagFlap');
+        append('bagClose');
+        if(!incoming) {
+          append('bagPat');
+          append('standSettle');
+        }
+      } else if(wasSeated) append('bagRise');
+      if(incoming) {
+        const [half,ready]=bagPoses[incoming];
+        append('bagReach');
+        append('bagOpen');
+        if(!outgoing) append('bagLook');
+        append(half,incoming);
+        append(ready,incoming,seated.has(to));
+      } else if(seated.has(to)) append('land',null,true);
+      const hold=frames.length>=9?140:bagFrameMs;
+      return {frames,incoming,start:now,duration:frames.length*hold,hold,held:outgoing,seated:wasSeated,
+        initialTilt:visual?.tilt??0};
     }
     function drawTimedPoses(frames,time,tilt=0,x=W/2) {
       const nextIndex=frames.findIndex(([at])=>at>time);
       const lastIndex=frames.length-1;
       const index=nextIndex<0?lastIndex:Math.max(0,nextIndex-1);
-      const [start,from]=frames[index];
-      const [end,to]=frames[Math.min(index+1,lastIndex)];
-      const progress=end===start?1:ease(clamp((time-start)/(end-start),0,1));
-      const bodyHeight=Math.round(mix(art[from].body??41,art[to].body??41,progress));
-      const layers=from===to?[{pose:from,alpha:1}]:[
-        {pose:from,alpha:1-progress},{pose:to,alpha:progress},
-      ].filter(layer=>layer.alpha>.01);
-      drawFrame({layers,additive:layers.length>1,x,y:FLOOR-bodyHeight,
-        tilt,sx:1,sy:1,flutter:0,bodyHeight});
+      const pose=frames[index][1];
+      drawFrame({pose,x,y:FLOOR-41,tilt});
     }
     function drawProp(kind,x,y,size=1,alpha=1) {
       const [pixels,color]=propPixels[kind];
@@ -574,39 +452,22 @@
     }
     function drawBagIntro(now) {
       const intro=bagIntro;
-      const elapsed=now-intro.start;
-      const settle=ease(clamp(elapsed/210,0,1));
-      drawTimedPoses(intro.frames,elapsed,intro.initialTilt*(1-settle),mix(intro.initialX,W/2,settle));
-      const store=(elapsed-intro.putAwayAt)/190;
-      const retrieve=(elapsed-intro.takeOutAt)/(intro.duration-intro.takeOutAt);
-      if(intro.outgoing&&store>=0&&store<1) {
-        const p=ease(store);
-        const [x,y]=propTargets[intro.outgoing];
-        drawProp(intro.outgoing,mix(x,85,p),mix(y,130,p),1,(1-store)*1.18);
-      }
-      if(elapsed>=intro.takeOutAt) intro.held=retrieve>=.16?intro.incoming:null;
-      if(intro.incoming&&retrieve>=0&&retrieve<1)
-        drawRetrievedProp(intro.incoming,retrieve);
-    }
-    function drawRetrievedProp(kind,time) {
-      const [targetX,targetY]=propTargets[kind];
-      const lifted=ease(clamp(time/.53,0,1)), extended=ease(clamp((time-.53)/.47,0,1));
-      const x=mix(mix(85,63,lifted),targetX,extended);
-      const y=mix(mix(130,116,lifted),targetY,extended);
-      drawProp(kind,x,y,kind==='paper'&&time>.67?2:1,clamp(time*6,0,1)*(1-Math.pow(time,5)));
+      const index=Math.max(0,Math.min(intro.frames.length-1,Math.floor((now-intro.start)/intro.hold)));
+      const {pose,held,seated:low}=intro.frames[index];
+      intro.held=held;
+      intro.seated=low;
+      drawFrame({pose,x:W/2,y:FLOOR-41,tilt:index===0?intro.initialTilt:0});
     }
     function drawPlane(p) {
-      if(reduced.matches) {drawSprite('plane');return;}
-      const throwTilt=.06*Math.exp(-180*(p-.26)**2)-.041*Math.exp(-240*(p-.20)**2);
+      if(reduced.matches) {drawSprite('planeHold');return;}
+      const throwTilt=.06*Math.exp(-180*(p-.16)**2)-.041*Math.exp(-240*(p-.11)**2);
       drawTimedPoses(planeFrames,p,throwTilt);
-      if(p>=.27&&p<.60) {
-        const q=(p-.27)/.33;
+      if(p>=.16&&p<.48) {
+        const q=(p-.16)/.32;
         drawProp('paper',mix(23,-19,q),105-Math.sin(q*Math.PI*.73)*34-q*21,2,1);
       }
-      if(p>=.85) drawRetrievedProp('paper',(p-.85)/.15);
     }
 
-    const born=clock();
     function drawWake(now) {
       const p=clamp((now-started)/current.duration,0,1);
       if(reduced.matches) {drawSprite('awake');return;}
@@ -614,51 +475,20 @@
       drawTimedPoses(wakeFrames,p,.019*rub*Math.sin((p-.29)*TAU*15));
     }
     let drawTime=0;
-    function detailFor(id,p,now) {
-      if(reduced.matches) return id==='blush'?{blush:1}:null;
-      const clock=(now-born+290)%11200;
-      const blinkAge=[1800,5670,9020,9290].map(at=>clock-at).find(age=>age>=0&&age<185);
-      const blink=blinkAge===undefined?0:blinkAge>=42&&blinkAge<132?2:1;
-      const press=id==='game'?presses.find(([start,end])=>p>=start&&p<end)?.[2]:0;
-      let lift=0;
-      if(id==='sip') {
-        const progress=Math.min((p-.12)/.13,(.60-p)/.15);
-        lift=Math.round(10*ease(clamp(progress,0,1)));
-      }
-      const yawn=id==='yawn'?ease(clamp(Math.min((p-.08)/.15,(.86-p)/.18),0,1)):0;
-      const page=id==='page'?(p>=.40&&p<.57?'pageLift':p>=.57&&p<.72?'pageSweep':null):null;
-      const fidget=id==='fidget'?2.5*Math.sin(p*TAU*3)*Math.pow(Math.sin(p*Math.PI),2):0;
-      const pencilUp=id==='process'&&((p>=.18&&p<.28)||(p>=.43&&p<.52)||(p>=.64&&p<.76));
-      const pulse=(start,up,down,end)=>ease(clamp(Math.min((p-start)/(up-start),(end-p)/(end-down)),0,1));
-      const beat=Math.sin(p*TAU);
-      const headX=id==='no'?Math.round(2*beat*Math.sin(p*Math.PI)):0;
-      const nod=id==='yes'?Math.pow(Math.sin(p*Math.PI*2),2):0;
-      const headY=id==='yes'?Math.round(3*nod):id==='blush'?Math.round(pulse(.08,.27,.60,.93)):0;
-      const headTilt=id==='no'?.12*Math.sin(p*TAU*2)*Math.sin(p*Math.PI):id==='rain'?-.026*beat:0;
-      const toe=id==='toeTap'?Math.round(2*Math.max(pulse(.02,.16,.24,.39),pulse(.56,.62,.68,.80))):0;
-      const camera=id==='photo'?pulse(.43,.49,.51,.59):0;
-      let alternate=null,amount=0;
-      switch(id) {
-        case 'snack':alternate='snackBite';amount=pulse(.23,.28,.76,.94);break;
-        case 'flower':alternate='flowerLow';amount=1-pulse(.12,.29,.57,.84);break;
-        case 'strum': {
-          const stroke=(p*4)%1;
-          alternate='strumDown';amount=ease(clamp(Math.min((stroke-.17)/.10,(.75-stroke)/.20),0,1));break;
-        }
-        case 'shrug':alternate='stand';amount=1-pulse(.04,.25,.59,.97);break;
-        case 'sneeze':alternate='stand';amount=1-pulse(.16,.36,.55,.86);break;
-        case 'letter':alternate='stand';amount=1-pulse(.01,.14,.79,.98);break;
-        case 'highFive':alternate='stand';amount=1-pulse(0,.26,.49,.91);break;
-        case 'laugh':alternate='awake';amount=1-pulse(.10,.23,.72,.98);break;
-      }
-      const expressiveBlink=lift>=9?2:nod>.9||id==='blush'&&p>.32&&p<.48?1:blink;
-      return {blink:expressiveBlink,press,lift,yawn,page,fidget,pencilUp,headX,headY,headTilt,toe,
-        alternate,amount,camera,chew:Math.floor(p*20)%2,blush:id==='blush'?pulse(.05,.25,.55,.98):0};
+    function detailFor(id,p) {
+      if(reduced.matches) return null;
+      const press=id==='game'&&presses.some(([start,end])=>p>=start&&p<end);
+      const camera=id==='photo'?ease(clamp(Math.min((p-.43)/.06,(.59-p)/.08),0,1)):0;
+      return {press,camera};
     }
 
     function draw(now) {
       drawTime=now;
       ctx.clearRect(0,0,W,H);
+      if(!reduced.matches&&!paused&&now>=nextBlink) {
+        blinkUntil=now+90+Math.random()*40;
+        nextBlink=now+blinkGap();
+      }
       if(bagIntro) {
         if(now<started&&!reduced.matches) {drawBagIntro(now);return;}
         bagIntro=null;
@@ -671,63 +501,24 @@
         transition=null;
         now=Math.max(now,started);
       }
-      const {id,pose,duration}=current;
+      const {id,duration}=current;
       if(id==='wake') {drawWake(now);return;}
       if(id==='plane') {drawPlane(((now-started)%duration)/duration);return;}
+      if(id==='read') {
+        if(reduced.matches) drawSprite('bookRead');
+        else drawTimedPoses(readFrames,(now-started)%duration);
+        return;
+      }
       const shot=groups.reactions.includes(id)&&id!=='drag';
       const p=reduced.matches?(shot ? .52 : .3):(shot?clamp((now-started)/duration,0,1):((now-started)%duration)/duration);
-      const s=Math.sin(p*TAU),c=Math.cos(p*TAU), hop=Math.sin(p*Math.PI);
-      let dx=0,dy=0,tilt=0,sx=1,sy=1;
-      if(!reduced.matches) switch(id) {
-        case 'breathe':tilt=.012*s;break;
-        case 'vibe':dy=-5*Math.pow(Math.abs(s),2);tilt=.082*s;break;
-        case 'sleep':tilt=.018*c;break;
-        case 'game':tilt=.015*Math.sin(p*TAU*2);break;
-        case 'read':tilt=.026*s;sy=1+.01*c;break;
-        case 'tea':tilt=.012*s;break;
-        case 'daydream':tilt=.035*c;dy=-Math.max(0,s)*2;break;
-        case 'stretch':sy=1+.068*hop;sx=1-.035*hop;break;
-        case 'yawn':tilt=-.07*hop+.027*Math.sin(p*TAU*2)*hop;break;
-        case 'peek':dx=5*s;tilt=.055*s;break;
-        case 'hum':tilt=.023*s;break;
-        case 'sway':dx=4*s;break;
-        case 'fidget':tilt=.012*s;break;
-        case 'page':tilt=-.018*Math.sin(p*Math.PI);break;
-        case 'stargaze':tilt=-.06+.025*s;break;
-        case 'sip':tilt=.018*s;break;
-        case 'ponder':tilt=-.046+.028*s;break;
-        case 'search': {
-          const scan=clamp(1.7*s,-1,1);
-          tilt=.065*scan;break;
-        }
-        case 'process':tilt=.018*Math.sin(p*TAU*3);break;
-        case 'idea':tilt=.035*hop;break;
-        case 'hello':tilt=.045*Math.sin(p*TAU*3)*hop;dy=-3*hop;break;
-        case 'celebrate':dy=-15*Math.abs(Math.sin(p*TAU));tilt=.06*s;break;
-        case 'surprise':dy=-12*hop;sx=1-.04*hop;break;
-        case 'oops':dx=3*Math.sin(p*TAU*4)*(1-p);tilt=-.06*hop;break;
-        case 'grab':case 'drag':
-          tilt=swing+.035*Math.sin(now/180);break;
-        case 'snack':tilt=-.028*hop+.012*Math.sin(p*TAU*5)*hop;break;
-        case 'flower':tilt=-.045*hop;break;
-        case 'photo':tilt=.045*Math.exp(-130*(p-.51)**2);break;
-        case 'strum':tilt=.024*s;break;
-        case 'bubble':tilt=.016*s;break;
-        case 'rain':tilt=-.022*hop;break;
-        case 'shrug':dy=-2*hop;tilt=.043*hop;break;
-        case 'sneeze':tilt=(p<.48?-.06*hop:.15*Math.exp(-18*(p-.54)**2))*hop;
-          dy=-4*Math.exp(-130*(p-.53)**2)*hop;break;
-        case 'letter':tilt=.035*hop;break;
-        case 'laugh':tilt=.022*Math.sin(p*TAU*4)*hop;break;
-        case 'blush':tilt=-.025*hop;break;
-        case 'highFive':tilt=-.09*Math.exp(-25*(p-.39)**2)*hop;break;
-        case 'drop':tilt=.085*Math.sin(p*TAU*2)*Math.pow(1-p,2);break;
-        case 'settle':tilt=.04*Math.sin(p*TAU*2)*Math.pow(1-p,2);break;
-      }
-      const dangling=pose==='carry'&&!reduced.matches;
-      const flutter=dangling?1.6*Math.sin(now/115)+swing*13:0;
-      const detail=detailFor(id,p,now);
-      drawSprite(pose,dx,dy,tilt,sx,sy,flutter,detail);
+      const hop=Math.sin(p*Math.PI);
+      const detail=detailFor(id,p);
+      const clip=clips[id];
+      const frame=reduced.matches?Math.floor(clip.length/2):Math.min(clip.length-1,Math.floor(Math.max(0,p)*clip.length));
+      const inkPose=clip[frame];
+      const hopPx=inkPose==='cheerJump'&&!reduced.matches?-8:0;
+      const carryTilt=id==='drag'&&!reduced.matches?swing+.035*Math.sin(now/180):0;
+      drawSprite(inkPose,hopPx,carryTilt);
       const rise=Math.round(13*p);
       const thoughtAlpha=bridge?.thinking?ease(clamp((now-bridge.start)/bridge.duration,0,1)):1;
       switch(id) {
@@ -902,7 +693,7 @@
       if(auto&&next===Infinity&&current.id==='breathe') {resting=!!rest;next=clock()+restFor();}
       frame=requestAnimationFrame(tick);
     });
-    return {ready,play,setMode,doze,wake,grab,carry:carryBy,release,pause,element:canvas,
+    return {ready,play,setMode,doze,wake,grab,carry:carryBy,release,pause,talk,element:canvas,
       get asleep(){return napping;},get current(){return current.id;},destroy(){
       dead=true;events.abort();layout.disconnect();cancelAnimationFrame(frame);canvas.remove();host.style.position=previousPosition;
     }};

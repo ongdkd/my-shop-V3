@@ -314,6 +314,9 @@ function fayeChat(you, reply) {
   var y = el('fayeYou'), r = el('fayeReply');
   y.textContent = you || ''; y.hidden = !you;
   r.textContent = reply;
+  if (faye && faye.talk && reply && reply !== '…') {
+    faye.talk(Math.max(650, Math.min(2100, reply.length * 26)));
+  }
   r.style.animation = 'none'; void r.offsetWidth; r.style.animation = ''; // replay the pop
   var a = el('fayeActs'); a.innerHTML = ''; a.hidden = true;
 }
@@ -530,6 +533,7 @@ el('fayeFind').addEventListener('submit', function(e) {
 });
 
 fayeHelp.addEventListener('toggle', function() {
+  if (!fayeHelp.open && faye && faye.talk) faye.talk(0);
   if (fayeHelp.open) { fayeBubbleHide(); fayeSide(); if (_fayeKeep) _fayeKeep = false; else fayeFill(); }
   if (fayeHelp.open) fayeDo('hello');
 });
