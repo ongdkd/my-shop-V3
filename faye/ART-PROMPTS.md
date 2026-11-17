@@ -1,286 +1,229 @@
-# Faye: animation review and art prompts
+# Faye: art prompts, round 2
 
-## What makes Faye feel stiff today
+Round 1 is done: all 31 sheets in `faye/assets/` are in use and consistent. This round fixes what is still weak and adds what he can't do yet.
 
-I checked all 45 animations in `faye/faye.js`.
+## Review of the current animations
 
-1. **Most actions have one drawing.** 28 of them use a single still, and the code only tilts or bobs it. Hands, mouth, hair and feet never really move.
-2. **Many actions borrow a pose that doesn't match.** For example:
-   - *laugh* uses the seated wake-up stretch.
-   - *stretch* and *surprise* use the "being held" pose.
-   - *celebrate* and *high five* reuse the wave.
-   - *oops* reuses the thinking pose.
-   - *bubble* reuses humming.
-   - *breathe, daydream, peek, sway, rain, toe tap, yes, no, blush, drop* and *settle* are all the plain standing drawing.
-3. **Every pose change dips through `crouch`,** so he does a small squat between almost everything.
-4. **Two drawings get cross-faded.** Fading between two pixel drawings shows a see-through "ghost" for a moment instead of a clean movement.
-5. **His mouth never moves,** even when he answers in the chat.
+**Good:**
+- Every sheet matches: standing frames are 70 art pixels tall and 43 wide at the hair, and the feet sit on the same line.
+- The outline, pixel size and palette are steady.
+- The bag props, wake-up, reading and paper plane read well.
 
-New drawings fix 1, 2 and 5. Points 3 and 4 are code changes, and I can make those once the new frames exist: hard-cut between frames instead of fading, and use the new transition frames (sheet T) instead of the crouch.
+**Weak:**
+1. **`carry-motion` draws a giant human hand** that is cut off at the cell edge. On the site his box already follows your finger, so the hand looks odd.
+2. **Choppy two-frame loops.** These idles flip between only two drawings: vibe, hum, ponder, peek, snack, photo, ukulele, bubbles, rain, toe tap. They look choppy rather than moving.
+3. **He can't walk.** He only teleports, or gets carried.
+4. **Nothing about the shop.** He has no actions for a new order, an order shipped, a slip checked or money counted, even though those are what the admin page reacts to.
+5. **Few feelings.** He has no sad, dizzy or annoyed pose, and no reaction when you tap him repeatedly.
+
+## Breathing and in-between frames
+
+I measured how many of his art pixels change between frames that play one after the other. He has about 2,200 pixels in total.
+
+| Moment | Pixels changed | Verdict |
+|---|---|---|
+| Breathing (inhale ↔ exhale, every half second while resting) | 1,416 | **Bad.** The hair, face, hoodie and shoes are all redrawn, so he shimmers ("boils") instead of breathing. A breath should change about 50–150 pixels. |
+| Rest → talking (first mouth frame) | 1,482 | **Bad.** His whole body swaps to another drawing the moment he speaks. |
+| Talking (closed ↔ half ↔ wide) | 10–14 | **Good.** Only the mouth moves. |
+| Blink | 77 | **Good.** |
+| Eye rub in the wake-up | 328 | **Good.** |
+| Rest → start of an activity (e.g. exhale → vibe) | 1,000–1,650 | **Hard cut.** He jumps straight into the new pose. |
+| Sit ↔ stand (anticipate, hop, land, settle) | 1,570–1,780 each | **Fine.** These are big moves, so a redraw is expected. |
+| Bag swap frames | 500–1,300 | **Fine.** |
+| Wake-up: rise → settle | 1,881 | **Too big a jump** for one step. |
+
+**Breathing and the talk pop are fixed, and are not art problems.** ChatGPT redraws the whole picture every time, so it can never make two frames that differ by one pixel. So `idle-breath.png` is now built from **one** drawing, his talking face (`talk`, frame 1):
+- **Exhale:** that drawing as it is.
+- **Inhale:** everything above the hoodie hem moved up one art pixel.
+- **Weight shift:** the upper body moved one pixel sideways.
+- **Toe tap:** one shoe lifted one pixel.
+
+Resting and talking share the same body, so there's no pop and no shimmer. One breath takes 3.2 s (1.6 s in, 1.6 s out). Don't ask ChatGPT for breathing. If the `talk` sheet is ever redrawn, ask Claude to rebuild `idle-breath.png` from it.
+
+**In-betweens for big moves are worth asking for**, using the template below with the two frames attached.
+
+### In-between template
+
+Attach **three** images: the reference, plus the two frames to bridge, which I'll export for you as `faye/ref/from.png` and `faye/ref/to.png`. Paste the style block, then:
+
+```text
+IN-BETWEEN FRAMES. Attached: FROM (first frame) and TO (last frame), plus the character reference.
+Draw the frames that go BETWEEN them, so FROM → [your frames] → TO plays as one smooth movement.
+- Frame 1 = FROM, copied exactly (do not change it).
+- Frames 2 and 3 = the in-betweens: frame 2 is about one third of the way from FROM to TO, frame 3 about two thirds.
+- Frame 4 = TO, copied exactly (do not change it).
+- In frames 2 and 3, the hair shape, ahoge, face, sunglasses and outfit details are copied from FROM; only the parts that actually move (arms, legs, head angle, body height) change.
+- The head stays exactly the same size in all four frames.
+```
+
+Bridges worth doing first:
+1. **Wake-up:** `wakeRise` → `standSettle`, the biggest jump he has.
+2. **Rest → vibe:** `exhale` → `vibeLeft`. He starts vibing often.
+3. **Rest → humming:** `exhale` → `humOpen`.
+4. **Rest → ponder:** `exhale` → `ponderLeft`. He starts thinking every time the page loads.
 
 ---
 
 ## How to use this with ChatGPT
 
-- Attach **`faye/assets/faye.png`** and **`faye/assets/poses-b.png`** every time as references.
-- Paste the **style block**, then **one sheet prompt**. Ask for **one sheet per image**.
-- If he drifts off-model, reply: *"Redraw at exactly the same scale, proportions and pixel size as the reference: head about 2/3 of his height, short legs, same outfit, feet on the same line."*
-- Before saving, put the result next to `faye.png`. If the head looks smaller or the legs longer, ask for a redraw. The code resizes him by head size, so a shrunken head makes his body look too big on screen.
-- Save each good result as `faye/assets/<sheet-name>.png`, for example `talk.png`, then tell Claude which sheet it is.
+1. Start a **new chat** for each sheet, so earlier images don't drift him.
+2. Attach **`faye/ref/faye-reference-2x.png`**, the four poses he already has. It is the only reference.
+3. Paste the **style block**, then **one sheet prompt** under it. One sheet per image.
+4. Check the result with the **checklist** at the bottom. If it fails, paste the **redo message**.
+5. Save it as `faye/new/<sheet-name>.png` and tell Claude. I cut the background, snap it to his pixel grid and palette, size it to match by head width, put the feet on the line, and wire it into `faye/faye.js`. Small size or colour drift is fine; **proportion and pose drift is not**, because I can't fix that.
 
-### Style block (paste first, every time)
+---
+
+### Style block (paste first, every time, unchanged)
 
 ```text
-Use the attached images as the exact character reference. Character: "Faye", a chibi pixel-art boy, about 2.5 heads tall. Big messy orange-peach hair with a tall curled ahoge on top, round black sunglasses pushed up on his hair, cyan eyes, pink blush, small orange earrings. Cream zip hoodie with pink sleeves and two small blue stripes, brown cargo pants, white sneakers with blue stripes, a brown cross-body strap with a small cream bag that has a pink bunny face.
+STRICT CHARACTER SHEET. Follow every rule exactly. Do not reinterpret, restyle or "improve" anything.
 
-Art rules: crisp pixel art, chunky dark-brown outline, flat shading with 2–3 tones, no anti-aliasing, no blur, no gradients, no drop shadow, no text, no labels, no frame numbers. Pure white background.
+REFERENCE: The attached image shows the character "Faye" in four poses. Copy him exactly: same proportions, same pixel size, same outline, same colors, same outfit. Only the pose and expression may change.
 
-Proportions (copy the reference exactly, do not "improve" them): chibi, about 2.5 heads tall. The head including hair and ahoge is about 2/3 of his total standing height, and neck to shoe soles is about 1/3. Short stubby arms whose hands reach only to the hem of the hoodie. Short legs. The hair is about as wide as he is tall from chin to shoes. The pixel size (thickness of one "pixel" block and of the outline) is the same as the reference. Do not make the head smaller, the legs longer, or the body slimmer.
+CHARACTER: Faye, a chibi pixel-art boy. Huge messy orange-peach hair with spiky tufts and ONE tall curled ahoge on top. Round black sunglasses pushed up on his hair (never over his eyes). Cyan eyes, pink cheek blush, tiny orange earrings. Cream zip-up hoodie with pink sleeves and two small blue slash marks on the chest. Brown pants. White sneakers with one blue stripe each. A thin brown strap across his chest to a small cream bag at his left hip with a pink bunny face.
 
-Layout: one image, 2×2 grid, four poses, each centered in its own quarter with plenty of empty space around it. The character is the SAME size and pixel scale in all four and the same size as the reference: standing, he fills about 85% of the quarter's height. Both feet sit on the same baseline in each row. Seated or crouching poses keep the same head size and are simply shorter. Outfit, colors and proportions identical to the reference. Only pose and expression change. Hand-held props are drawn in his hands as part of the sprite.
+PROPORTIONS (measure against the reference; these are hard limits):
+- Head including hair and ahoge = 61% of his standing height. The ahoge alone = about 19%.
+- Hair width = 60% of his standing height (the hair is wider than the body).
+- Collar to shoe soles = only 39% of his height. Torso width = about one third of his height.
+- Short stubby arms: relaxed hands reach the hoodie hem, never lower.
+- Short legs, chunky shoes. No neck visible.
+- Seated or crouching poses keep the exact same head size; only the body gets shorter.
+- Never: smaller head, longer legs, longer arms, slimmer body, realistic anatomy, older look.
+
+PIXEL ART RULES: True low-resolution pixel art. The standing character is exactly 72 pixel-blocks tall. Every pixel is a hard square block of the same size as in the reference. Clean 1-block dark-brown outline (#34140C) around everything. Flat colors, 2-3 tones per material, no anti-aliasing, no gradients, no blur, no soft shading, no glow, no drop shadow, no texture noise. Use only these colors plus close shades: outline #34140C, hair #FC9C64 / #CC5C3C / #AC3C2C, skin #FCD4C4, blush #FC8C8C, hoodie #FCECD4 / #FCF4EC, sleeves #FC8C8C / #AC3C2C, pants #D49C74 / #AC846C, glasses #1C1C24, blue accents #1C54B4, eyes cyan.
+
+LAYOUT:
+- One image, a 2x2 grid of four equal cells, no visible grid lines, no borders.
+- One pose per cell, centered horizontally, with clear empty space on every side.
+- Nothing may touch or cross into another cell.
+- The character is the SAME size in all four cells: a standing pose fills about 80% of the cell height.
+- Every cell has the same floor line: the shoe soles touch the same height in every cell, except where a frame says he is jumping or lifted.
+- Background: one flat solid color, pure green #00FF00, everywhere, with no floor, shadow, scenery or vignette.
+- No text, letters, numbers, speech bubbles, arrows, motion lines or watermarks, unless a frame below asks for a small effect.
+- Order: frame 1 top-left, frame 2 top-right, frame 3 bottom-left, frame 4 bottom-right.
+
+Draw this sheet:
+```
+
+### Redo message (when something drifts)
+
+```text
+Redo the whole sheet. Problems: [say what, e.g. "head too small in frame 3", "legs too long", "sunglasses over his eyes", "props cross into the next cell"]. Match the attached reference exactly: head with hair = 61% of his height, hair wider than his body, short stubby arms and legs, same pixel-block size, 1-block dark outline, flat green #00FF00 background, all four frames the same size with feet on the same floor line.
 ```
 
 ---
 
-## Priority 1: used all the time
+## Priority 1: fix what's on screen most
 
-### Sheet `talk`: talking and blinking (chat replies, every idle)
-Now: no mouth movement, and blinks are painted-on eyelids.
+### Sheet `carry`: replaces `carry-motion` (no hand)
+Used when you drag him across the page.
 ```text
-Four frames of Faye standing in the neutral reference pose, facing forward:
-1) mouth closed, small smile, eyes open
-2) mouth half open, eyes open
-3) mouth wide open "ah", eyebrows slightly raised
-4) mouth closed, eyes closed in a blink (thin curved lines)
-Body, arms, hair and bag must be pixel-identical in all four. Only the face changes.
+Four frames. No hand, no arm, no rope, nothing holding him: he hangs in the air on his own, as if lifted by the back of his hoodie collar (the collar is pulled up slightly behind his head).
+1) Just picked up: body straight, legs together and dangling, arms stuck out to the sides, surprised face with a small "o" mouth, ahoge straight up.
+2) Swinging: whole body tilted about 15 degrees with his feet toward the viewer's LEFT, arms limp, grumpy pout, eyes half closed.
+3) Swinging back: whole body tilted about 15 degrees with his feet toward the viewer's RIGHT, legs kicking a little, eyes shut.
+4) Landing: standing on the floor line, knees deeply bent, arms out for balance, two tiny dust puffs at his feet.
+In frames 1-3 his shoe soles are about 6% of the cell height ABOVE the floor line.
 ```
 
-### Sheet `idle-breath`: breathe, sway, toe tap
-Now: the plain stand drawing, tilted by the code.
+### Sheet `music-2`: in-betweens for vibe and hum
 ```text
-Four frames of Faye standing calmly, for subtle idle motion:
-1) inhale: shoulders and chest 1–2 pixels higher, ahoge curled slightly tighter
-2) exhale: shoulders 1 pixel lower, ahoge tip drooping slightly, relaxed smile
-3) weight shifted onto his left leg, hip out a little, ahoge leaning right
-4) right foot lifted with the toe tapping, heel down, small content smile
-Changes in frames 1–2 are very subtle (1–2 pixels).
+Four frames, all wearing blue over-ear headphones exactly like a small blue band over his hair:
+1) Vibing, centered between left and right: head upright, eyes closed, fists at chest height, both knees slightly bent.
+2) Vibing, head bobbing DOWN on the beat: chin lowered, shoulders up, open-mouth smile.
+3) Humming, swaying toward the viewer's LEFT: eyes closed, small "o" mouth, one finger raised.
+4) Humming, swaying toward the viewer's RIGHT: eyes closed, gentle closed-mouth smile, the other hand raised.
 ```
 
-### Sheet `transition`: replaces the crouch between every pose
-Now: every change of action squats through `crouch`.
+### Sheet `think-2`: in-betweens for pondering
 ```text
-Four neutral in-between frames of Faye used to blend between actions:
-1) anticipation: knees softly bent, arms relaxed slightly behind his body, eyes open
-2) small hop up: on his tiptoes, arms slightly out, ahoge stretched up
-3) landing: knees bent, ahoge squashed down, arms slightly forward
-4) settling back to neutral: standing straight, arms in, ahoge springing to the side
+Four frames:
+1) Pondering, eyes looking straight UP, hand on chin, mouth pushed to one side.
+2) Pondering, eyes looking LEFT, finger tapping his chin, one eyebrow raised.
+3) Pondering, eyes looking RIGHT, arms crossed, small frown.
+4) "Hmm", eyes closed, head tilted, both hands behind his head.
 ```
 
-### Sheet `look`: peek, rain, stargaze, yes, no
-Now: the stand drawing slid sideways, or the thinking pose.
+### Sheet `look-2`: in-betweens for peek and stargaze
 ```text
-Four frames of Faye standing with head movements:
-1) head and eyes turned 3/4 toward the viewer's LEFT, curious, one hand shading his eyes
-2) head and eyes turned 3/4 toward the viewer's RIGHT, curious
-3) head tilted back looking UP at the sky, hands clasped behind his back, eyes sparkling
-4) nodding: chin tucked down, eyes closed happily, smile
-Body stays in the neutral pose except where described.
+Four frames:
+1) Looking straight ahead, curious, leaning forward slightly, hands on his knees.
+2) Peeking to the viewer's LEFT, one hand shading his eyes, standing on one foot.
+3) Peeking to the viewer's RIGHT, one hand shading his eyes, standing on the other foot.
+4) Looking up at the sky with wide sparkling eyes, mouth open in wonder, hands clasped at his chest.
 ```
 
 ---
 
-## Priority 2: reactions (chat replies and app events)
+## Priority 2: new things he can do
 
-### Sheet `wave`: hello and high five
-Now: one frozen wave. High five reuses it.
+### Sheet `walk`: walking (he'll stroll along the bottom of the screen)
+Draw only the leftward walk. I mirror it in code for walking right.
 ```text
-Four frames of Faye:
-1) wave anticipation: waving arm rising to shoulder height, knees slightly bent
-2) arm fully up, hand tilted LEFT, cheerful open-mouth smile
-3) arm fully up, hand tilted RIGHT, same smile
-4) high five: one arm stretched forward and up, palm flat facing the viewer, eyes shut in a big grin
+Four frames of a walk cycle. He faces the viewer's LEFT in a three-quarter view: we see his face and the front of his hoodie, turned partly to the left. The head stays the same size and shape in all four; only the legs, arms and a small body bob change.
+1) Contact: left foot forward with the heel down, right foot back on its toe, arms swinging opposite to the legs, body at normal height.
+2) Passing: feet together under the body, one knee lifted a little, body 1 block HIGHER, ahoge bouncing back.
+3) Contact: right foot forward with the heel down, left foot back, arms swapped.
+4) Passing: feet together, the other knee lifted, body 1 block HIGHER.
+Relaxed happy face, small smile, eyes open.
 ```
 
-### Sheet `cheer`: celebrate and laugh
-Now: celebrate reuses the wave, and laugh uses a *seated* pose.
+### Sheet `shop-order`: new order and order shipped
 ```text
-Four frames of Faye:
-1) celebrate jump: both feet off the ground, both fists high in the air, eyes ^^, mouth wide open
-2) celebrate landing: knees bent, fists pulled down to his chest "yes!", ahoge flopped
-3) laughing: standing, one hand on his belly, head tilted back, eyes ^^, mouth wide open
-4) laughing: leaning forward, both hands on his belly, eyes squeezed shut, tear at the corner of one eye
+Four frames:
+1) New order: holding a small phone up with both hands, looking at it with an excited open-mouth smile, one sparkle above the phone.
+2) Holding a cardboard parcel box (tan with a darker tan tape stripe) in both arms in front of his chest, proud smile.
+3) Taping the parcel box shut on the floor in front of him, kneeling on one knee, tongue out in concentration.
+4) Parcel under one arm, other hand giving a thumbs-up, wink.
+The phone and the box are small, in proportion to his short arms.
 ```
 
-### Sheet `feelings`: surprise, oops, blush, no
-Now: surprise uses "held", oops uses "think", blush and no use the stand drawing.
+### Sheet `shop-money`: slip checked and sales
 ```text
-Four frames of Faye:
-1) surprised: eyes wide, small "o" mouth, ahoge sticking straight up, both hands raised to chest height, one foot lifted
-2) oops: sheepish grin with tongue tip out, one hand scratching the back of his head, eyes closed
-3) blushing: both hands on his cheeks, extra pink blush, looking down and to the side, shy smile
-4) shaking head "no": head turned to one side, eyes closed, small frown, hands waving in front of his chest
+Four frames:
+1) Holding up a small white bank slip (a plain paper rectangle with a tiny pink check mark) with both hands at face height, happy eyes ^^.
+2) Examining the slip with his face close to it, eyes squinting, serious.
+3) Counting money: fanning a small stack of green and blue bank notes in one hand, licking the thumb of the other hand.
+4) Hugging a small pink piggy bank, eyes closed, big blush, content smile.
 ```
 
-### Sheet `sneeze`: build-up and release
-Now: one sneeze drawing.
+### Sheet `moods`: when something goes wrong
 ```text
-Four frames of Faye sneezing:
-1) "ah…": head tilted back, eyes half closed, nose scrunched, mouth open
-2) "AH…": head further back, eyes squeezed, one hand rising toward his face
-3) "CHOO!": head snapped forward, eyes shut, hand covering his mouth, ahoge whipping forward
-4) after: rubbing his nose with a finger, embarrassed smile
+Four frames:
+1) Sad: shoulders drooping, head down, ahoge drooping forward, eyes teary with wobbly mouth, hands holding the bag strap.
+2) Dizzy: spiral eyes, wobbly open mouth, head tilted, arms loose, the ahoge bent.
+3) Annoyed pout: puffed cheeks, eyebrows down, arms crossed, looking to the side.
+4) Relieved: hand wiping his forehead, eyes closed, big exhale smile.
 ```
 
-### Sheet `carry`: picked up, carried, dropped
-Now: one dangling drawing, and landing is the stand drawing.
+### Sheet `poke`: when you tap him a few times
 ```text
-Four frames of Faye:
-1) picked up: lifted by the back of the hoodie, surprised face, legs together, arms out
-2) dangling: legs swinging LEFT, arms limp, grumpy pout
-3) dangling: legs swinging RIGHT, kicking a little, eyes closed
-4) landing: knees deeply bent, arms out for balance, small dust puff at his feet
+Four frames:
+1) Poked: flinching to the side, one eye shut, mouth "eep!", hands up.
+2) Ticklish giggle: hunched, arms hugging himself, eyes ^^, laughing.
+3) Covering his face with both hands, peeking between his fingers, blush.
+4) Peace sign: one hand making a V sign beside his face, wink, tongue out.
 ```
-
-### Sheet `letter`: love letter and shrug
-Now: the letter and the shrug each have one drawing.
-```text
-Four frames of Faye:
-1) hiding a pink envelope behind his back, shy look to the side
-2) holding the pink envelope out with both hands, bowing slightly, eyes closed, blushing
-3) shrug start: shoulders rising, palms turning up, eyebrows raised
-4) full shrug: shoulders up, palms up at his sides, little "dunno" smile, head tilted
-```
-
----
-
-## Priority 3: thinking (while the app is loading)
-
-### Sheet `think`: ponder and idea
-Now: ponder has one drawing; idea is one drawing plus a lightbulb.
-```text
-Four frames of Faye:
-1) ponder: hand on chin, eyes looking up-left, mouth pursed
-2) ponder: finger tapping his chin, eyes looking up-right, eyebrow raised
-3) idea wind-up: eyes wide, mouth opening, hand starting to rise
-4) idea: index finger pointing straight up, big grin, sparkle in his eyes, ahoge standing tall
-```
-
-### Sheet `search`: magnifying glass
-Now: one drawing, slid around by the code.
-```text
-Four frames of Faye holding a round magnifying glass with a blue handle:
-1) leaning LEFT, glass held to his eye, eye looking huge through the lens
-2) leaning RIGHT, glass held low, squinting at the floor
-3) standing, glass held up toward the viewer, curious face
-4) found it: glass held up high, happy open mouth
-```
-
-### Sheet `write`: process
-Now: a pencil up and a pencil down, which is fine. These add life.
-```text
-Four frames of Faye holding a small blue notebook:
-1) scribbling fast, tongue poking out in concentration
-2) pencil tapping his cheek, thinking
-3) scratching his head with the pencil, confused
-4) holding the notebook up proudly, checkmark-happy smile
-```
-
----
-
-## Priority 4: idle activities
-
-### Sheet `sleep`: sleep, yawn, wake
-Now: sleep is one drawing plus z's, and yawn fades between two drawings.
-```text
-Four frames of Faye:
-1) yawn start: standing, mouth opening, eyes half closed, one hand rising
-2) big yawn: mouth wide, hand covering it, eyes squeezed, a tear at the corner, ahoge drooping
-3) sleeping sitting cross-legged, head drooped forward, breathing IN (shoulders up), small snot bubble
-4) same as 3 but breathing OUT (shoulders down), mouth slightly open, ahoge flopped over
-```
-
-### Sheet `tea`: tea and sip
-Now: one tea drawing.
-```text
-Four frames of Faye holding a cream mug with a pink bunny face:
-1) blowing on the hot tea, cheeks puffed, steam curling
-2) sipping: mug at his lips, eyes closed
-3) happy sigh: mug lowered to his chest, eyes ^^, little pink blush
-4) peeking into the empty mug, one eye closed
-```
-
-### Sheet `music`: vibe and hum
-Now: vibe has one drawing; hum has one drawing.
-```text
-Four frames of Faye with blue headphones on:
-1) vibing: head bobbed LEFT, eyes closed, fists up at chest height, one knee bent
-2) vibing: head bobbed RIGHT, other knee bent, open-mouth smile
-3) humming: eyes closed, mouth small "o", swaying, one finger tapping the rhythm
-4) humming: eyes closed, mouth closed in a smile, swaying the other way
-```
-
-### Sheet `game`
-Now: one drawing plus sparks.
-```text
-Four frames of Faye sitting cross-legged holding a blue handheld game console:
-1) focused, tongue out, thumbs pressing
-2) leaning LEFT with the console, eyes narrowed
-3) leaning RIGHT with the console, gritted teeth
-4) winning: arms raised, console held up, big grin
-```
-
-### Sheet `daydream-stretch`: daydream and stretch
-Now: daydream is the stand drawing plus a heart; stretch uses "being held".
-```text
-Four frames of Faye:
-1) daydreaming: hands clasped beside his cheek, eyes looking up dreamily, soft smile
-2) daydreaming: head resting on his hand, eyes half closed, blush
-3) stretch: arms reaching straight up with fingers interlaced, on tiptoes, eyes closed
-4) stretch: leaning to one side with arms still up, mouth open "nnngh"
-```
-
-### Sheet `outdoors`: rain and bubbles
-Now: rain is the stand drawing plus drops; bubbles reuse the hum drawing.
-```text
-Four frames of Faye:
-1) holding a small pink umbrella over his head, looking up at the rain, smiling
-2) palm held out, catching a raindrop, curious face, no umbrella
-3) blowing bubbles: a bubble wand at his lips, cheeks puffed
-4) watching a bubble float up, eyes following it, mouth open in wonder
-```
-
-### Sheet `snack-photo`: snack and photo
-Now: snack has two drawings; photo has one.
-```text
-Four frames of Faye:
-1) chewing a cookie: cheeks full, eyes ^^, crumbs falling
-2) holding a half-eaten cookie, licking his lips
-3) photo: blue camera raised to his eye, other eye closed, one knee bent
-4) photo: looking at the camera's screen, happy surprised face
-```
-
-### Sheet `extras`: fidget, flower, strum
-Now: each has one or two drawings. These add the missing in-betweens.
-```text
-Four frames of Faye:
-1) fidget: twisting the bag strap with both hands, looking down shyly
-2) fidget: swinging the little bunny bag side to side, bored pout
-3) flower: sniffing a small yellow flower, eyes closed, blush, little sparkle
-4) ukulele: head tilted, mid-strum, mouth open singing, one foot tapping
-```
-
-### Already good, no new art needed
-- **wake**: four drawings in a sequence (awake, eye rub, stretch, stand).
-- **plane**: six drawings, the smoothest animation he has.
-- **page**: turns the page with two extra drawings.
 
 ---
 
 ## Suggested order
 
-1. `talk`, `idle-breath`, `transition`: on screen the most, biggest gain.
-2. `wave`, `cheer`, `feelings`: the reactions people trigger.
-3. `think`, `sleep`: loading and napping.
-4. Everything else, whenever you like.
+1. `carry`: fixes the only drawing that looks wrong today.
+2. `walk`: the biggest new feeling of life.
+3. `shop-order`, `shop-money`: these tie him to what the shop is doing.
+4. `moods`, `poke`: personality.
+5. `music-2`, `think-2`, `look-2`: smoother idles.
 
-Each finished sheet replaces one borrowed or single drawing. Bring them back in any order and I'll measure them and add them to `faye/faye.js`. I'll also switch from cross-fading to hard cuts, and use the `transition` frames instead of the crouch.
+## Checklist before you save a sheet
+
+Put it next to `faye/ref/faye-reference-2x.png` and check:
+
+- [ ] **Head:** the head with hair is clearly more than half his height, and as wide as or wider than the reference.
+- [ ] **Limbs:** arms and legs are as short as the reference, and the hands don't hang below the hoodie hem.
+- [ ] **Pixels:** the pixel blocks are big and square like the reference, not small or smooth. The dark outline goes around everything.
+- [ ] **Face and outfit:** the sunglasses sit on his hair, not his eyes. He has the bag and strap, the pink sleeves, and white shoes with a blue stripe.
+- [ ] **Frames:** all four frames are the same size, the feet are on one line (except jumps or lifts), and nothing crosses into the next cell.
+- [ ] **Background:** flat green, with no shadows, scenery or text.

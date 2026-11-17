@@ -87,7 +87,7 @@
     talk: ['talkClosed','talkHalf','talkWide','talkBlink'],
   };
   const clips = {
-    breathe:['inhale','exhale','inhale','exhale','inhale','exhale'], vibe:['vibeLeft','vibeRight','vibeLeft','vibeRight'],
+    breathe:['exhale','exhale','inhale','inhale'], vibe:['vibeLeft','vibeRight','vibeLeft','vibeRight'],
     sleep:['sleepIn','sleepOut','sleepIn','sleepOut'], game:['gameFocus','gameLeft','gameRight','gameWin'],
     page:['bookRead','bookPinch','bookLift','bookSweep'],
     tea:['teaBlow','teaPeek','teaBlow','teaSigh','teaPeek'], daydream:['dreamClasp','dreamLean','dreamClasp','dreamLean'],
@@ -180,10 +180,11 @@
   const mouthFrames=['talkClosed','talkHalf','talkWide','talkHalf'];
   // Coordinates on the sheets' 72×82 logical pixel grid, measured over each visible iris.
   const eyelids={
-    inhale:[[29,35,4,3],[40,35,3,3]],
-    exhale:[[28,36,4,4],[38,37,4,3]],
-    weightShift:[[28,36,4,4],[39,36,3,4]],
-    tapFoot:[[29,36,4,4],[40,36,3,4]],
+    // inhale / exhale / weightShift / tapFoot are built from talkClosed (scripts note in ART-PROMPTS.md)
+    inhale:[[29,37,4,4],[40,37,4,4]],
+    exhale:[[29,38,4,4],[40,38,4,4]],
+    weightShift:[[28,38,4,4],[39,38,4,4]],
+    tapFoot:[[29,38,4,4],[40,38,4,4]],
     lookLeft:[[26,36,3,4],[35,36,3,4]],
     lookRight:[[36,36,3,4],[45,35,3,4]],
     talkClosed:[[29,38,4,4],[40,38,4,4]],
@@ -222,10 +223,16 @@
     function fit() {
       const dpr=window.devicePixelRatio||1;
       const want=interactive?W:(host.clientWidth||W);
-      k=Math.max(1,Math.round(want*dpr/72));
-      scale=k/2;
-      if(canvas.width!==72*k) {canvas.width=72*k;canvas.height=82*k;ctx.imageSmoothingEnabled=false;}
-      const cssW=72*k/dpr,cssH=82*k/dpr;
+      // Screen pixels per art pixel at the size the page asks for. A whole number keeps every
+      // art pixel even; but if rounding would change his size by more than 8% (e.g. Windows at
+      // 125%: 2.5 -> 3 makes him 20% bigger), keep his size and accept slightly uneven pixels.
+      const exact=want*dpr/72;
+      k=Math.max(1,Math.round(exact));
+      if(Math.abs(k-exact)/exact>.08) k=exact;
+      const cw=Math.round(72*k),ch=Math.round(82*k);
+      scale=cw/144;
+      if(canvas.width!==cw||canvas.height!==ch) {canvas.width=cw;canvas.height=ch;ctx.imageSmoothingEnabled=false;}
+      const cssW=cw/dpr,cssH=ch/dpr;
       canvas.style.width=cssW+'px';canvas.style.height=cssH+'px';
       if(!interactive) { // centred on the stage, feet on its floor
         canvas.style.left=Math.round((host.clientWidth-cssW)/2*dpr)/dpr+'px';
@@ -381,7 +388,7 @@
       const pose=speaking&&neutral?mouthFrames[beat%mouthFrames.length]:frame.pose;
       const {img,left,top}=art[pose];
       const breathing=animate&&!beingCarried&&frame.pose!=='cheerJump';
-      const bob=breathing?(speaking&&!neutral?-(beat%2):Math.cos((drawTime-t0)*TAU/2400)<0?-1:0):0;
+      const bob=breathing&&!neutral?(speaking?-(beat%2):Math.cos((drawTime-t0)*TAU/2400)<0?-1:0):0;
       ctx.save();
       ctx.translate(Math.round(frame.x),Math.round(frame.y)+bob);
       ctx.rotate(frame.tilt);
