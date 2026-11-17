@@ -148,14 +148,26 @@
   };
   const palette={ink:'#43251d',peach:'#ffa87d',pink:'#ed7c86',blue:'#388aa9',gold:'#ffd79a',cream:'#fff1d7'};
   let imagePromise;
+  // Each sheet loads on its own with a time limit and one retry. A sheet that still fails is
+  // skipped (its poses fall back to the resting drawing), so one slow or broken file can never
+  // keep Faye hidden. Only the resting/talking sheets are required.
+  const required=['idle-breath','talk'];
+  function loadSheet(file,attempt=0) {
+    return new Promise((resolve,reject)=>{
+      const img=new Image();
+      const timer=setTimeout(()=>{img.src='';reject(new Error('slow '+file));},15000);
+      img.onload=()=>{clearTimeout(timer);resolve(img);};
+      img.onerror=()=>{clearTimeout(timer);reject(new Error('load '+file));};
+      img.src=new URL('assets/'+file+'.png'+version+(attempt?(version?'&':'?')+'retry='+attempt:''),base);
+    }).then(img=>img.decode?img.decode().then(()=>img,()=>img):img)
+      .catch(error=>attempt<1?loadSheet(file,attempt+1):Promise.reject(error));
+  }
   function loadArt() {
     if (imagePromise) return imagePromise;
-    imagePromise = Promise.all(Object.entries(authored).map(async ([file,poses])=>{
-      const img = new Image();
-      img.src = new URL('assets/'+file+'.png'+version,base);
-      await img.decode();
-      return poses.map((pose,i)=>[pose,{img,left:i%2*288,top:Math.floor(i/2)*328}]);
-    })).then(items=>Object.fromEntries(items.flat())).catch(error=>{imagePromise=undefined;throw error});
+    imagePromise = Promise.all(Object.entries(authored).map(([file,poses])=>loadSheet(file).then(
+      img=>poses.map((pose,i)=>[pose,{img,left:i%2*288,top:Math.floor(i/2)*328}]),
+      error=>{if(required.includes(file)) throw error; console.warn('Faye:',error.message); return [];},
+    ))).then(items=>Object.fromEntries(items.flat())).catch(error=>{imagePromise=undefined;throw error});
     return imagePromise;
   }
   const W=144,H=164, FLOOR=150, TAU=2*Math.PI;
@@ -386,7 +398,9 @@
       const beat=Math.floor((drawTime-talkStart)/105);
       const neutral=neutralTalk.has(frame.pose);
       const pose=speaking&&neutral?mouthFrames[beat%mouthFrames.length]:frame.pose;
-      const {img,left,top}=art[pose];
+      const sprite=art[pose]||art.exhale||art.talkClosed;
+      if(!sprite) return;
+      const {img,left,top}=sprite;
       const breathing=animate&&!beingCarried&&frame.pose!=='cheerJump';
       const bob=breathing&&!neutral?(speaking?-(beat%2):Math.cos((drawTime-t0)*TAU/2400)<0?-1:0):0;
       ctx.save();
@@ -647,9 +661,17 @@
         case 'settle':mark('check',107,67,palette.blue,2,hop);break;
       }
     }
+    let tickFailed=false;
     function tick(raw) {
-      const now=clock(raw);
       if(dead) return;
+      frame=requestAnimationFrame(tick);
+      try {step(raw);} catch(error) {
+        if(!tickFailed) {tickFailed=true;console.error('Faye frame skipped:',error);}
+        dirty=true;
+      }
+    }
+    function step(raw) {
+      const now=clock(raw);
       if(!pointer && now>=next) {
         if(following) {
           const id=following;
@@ -676,7 +698,7 @@
       swing=clamp(swing+swingVelocity*dt,-.22,.22);
       const interval=bridge||bagIntro||pointer||current.id==='drop'||current.id==='wake'||current.id==='plane'?1000/40:1000/30;
       if(dirty||(!paused&&!reduced.matches&&raw-last>=interval)) {draw(now);last=raw;dirty=false;}
-      frame=requestAnimationFrame(tick);
+      // next frame is already scheduled by tick()
     }
     if(interactive) canvas.addEventListener('pointerdown',event=>{
       if(!event.isPrimary||event.button!==0||pointer) return;

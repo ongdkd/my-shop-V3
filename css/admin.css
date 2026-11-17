@@ -59,12 +59,11 @@ button:focus-visible,a:focus-visible,.nav-item:focus-visible{outline:2px solid v
 /* Animated pixel Faye (faye/faye.js draws a 144x164 canvas inside .faye-stage) */
 .faye-stage{--faye-w:144px;display:block;position:relative;width:var(--faye-w);height:calc(var(--faye-w) * 164 / 144);}
 .faye-stage canvas{transform:none!important;}
-.faye.no-art .faye-stage{background:url('../faye/assets/talk.png?v=faye-reference-5') 0 0 / 200% 200% no-repeat;image-rendering:pixelated;}
+.faye.no-art .faye-stage,.faye.loading .faye-stage{background:url('../faye/assets/talk.png?v=faye-reference-5') 0 0 / 200% 200% no-repeat;image-rendering:pixelated;}
 .faye.mini .faye-stage{--faye-w:72px;}
 .faye.held summary{cursor:grabbing;}
 .faye.held .faye-stage{filter:drop-shadow(0 12px 10px rgba(74,46,61,.25));}
 .faye-badge{position:absolute;top:6%;right:14%;min-width:22px;height:22px;padding:0 6px;border-radius:999px;background:var(--primary);color:#fff;font-size:.72rem;font-weight:700;line-height:22px;text-align:center;border:2px solid #fff;box-shadow:var(--shadow-sm);}
-.faye.napping .faye-ready,.faye.held .faye-ready,.faye-help[open] .faye-ready{display:none;}
 .faye-help-panel{position:absolute;bottom:100%;right:0;width:min(380px,calc(100vw - 24px));max-height:min(70dvh,calc(100dvh - 150px));overflow:auto;padding:15px 16px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface);color:var(--text);box-shadow:var(--shadow-md);}
 .faye.below .faye-help-panel{bottom:auto;top:100%;}
 .faye.left .faye-help-panel{right:auto;left:0;}
@@ -1297,7 +1296,7 @@ body.touch-dragging *{-webkit-touch-callout:none;}
 .faye-ready .d2{animation-delay:.25s;}.faye-ready .d3{animation-delay:.5s;}
 .faye.left .faye-ready{left:auto;right:0;}
 .faye.mini .faye-ready{width:26px;height:18px;top:0;}
-.faye.napping .faye-ready,.faye.held .faye-ready,.faye-help[open] .faye-ready{display:none;}
+.faye.loading .faye-ready,.faye.napping .faye-ready,.faye.held .faye-ready,.faye-help[open] .faye-ready{display:none;}
 @keyframes fayeReady{0%,100%{transform:translateY(0);}50%{transform:translateY(-3px);}}
 @keyframes fayeDots{0%,60%{opacity:1;}61%,100%{opacity:.25;}}
 .faye-bubble{position:absolute;bottom:calc(100% + 12px);right:12px;width:max-content;max-width:min(260px,calc(100vw - 48px));padding:8px 11px;background:#fcf4ec;color:#34140c;font-size:.82rem;line-height:1.45;cursor:pointer;border-radius:0;box-shadow:0 -3px 0 0 #34140c,0 3px 0 0 #34140c,-3px 0 0 0 #34140c,3px 0 0 0 #34140c,inset 0 -3px 0 0 #fcd4c4,6px 6px 0 0 rgba(52,20,12,.18);animation:fayePixPop .24s steps(3,end);}

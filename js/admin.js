@@ -146,8 +146,10 @@ var FAYE_REST = [15000, 25000]; // stands still (breathing) 15–25 s between id
 // canvas ignores the pointer; we tell it when he's picked up, carried and dropped.
 var faye = null;
 try { if (window.FayeCompanion) faye = FayeCompanion.mount(fayeHelp.querySelector('.faye-stage'), { interactive: false, speed: FAYE_SPEED, rest: FAYE_REST }); } catch (e) { faye = null; }
-if (faye) faye.ready.catch(function() { fayeBox.classList.add('no-art'); });
-else fayeBox.classList.add('no-art');
+// Until his drawings are in, a still Faye stands in and the 💬 cue stays hidden
+fayeBox.classList.add('loading');
+if (faye) faye.ready.then(function() { fayeBox.classList.remove('loading'); }, function() { fayeBox.classList.remove('loading'); fayeBox.classList.add('no-art'); });
+else { fayeBox.classList.remove('loading'); fayeBox.classList.add('no-art'); }
 function fayeStore(k, v) {
   try { if (v === undefined) return localStorage.getItem(k); if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) {}
   return null;
