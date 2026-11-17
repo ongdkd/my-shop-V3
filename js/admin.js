@@ -310,16 +310,91 @@ var FAYE_VIEWS = {
   news: 'มีอะไรใหม่', find: 'ค้นหาออเดอร์', go: 'ไปหน้าอื่น', tips: 'ถามเรื่องหน้านี้', settings: 'ตั้งค่า Faye'
 };
 function fayeUnread() { return typeof notifUnread === 'function' && _notif && _notif.loaded ? notifUnread() : 0; }
-function fayeChat(you, reply) {
-  var y = el('fayeYou'), r = el('fayeReply');
-  y.textContent = you || ''; y.hidden = !you;
-  r.textContent = reply;
-  if (faye && faye.talk && reply && reply !== '…') {
-    faye.talk(Math.max(650, Math.min(2100, reply.length * 26)));
-  }
-  r.style.animation = 'none'; void r.offsetWidth; r.style.animation = ''; // replay the pop
-  var a = el('fayeActs'); a.innerHTML = ''; a.hidden = true;
+// The chat log lives in the page: closing the panel or switching screens keeps it,
+// a reload (or "ล้างแชท") starts over. Old messages are trimmed past FAYE_LOG_MAX.
+var FAYE_LOG_MAX = 80, _fayePending = null;
+function fayeLogAdd(node) {
+  var log = el('fayeLog');
+  log.appendChild(node);
+  while (log.children.length > FAYE_LOG_MAX) log.removeChild(log.firstChild);
+  log.scrollTop = log.scrollHeight;
+  return node;
 }
+function fayeYou(text) {
+  var p = document.createElement('p'); p.className = 'faye-you'; p.textContent = text;
+  return fayeLogAdd(p);
+}
+// Faye's turn. Fills the "…" bubble of a question still being answered, else adds one.
+// acts: [[label, fn], …] → buttons under this answer.
+function fayeSays(text, acts) {
+  var r = _fayePending;
+  _fayePending = null;
+  if (!r) { r = document.createElement('p'); r.className = 'faye-reply'; fayeLogAdd(r); }
+  r.classList.remove('wait');
+  r.textContent = text;
+  if (acts && acts.length) {
+    var box = div('faye-acts');
+    acts.forEach(function(a) {
+      var b = makeBtn('faye-go-btn', '', a[1]); b.type = 'button'; b.textContent = a[0]; box.appendChild(b);
+    });
+    r.after(box);
+  }
+  el('fayeLog').scrollTop = el('fayeLog').scrollHeight;
+  if (faye && faye.talk && text) faye.talk(Math.max(650, Math.min(2100, text.length * 26)));
+  fayeSuggest();
+  return r;
+}
+// ── Suggested questions: 2–3 chips under the chat, picked for the screen you're on.
+// Each one carries its own action, so tapping it never needs the AI. ──
+var _fayeLastSug = '';
+function fayeSuggestions() {
+  var B = window.FayeBrain, today = B.day(new Date().toISOString());
+  var round = selectedSheetId && selectedSheetId !== 'ALL' ? { id: selectedSheetId, name: selectedSheetName } : null;
+  var list = [];
+  if (round && (currentPanel === 'orders' || currentPanel === 'products' || currentPanel === 'orderlists')) {
+    list.push(['รอบนี้ต้องสั่งอะไรบ้าง?', { do: 'buy_list', listId: round.id, item: '' }]);
+  }
+  if (currentPanel === 'stock' || currentPanel === 'restock') {
+    list.push(['ของชิ้นไหนใกล้หมด?', { do: 'low_stock' }]);
+    list.push(['เพิ่มสต็อก', { do: 'add_stock', item: '', qty: 0 }]);
+  }
+  if (currentPanel === 'status' || currentPanel === 'slips') list.push(['มีออเดอร์รอจัดส่งเท่าไร?', { do: 'waiting' }]);
+  list.push(['วันนี้ขายได้เท่าไร?', { do: 'sales', from: today, to: today }]);
+  list.push(['มีออเดอร์รอจัดส่งเท่าไร?', { do: 'waiting' }]);
+  list.push(['7 วันนี้ขายได้เท่าไร?', { do: 'sales', from: B.day(new Date(Date.now() - 6 * 864e5).toISOString()), to: today }]);
+  list.push(['ของชิ้นไหนใกล้หมด?', { do: 'low_stock' }]);
+  var seen = {};
+  return list.filter(function(s) {
+    if (seen[s[0]] || s[0] === _fayeLastSug) return false;
+    return (seen[s[0]] = true);
+  }).slice(0, 3);
+}
+function fayeSuggest() {
+  var box = el('fayeSuggest'); if (!box || !window.FayeBrain) return;
+  box.innerHTML = '';
+  fayeSuggestions().forEach(function(s) {
+    var b = makeBtn('faye-sug', '', function() {
+      _fayeLastSug = s[0]; _fayeAsked = s[0];
+      fayeYou(s[0]);
+      fayeRun(s[1]);
+    });
+    b.type = 'button'; b.textContent = s[0]; b.title = s[0];
+    box.appendChild(b);
+  });
+}
+function fayeWaiting() {
+  var r = document.createElement('p'); r.className = 'faye-reply wait'; r.textContent = '…';
+  _fayePending = fayeLogAdd(r);
+}
+function fayeChat(you, reply) { if (you) fayeYou(you); return fayeSays(reply); }
+function fayeGreet() {
+  var unread = fayeUnread();
+  fayeSays(fayeGreeting() + ' ' + (unread ? 'มีเรื่องใหม่ ' + unread + ' เรื่องครับ ให้ผมช่วยอะไรดี?' : 'ให้ผมช่วยอะไรดีครับ?'));
+}
+el('fayeClear').addEventListener('click', function() {
+  el('fayeLog').innerHTML = ''; _fayePending = null; fayeGreet();
+  el('fayeAskInput').focus();
+});
 
 // ── Ask Faye: a type box. Simple commands are matched in the page; anything else
 // goes to the faye-chat function (Gemini), which only picks ONE action from a fixed
@@ -328,13 +403,8 @@ function fayeChat(you, reply) {
 var _fayeAsked = '', _fayePrev = '', _fayeOrders = null, _fayeOrdersAt = 0, _fayeKeep = false;
 // Faye answers in his panel; acts: [[label, fn], …] become buttons under the answer
 function fayeTell(text, acts) {
-  if (!fayeHelp.open) { _fayeKeep = true; fayeHelp.open = true; } // reopening must not reset him to the greeting
-  fayeChat(_fayeAsked, text);
-  var box = el('fayeActs');
-  (acts || []).forEach(function(a) {
-    var b = makeBtn('faye-go-btn', '', a[1]); b.type = 'button'; b.textContent = a[0]; box.appendChild(b);
-  });
-  box.hidden = !box.children.length;
+  if (!fayeHelp.open) fayeHelp.open = true;
+  fayeSays(text, acts);
 }
 // ponytail: all orders are re-read at most once a minute per question; a server-side lookup if the shop outgrows it
 function fayeOrders(cb) {
@@ -353,12 +423,14 @@ function fayePanels() {
 }
 function fayeFindOrders(q) { el('fayeFindInput').value = q; el('fayeFind').requestSubmit(); }
 function fayeDay(d) { return new Date(d + 'T00:00:00').toLocaleDateString('th-TH', { day: 'numeric', month: 'short' }); }
+// A short answer that also shows as his speech bubble (the panel may close on the way)
+function fayeNote(text, ms, anim) { fayeSays(text); fayeSay(text, ms, anim); }
 function fayeRun(a) {
   var B = window.FayeBrain;
   if (a.do === 'goto' && VALID_PANELS.indexOf(a.panel) !== -1) {
-    switchPanel(a.panel); fayeSay(a.say || 'มาแล้วครับ', 5000, 'yes');
+    switchPanel(a.panel); fayeNote(a.say || 'มาแล้วครับ', 5000, 'yes');
   } else if (a.do === 'find_orders' && (a.query || a.customer)) {
-    fayeFindOrders(a.query || a.customer); fayeSay(a.say || 'ค้นให้แล้วครับ', 5000, 'yes');
+    fayeFindOrders(a.query || a.customer); fayeNote(a.say || 'ค้นให้แล้วครับ', 5000, 'yes');
   } else if (a.do === 'ship_status' && a.customer) {
     fayeOrders(function(orders) {
       var c = B.customer(orders, a.customer);
@@ -390,6 +462,39 @@ function fayeRun(a) {
         row('หน้าเว็บ', s.web) + '\n' + row('หน้าร้าน (POS)', s.pos) + '\nรวม ' + baht(s.web.baht + s.pos.baht) +
         (s.noPrice ? '\n(ไม่นับ ' + s.noPrice + ' รายการที่ไม่มีราคา)' : ''));
     });
+  } else if (a.do === 'buy_list') {
+    // What to buy for a round — the numbers of "สรุปตามสินค้า" on the orders page
+    var here = selectedSheetId && selectedSheetId !== 'ALL' ? selectedSheetId : '';
+    var q = B.roundWords(a.item || a.query || '');
+    var pick = a.listId || (q ? '' : here);
+    if (!q && !pick) return fayeTell('รอบไหนครับ? พิมพ์ชื่อรอบมาได้เลย เช่น “Shutline ต้องสั่งอะไรบ้าง”');
+    fayeOrders(function(orders) {
+      var r = B.buyList(orders, q, pick);
+      if (r.rounds.length > 1) {
+        return fayeTell('เจอ ' + r.rounds.length + ' รอบที่ชื่อตรงกัน หมายถึงรอบไหนครับ?', r.rounds.slice(0, 8).map(function(x) {
+          return [x.name, function() { fayeRun({ do: 'buy_list', listId: x.listId, item: x.name }); }];
+        }));
+      }
+      if (!r.items.length && !r.gifts.length) return fayeTell('ไม่เจอออเดอร์ของ “' + (q || selectedSheetName) + '” ครับ');
+      var round = r.rounds[0];
+      // "Shutline X Mercury Nov26 MD - ตุ๊กตาคู่" → "ตุ๊กตาคู่" when the round's name is already in the title
+      var short = function(n) {
+        n = n.replace(/^ของแถม\s*:\s*/, ''); // already under the "ของแถม" heading
+        if (!round || n.toLowerCase().indexOf(round.name.toLowerCase()) !== 0) return n;
+        return n.slice(round.name.length).replace(/^[\s\-–:]+/, '') || n;
+      };
+      var line = function(g) {
+        return '• ' + short(g.name) + ': ' + g.qty + ' ชิ้น' +
+          (g.variants.length ? ' (' + g.variants.map(function(v) { return v.name + ' ' + v.qty; }).join(' · ') + ')' : '');
+      };
+      var text = (round ? 'รอบ ' + round.name : 'สินค้าที่มีคำว่า “' + q + '” ทุกรอบ') + '\n' +
+        'ต้องสั่ง ' + r.items.length + ' สินค้า · รวม ' + r.qty + ' ชิ้น\n' + r.items.map(line).join('\n');
+      if (r.gifts.length) text += '\n\nของแถม ' + r.giftQty + ' ชิ้น\n' + r.gifts.map(line).join('\n');
+      if (r.cancelled) text += '\n\n(ไม่นับ ' + r.cancelled + ' รายการที่ยกเลิก)';
+      fayeTell(text, round && round.listId ? [['เปิดสรุปตามสินค้าของรอบนี้', function() {
+        selectedSheetId = round.listId; selectedSheetName = round.name; _ordView = 'items'; switchPanel('orders');
+      }]] : []);
+    });
   } else if (a.do === 'waiting') {
     fayeOrders(function(orders) {
       var w = B.waiting(orders), n = w.reduce(function(t, g) { return t + g.lines; }, 0);
@@ -398,7 +503,7 @@ function fayeRun(a) {
     });
   } else if (a.do === 'low_stock' || a.do === 'stock_of' || a.do === 'add_stock') {
     if (a.do === 'add_stock' && !a.item) { // no item named: the same form as "+ เพิ่มสินค้า" on the stock page
-      switchPanel('stock'); openCreateStockModal(); return fayeSay(a.say || 'เปิดฟอร์มเพิ่มสินค้าให้แล้วครับ', 5000, 'yes');
+      switchPanel('stock'); openCreateStockModal(); return fayeNote(a.say || 'เปิดฟอร์มเพิ่มสินค้าให้แล้วครับ', 5000, 'yes');
     }
     loadStock(function() {
       var line = function(r) { return '• ' + r.name + ': ' + (r.free === null ? 'ไม่จำกัด' : 'ในคลัง ' + r.shelf + (r.held ? ' · จอง ' + r.held + ' · ว่าง ' + r.free : '')); };
@@ -420,7 +525,7 @@ function fayeRun(a) {
         openQuickRestock(r.parent, r.child);
         var q = el('qrAdd'); // the form only opens — saving is still the admin's own tap
         if (q && a.qty > 0) { q.value = a.qty; q.dispatchEvent(new Event('input')); }
-        fayeSay('เปิดฟอร์มเพิ่มสต็อก ' + r.name + ' ให้แล้วครับ ตรวจแล้วกดบันทึกได้เลย', 6000, 'yes');
+        fayeNote('เปิดฟอร์มเพิ่มสต็อก ' + r.name + ' ให้แล้วครับ ตรวจแล้วกดบันทึกได้เลย', 6000, 'yes');
       };
       if (rows.length === 1) return open(rows[0]);
       fayeTell('เจอ ' + rows.length + ' รายการ จะเพิ่มชิ้นไหนครับ?', rows.slice(0, 8).map(function(r) { return [r.name, function() { open(r); }]; }));
@@ -433,10 +538,11 @@ el('fayeAsk').addEventListener('submit', function(e) {
   e.preventDefault();
   var inp = el('fayeAskInput'), text = inp.value.trim(); if (!text) return;
   inp.value = '';
-  _fayeAsked = text;
+  _fayeAsked = text; _fayeLastSug = '';
+  fayeYou(text);
   var cmd = window.FayeBrain.local(text, fayePanels());
   if (cmd) return fayeRun(cmd);
-  fayeChat(text, '…');
+  fayeWaiting();
   var prev = _fayePrev; _fayePrev = text;
   var tips = (FAYE_TIPS[currentPanel] || []).concat(FAYE_TIPS.common);
   google.script.run.withSuccessHandler(function(r) {
@@ -452,11 +558,12 @@ function fayeView(name) {
   fayeHelp.querySelectorAll('.faye-view').forEach(function(v) { v.hidden = v.getAttribute('data-view') !== name; });
   el('fayeBack').hidden = name === 'main';
   el('fayeWhere').textContent = name === 'main' ? '' : FAYE_VIEWS[name];
+  if (name !== 'main') el('fayeMenu').open = true;
   var you = name === 'main' ? '' : FAYE_VIEWS[name];
   var unread = fayeUnread();
   if (name === 'main') {
-    fayeChat('', fayeGreeting() + ' ' + (unread ? 'มีเรื่องใหม่ ' + unread + ' เรื่องครับ ให้ผมช่วยอะไรดี?' : 'ให้ผมช่วยอะไรดีครับ?'));
-    var cnt = el('fayeNewsCount'); cnt.textContent = unread > 99 ? '99+' : unread; cnt.hidden = !unread;
+    if (!el('fayeLog').children.length) fayeGreet();
+    [el('fayeNewsCount'), el('fayeMenuCount')].forEach(function(cnt) { cnt.textContent = unread > 99 ? '99+' : unread; cnt.hidden = !unread; });
   } else if (name === 'news') {
     var news = el('fayeNews'); news.innerHTML = '';
     if (unread) {
@@ -510,7 +617,12 @@ fayeHelp.querySelectorAll('[data-open]').forEach(function(b) {
   b.addEventListener('click', function() { fayeView(b.getAttribute('data-open')); });
 });
 el('fayeBack').addEventListener('click', function() { fayeView('main'); fayeHelp.querySelector('[data-open]').focus(); });
-function fayeFill() { fayeView('main'); }
+// Opening the panel: the chat stays as it was; only the menu goes back to its first page
+function fayeFill() {
+  fayeView('main');
+  fayeSuggest();
+  setTimeout(function() { el('fayeLog').scrollTop = el('fayeLog').scrollHeight; }, 0);
+}
 // Badge on Faye: unread count (kept in step with the bell)
 function fayeBadge() {
   var n = typeof notifUnread === 'function' && _notif && _notif.loaded ? notifUnread() : 0, b = el('fayeBadge');
@@ -534,7 +646,7 @@ el('fayeFind').addEventListener('submit', function(e) {
 
 fayeHelp.addEventListener('toggle', function() {
   if (!fayeHelp.open && faye && faye.talk) faye.talk(0);
-  if (fayeHelp.open) { fayeBubbleHide(); fayeSide(); if (_fayeKeep) _fayeKeep = false; else fayeFill(); }
+  if (fayeHelp.open) { fayeBubbleHide(); fayeSide(); fayeFill(); }
   if (fayeHelp.open) fayeDo('hello');
 });
 el('fayePause').addEventListener('click', function() {

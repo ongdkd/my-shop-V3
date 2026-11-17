@@ -14,7 +14,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&family=Sora:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-<link rel="stylesheet" href="css/admin.css?v=faye-reference-5">
+<link rel="stylesheet" href="css/admin.css?v=20261122g">
 </head>
 <body>
 <div id="toast" role="status" aria-live="polite"></div>
@@ -124,19 +124,21 @@
         <summary aria-label="คุยกับ Faye (กดค้างแล้วลากเพื่อย้าย)"><span class="faye-stage" aria-hidden="true"></span><span class="faye-badge" id="fayeBadge" hidden></span><span class="faye-ready" aria-hidden="true">💬</span></summary>
         <section class="faye-help-panel" aria-labelledby="fayeHelpHeading">
           <div class="faye-head">
-            <button class="faye-back" type="button" id="fayeBack" aria-label="กลับเมนูหลัก" hidden>‹</button>
             <h2 id="fayeHelpHeading">Faye</h2>
-            <span class="faye-where" id="fayeWhere"></span>
+            <button class="faye-clear" type="button" id="fayeClear">ล้างแชท</button>
           </div>
-          <div class="faye-chat">
-            <p class="faye-you" id="fayeYou" hidden></p>
-            <p class="faye-reply" id="fayeReply" role="status"></p>
-            <div class="faye-acts" id="fayeActs" hidden></div>
-          </div>
+          <!-- The conversation: kept until the page is reloaded or closed -->
+          <div class="faye-log" id="fayeLog" role="log" aria-live="polite" aria-label="แชทกับ Faye"></div>
+          <div class="faye-suggest" id="fayeSuggest" aria-label="คำถามแนะนำ"></div>
           <form class="faye-find faye-ask" id="fayeAsk">
             <input type="text" id="fayeAskInput" placeholder="พิมพ์ถาม Faye…" aria-label="พิมพ์ถาม Faye" autocomplete="off" maxlength="300" enterkeyhint="send">
             <button class="btn btn-primary btn-sm" type="submit">ส่ง</button>
           </form>
+          <!-- Menu: folded away so the chat has room; opens with a tap -->
+          <details class="faye-menu" id="fayeMenu">
+            <summary><span class="faye-ico">☰</span><span class="faye-menu-t">เมนู</span><span class="faye-where" id="fayeWhere"></span><span class="faye-count" id="fayeMenuCount" hidden></span></summary>
+            <div class="faye-menu-body">
+          <button class="faye-menu-item faye-back" type="button" id="fayeBack" hidden><span class="faye-ico">‹</span><span class="faye-lbl">กลับเมนูหลัก</span></button>
           <!-- Main menu -->
           <div class="faye-view" data-view="main">
             <button class="faye-menu-item" type="button" data-open="news"><span class="faye-ico">🔔</span><span class="faye-lbl">มีอะไรใหม่</span><span class="faye-count" id="fayeNewsCount" hidden></span><span class="faye-chev">›</span></button>
@@ -160,6 +162,8 @@
             <button class="faye-menu-item" type="button" id="fayePause" aria-pressed="false"><span class="faye-ico">⏸️</span><span class="faye-lbl">พักแอนิเมชัน</span></button>
             <button class="faye-menu-item" type="button" id="fayeHome"><span class="faye-ico">↘️</span><span class="faye-lbl">กลับมุมขวาล่าง</span></button>
           </div>
+            </div>
+          </details>
         </section>
       </details>
     </div>
@@ -182,7 +186,7 @@ if (window.__sb) {
 <script src="js/thai-address.js?v=20261031c"></script>
 <script src="js/tags.js?v=20261113a"></script>
 <script src="faye/faye.js?v=faye-bag-switch-8"></script>
-<script src="js/faye-brain.js?v=20261117b"></script>
-<script src="js/admin.js?v=drawn-frames-1"></script>
+<script src="js/faye-brain.js?v=20261122e"></script>
+<script src="js/admin.js?v=20261122g"></script>
 </body>
 </html>

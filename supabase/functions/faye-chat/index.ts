@@ -19,7 +19,7 @@ const reply = (body: unknown) =>
 const fail = (message: string) => reply({ ok: false, message });
 
 // What Faye can do. The page (js/admin.js fayeRun) runs these; anything else is ignored there.
-const ACTIONS = ["answer", "ship_status", "sales", "low_stock", "stock_of", "waiting", "goto", "find_orders", "add_stock"];
+const ACTIONS = ["answer", "ship_status", "sales", "buy_list", "low_stock", "stock_of", "waiting", "goto", "find_orders", "add_stock"];
 
 const clip = (v: unknown, n: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 
@@ -51,8 +51,9 @@ Deno.serve(async (req) => {
 เลือก do หนึ่งอย่างจากรายการนี้เท่านั้น:
 - ship_status: ถามว่าของ/ออเดอร์ของลูกค้าคนหนึ่งถึงไหน ส่งหรือยัง เลขพัสดุ → ใส่ customer (ชื่อที่พิมพ์มา ไม่ต้องแก้)
 - sales: ถามยอดขาย → ใส่ from และ to เป็น YYYY-MM-DD (วันนี้, เมื่อวาน, 7 วัน, เดือนนี้ ฯลฯ คิดจากวันนี้)
+- buy_list: ถามว่ารอบ/รายการ/ลิสต์หนึ่งต้องสั่งซื้อของอะไรบ้าง กี่ชิ้น ลูกค้าสั่งอะไรไปเท่าไร สรุปยอดตามสินค้าของรอบ → ใส่ item เป็นชื่อรอบตามที่พิมพ์ (ถ้าพูดว่า "รอบนี้" ให้เว้นว่าง)
 - low_stock: ถามว่าของชิ้นไหนใกล้หมด/หมดแล้วในคลัง
-- stock_of: ถามจำนวนในคลังของสินค้าชิ้นหนึ่ง → ใส่ item
+- stock_of: ถามว่าในคลัง (ของที่มีอยู่บนชั้น) เหลือกี่ชิ้น เฉพาะคลังสินค้าเท่านั้น ไม่ใช่ยอดที่ลูกค้าสั่ง → ใส่ item
 - waiting: ถามว่ามีออเดอร์รอจัดส่งเท่าไร/รอบไหนยังไม่ส่ง
 - find_orders: ให้ค้นหรือเปิดออเดอร์/บิลของลูกค้าหรือสินค้า → ใส่ query
 - add_stock: ให้เพิ่มสต็อกหรือเพิ่มสินค้าในคลัง → ใส่ item และ qty ถ้าบอกมา (ไม่บอกก็เว้นว่าง)

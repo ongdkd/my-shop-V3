@@ -54,4 +54,27 @@ assert.equal(F.findItems(stock, 'film zayne').length, 1);
 assert.equal(F.findItems(stock, 'film').length, 2);
 assert.equal(F.findItems(stock, 'film').every((r) => r.child), true);
 assert.equal(F.findItems(stock, '').length, 0);
+// What to buy for a round
+assert.deepEqual(F.local('Shutline x mercury ต้องของอะไรบ้างและกี่ชิ้น', panels), { do: 'buy_list', item: 'Shutline x mercury' });
+assert.deepEqual(F.local('รอบนี้ต้องสั่งอะไรบ้าง', panels), { do: 'buy_list', item: '' });
+assert.deepEqual(F.local('รอบ Shutline ต้องซื้อกี่ชิ้น', panels), { do: 'buy_list', item: 'Shutline' });
+assert.deepEqual(F.local('สรุปยอดสั่ง Shutline', panels), { do: 'buy_list', item: 'Shutline' });
+const R = 'Shutline X Mercury Nov26 MD';
+const B = (o) => O({ shopName: R, listId: 'L1', ...o });
+const round = [
+  B({ product: R + ' - ตุ๊กตาคู่', qty: 2 }), B({ product: R + ' - ตุ๊กตาคู่', qty: 3 }),
+  B({ product: R + ' - ถั่ว (Jay)', qty: 3 }), B({ product: R + ' - ถั่ว (Shin:SH01)', qty: 2 }),
+  B({ product: R + ' - ถั่ว (Jay)', qty: 1, status: 'ยกเลิก' }),
+  B({ product: 'ของแถม: โปสการ์ด', qty: 4, payType: 'Gift' }),
+  O({ shopName: 'Other', listId: 'L2', product: 'Shutline sticker', qty: 9 }),
+];
+const b1 = F.buyList(round, 'shutline x mercury');
+assert.equal(b1.rounds.length, 1);
+assert.deepEqual(b1.items.map((g) => [g.name, g.qty]), [[R + ' - ตุ๊กตาคู่', 5], [R + ' - ถั่ว', 5]]);
+assert.deepEqual(b1.items[1].variants, [{ name: 'Jay', qty: 3 }, { name: 'Shin', qty: 2 }]);
+assert.equal(b1.qty, 10); assert.equal(b1.giftQty, 4); assert.equal(b1.cancelled, 1);
+assert.equal(F.buyList(round, '', 'L1').qty, 10);                 // the round on screen
+assert.equal(F.buyList(round, 'shutline').rounds.length, 1);      // "Other" has no Shutline in its name
+assert.equal(F.buyList(round, 'sticker').byProduct, true);        // no round: falls back to product names
+assert.equal(F.buyList(round, 'sticker').qty, 9);
 console.log('check-faye: ok');
