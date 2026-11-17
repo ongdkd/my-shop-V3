@@ -215,6 +215,24 @@
     host.append(canvas);
     const ctx=canvas.getContext('2d');
     ctx.imageSmoothingEnabled=false;
+    // Sharp at any size: the art is a 72×82 pixel grid, so the canvas gets a whole
+    // number of SCREEN pixels per art pixel (k) and is drawn at the screen's own
+    // resolution. The drawing code keeps working in the 144×164 space (scale k/2).
+    let k=2,scale=1;
+    function fit() {
+      const dpr=window.devicePixelRatio||1;
+      const want=interactive?W:(host.clientWidth||W);
+      k=Math.max(1,Math.round(want*dpr/72));
+      scale=k/2;
+      if(canvas.width!==72*k) {canvas.width=72*k;canvas.height=82*k;ctx.imageSmoothingEnabled=false;}
+      const cssW=72*k/dpr,cssH=82*k/dpr;
+      canvas.style.width=cssW+'px';canvas.style.height=cssH+'px';
+      if(!interactive) { // centred on the stage, feet on its floor
+        canvas.style.left=Math.round((host.clientWidth-cssW)/2*dpr)/dpr+'px';
+        canvas.style.top=Math.round((host.clientHeight-cssH)*dpr)/dpr+'px';
+      }
+      dirty=true;
+    }
     const reduced=matchMedia('(prefers-reduced-motion: reduce)');
     const events=new AbortController(),signal=events.signal;
     let art,dead=false,frame,last=0,dirty=true,mode='idle', current=actions.breathe;
@@ -229,7 +247,7 @@
     const clamp=(n,lo,hi)=>Math.max(lo,Math.min(hi,n));
     function position(px,py) {
       x=clamp(px,0,Math.max(0,host.clientWidth-W));y=clamp(py,0,Math.max(0,host.clientHeight-H));
-      canvas.style.transform='translate('+Math.round(x)+'px,'+Math.round(y)+'px)';
+      if(interactive) canvas.style.transform='translate('+Math.round(x)+'px,'+Math.round(y)+'px)';
       dirty=true;
     }
     function startBridge(from,to,now,duration,thinking=false) {
@@ -484,6 +502,7 @@
 
     function draw(now) {
       drawTime=now;
+      ctx.setTransform(scale,0,0,scale,0,0);
       ctx.clearRect(0,0,W,H);
       if(!reduced.matches&&!paused&&now>=nextBlink) {
         blinkUntil=now+90+Math.random()*40;
@@ -683,8 +702,10 @@
       if(direction) {event.preventDefault();position(x+direction[0]*12,y+direction[1]*12);}
       if(event.key==='Enter'||event.key===' ') {event.preventDefault();play('hello');}
     },{signal});
-    const layout=new ResizeObserver(()=>position(x,y));
+    const layout=new ResizeObserver(()=>{fit();position(x,y);});
+    addEventListener('resize',fit,{signal});
     layout.observe(host);
+    fit();
     position((host.clientWidth-W)/2,(host.clientHeight-H)/2);
     canvas.hidden=true;canvas.style.display='none';
     const ready=loadArt().then(result=>{

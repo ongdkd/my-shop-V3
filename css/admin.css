@@ -58,7 +58,7 @@ button:focus-visible,a:focus-visible,.nav-item:focus-visible{outline:2px solid v
 .faye :focus-visible{outline:2px solid var(--text);outline-offset:3px;}
 /* Animated pixel Faye (faye/faye.js draws a 144x164 canvas inside .faye-stage) */
 .faye-stage{--faye-w:144px;display:block;position:relative;width:var(--faye-w);height:calc(var(--faye-w) * 164 / 144);}
-.faye-stage canvas{width:100%!important;height:100%!important;transform:none!important;}
+.faye-stage canvas{transform:none!important;}
 .faye.no-art .faye-stage{background:url('../faye/assets/talk.png?v=faye-reference-5') 0 0 / 200% 200% no-repeat;image-rendering:pixelated;}
 .faye.mini .faye-stage{--faye-w:72px;}
 .faye.held summary{cursor:grabbing;}
