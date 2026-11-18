@@ -356,3 +356,18 @@ button,.pos-prod-card,.qty-step-btn,.sum-qty-btn{touch-action:manipulation;}
 .pos-prod-price.on-sale{color:#D6304A;}
 .pos-was{color:#9B8590;font-weight:500;font-size:.85em;margin-right:2px;}
 .pos-sale{display:inline-block;padding:0 6px;border-radius:999px;background:#FFE4E4;border:1px solid #F7B4B4;color:#C42B2B;font-size:.7em;font-weight:700;line-height:1.5;vertical-align:middle;}
+/* Round picker (POS staff land here after signing in) */
+.pos-picker{position:fixed;inset:0;z-index:50;display:flex;align-items:flex-start;justify-content:center;overflow:auto;padding:max(24px,env(safe-area-inset-top)) 16px 24px;background:linear-gradient(160deg,#FFE3EF,#F6E7FF);}
+.pos-picker-card{width:min(520px,100%);background:#fff;border-radius:22px;padding:22px 18px;box-shadow:0 18px 40px rgba(201,75,130,.18);}
+.pos-picker-card h1{margin:0 0 14px;font-size:1.25rem;color:#4A2E3D;text-align:center;}
+.pos-picker-list{display:flex;flex-direction:column;gap:8px;}
+.pos-picker-item{display:flex;align-items:center;gap:12px;min-height:58px;padding:8px 12px;border:1.5px solid #F7DCE8;border-radius:14px;color:#4A2E3D;text-decoration:none;font-weight:600;}
+.pos-picker-item:hover,.pos-picker-item:focus-visible{border-color:#E4639B;background:#FFF5F9;}
+.pos-picker-item img{width:44px;height:44px;border-radius:10px;object-fit:cover;flex:none;}
+.pos-picker-name{flex:1;min-width:0;line-height:1.35;}
+.pos-picker-item.closed{opacity:.7;}
+.pos-picker-tag{flex:none;padding:2px 8px;border-radius:999px;background:#F1EFF3;color:#8A6577;font-size:.72rem;}
+.pos-picker-none{text-align:center;color:#8A6577;}
+.pos-picker-foot{margin-top:16px;text-align:center;}
+.pos-picker-out{border:0;background:none;color:#8A6577;font:inherit;font-weight:600;padding:8px 12px;border-radius:10px;cursor:pointer;}
+.pos-picker-out:hover{background:#FFF0F6;color:#C94B82;}

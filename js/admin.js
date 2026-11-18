@@ -443,41 +443,84 @@ function fayeSays(text, acts) {
 // ── Suggested questions: 2–3 chips under the chat, picked for the screen you're on.
 // Each one carries its own action, so tapping it never needs the AI. ──
 var _fayeLastSug = '';
+// Suggestions for the screen Faye is on: that screen's own buttons first (shortcuts that
+// open the same forms), then questions he answers about it. Each chip is [label, action]:
+// an action object runs through fayeRun; a function is a shortcut.
 function fayeSuggestions() {
-  var B = window.FayeBrain, today = B.day(new Date().toISOString());
+  var B = window.FayeBrain, today = B.day(new Date().toISOString()), month = today.slice(0, 8) + '01';
   var round = selectedSheetId && selectedSheetId !== 'ALL' ? { id: selectedSheetId, name: selectedSheetName } : null;
+  var Q = {
+    today: ['วันนี้ขายได้เท่าไร?', { do: 'sales', from: today, to: today }],
+    week: ['สัปดาห์นี้เทียบสัปดาห์ก่อน?', { do: 'sales_compare', from: B.shift(today, -6), to: today }],
+    topCust: ['ใครซื้อเยอะสุดเดือนนี้?', { do: 'top_customers', from: month, to: today, item: '', query: '' }],
+    topProd: ['ขายอะไรดีสุดเดือนนี้?', { do: 'top_products', from: month, to: today, query: '' }],
+    waiting: ['มีออเดอร์รอจัดส่งเท่าไร?', { do: 'waiting' }],
+    low: ['ของชิ้นไหนใกล้หมด?', { do: 'low_stock' }],
+  };
   var list = [];
-  if (round && (currentPanel === 'orders' || currentPanel === 'products' || currentPanel === 'orderlists')) {
-    list.push(['รอบนี้ต้องสั่งอะไรบ้าง?', { do: 'buy_list', listId: round.id, item: '' }]);
-    list.push(['รอบนี้ขายได้เท่าไร?', { do: 'round_sales', listId: round.id, query: '' }]);
+  switch (currentPanel) {
+    case 'orderlists':
+      list.push(['＋ สร้างรอบใหม่', openCreateOrderListModal], Q.today, Q.topCust, Q.topProd);
+      break;
+    case 'orders':
+      if (round) list.push(['รอบนี้ต้องสั่งอะไรบ้าง?', { do: 'buy_list', listId: round.id, item: '' }],
+        ['รอบนี้ขายได้เท่าไร?', { do: 'round_sales', listId: round.id, query: '' }],
+        ['ใครซื้อรอบนี้เยอะสุด?', { do: 'top_customers', from: '', to: '', item: '', query: round.name }]);
+      list.push(Q.today, Q.waiting, Q.topCust);
+      break;
+    case 'products':
+      if (round) {
+        list.push(['📦 นำเข้าจากคลัง', function() { switchPanel('stock'); }]);
+        list.push(['🖥 เปิดโหมด POS', function() { openPOSMode({ sheetId: round.id, name: round.name }); }]);
+        list.push(['อะไรขายดีในรอบนี้?', { do: 'top_products', from: '', to: '', query: round.name }],
+          ['รอบนี้ต้องสั่งอะไรบ้าง?', { do: 'buy_list', listId: round.id, item: '' }]);
+      }
+      list.push(Q.topProd, Q.low);
+      break;
+    case 'stock':
+      list.push(['＋ เพิ่มสินค้า', openCreateStockModal], ['📋 เพิ่มหลาย', openBulkStockModal], Q.low,
+        ['🗑 เลือกลบ', function() { whSetDelMode(true); }]);
+      break;
+    case 'restock':
+      list.push(Q.low, Q.topProd, Q.waiting);
+      break;
+    case 'status': case 'slips':
+      list.push(Q.waiting, Q.today, Q.week);
+      break;
+    case 'history':
+      list.push(['📥 นำเข้าจากชีต', openImportStatusSheet], ['📤 อัปเดตชีต', openSheetsSync], ['🔄 สถานะเว็บจากชีต', openStatusFromSheet]);
+      break;
+    case 'po':
+      list.push(['＋ เพิ่มรายการ', function() { openPoForm(null); }], Q.low, Q.topProd);
+      break;
+    case 'tags':
+      list.push(['＋ เพิ่มคำ', function() { openTagTermModal(null); }], Q.topProd);
+      break;
+    case 'team':
+      list.push(['＋ เพิ่มทีมงาน', openTeamAdd]);
+      break;
   }
-  if (currentPanel === 'stock' || currentPanel === 'restock') {
-    list.push(['ของชิ้นไหนใกล้หมด?', { do: 'low_stock' }]);
-    list.push(['เพิ่มสต็อก', { do: 'add_stock', item: '', qty: 0 }]);
-  }
-  if (currentPanel === 'status' || currentPanel === 'slips') list.push(['มีออเดอร์รอจัดส่งเท่าไร?', { do: 'waiting' }]);
-  var month = today.slice(0, 8) + '01';
-  list.push(['วันนี้ขายได้เท่าไร?', { do: 'sales', from: today, to: today }]);
-  list.push(['ใครซื้อเยอะสุดเดือนนี้?', { do: 'top_customers', from: month, to: today, item: '', query: '' }]);
-  list.push(['ขายอะไรดีสุดเดือนนี้?', { do: 'top_products', from: month, to: today, query: '' }]);
-  list.push(['สัปดาห์นี้เทียบสัปดาห์ก่อน?', { do: 'sales_compare', from: B.shift(today, -6), to: today }]);
-  list.push(['มีออเดอร์รอจัดส่งเท่าไร?', { do: 'waiting' }]);
-  list.push(['7 วันนี้ขายได้เท่าไร?', { do: 'sales', from: B.day(new Date(Date.now() - 6 * 864e5).toISOString()), to: today }]);
-  list.push(['ของชิ้นไหนใกล้หมด?', { do: 'low_stock' }]);
+  // Top up with general questions so there are always a few
+  list.push(Q.today, Q.topCust, Q.topProd, Q.week, Q.waiting, Q.low);
   var seen = {};
-  return list.filter(function(s) {
-    if (seen[s[0]] || s[0] === _fayeLastSug) return false;
-    return (seen[s[0]] = true);
+  return list.filter(function(x) {
+    if (!x || seen[x[0]] || x[0] === _fayeLastSug) return false;
+    return (seen[x[0]] = true);
   }).slice(0, 3);
 }
 function fayeSuggest() {
   var box = el('fayeSuggest'); if (!box || !window.FayeBrain) return;
   box.innerHTML = '';
   fayeSuggestions().forEach(function(s) {
-    var b = makeBtn('faye-sug', '', function() {
+    var shortcut = typeof s[1] === 'function';
+    var b = makeBtn('faye-sug' + (shortcut ? ' act' : ''), '', function() {
       _fayeLastSug = s[0]; _fayeAsked = s[0];
       fayeYou(s[0]);
-      fayeRun(s[1]);
+      if (!shortcut) return fayeRun(s[1]);
+      // A screen's own button: say so, close the panel so the form isn't hidden, then open it
+      fayeSays('จัดให้ครับบอส');
+      fayeHelp.open = false;
+      setTimeout(s[1], 120);
     });
     b.type = 'button'; b.textContent = s[0]; b.title = s[0];
     box.appendChild(b);
@@ -889,7 +932,7 @@ document.addEventListener('keydown', function(e) {
 });
 // ── Hash routing — the URL mirrors the open panel (#/products, #/orders …)
 // so a refresh keeps your place and the back button navigates panels ──
-var VALID_PANELS = ['orderlists', 'orders', 'products', 'status', 'slips', 'restock', 'stock', 'history', 'po', 'tags'];
+var VALID_PANELS = ['orderlists', 'orders', 'products', 'status', 'slips', 'restock', 'stock', 'history', 'po', 'tags', 'team'];
 function panelFromHash() {
   var h = (location.hash || '').replace(/^#\/?/, '');
   return VALID_PANELS.indexOf(h) !== -1 ? h : 'orderlists';
@@ -1633,6 +1676,7 @@ function switchPanel(panel) {
   else if (panel === 'history')    renderHistoryPanel();
   else if (panel === 'po')         renderPoPanel();
   else if (panel === 'tags')       renderTagsPanel();
+  else if (panel === 'team')       renderTeamPanel();
 }
 function loadAllLists(cb) {
   google.script.run.withSuccessHandler(function(r) {
@@ -3948,6 +3992,197 @@ function openDiscountModal(sheetId, row) {
       loadProducts(sheetId);
     });
   }
+}
+
+// ════════════════════════════════
+// TEAM — who can sign in, and how far: "admin" sees everything, "pos" only the POS
+// screen. Logins look like staff@kagashop.admin (typed as just "staff" at sign-in).
+// Created and changed by the staff-users function; the database enforces the roles.
+// ════════════════════════════════
+var TEAM_ROLES = { admin: 'แอดมิน · ทุกหน้า', pos: 'POS · ขายหน้าร้านอย่างเดียว' };
+function teamDomain() { return window.ADMIN_USERNAME_DOMAIN || '@orderhub.local'; }
+function teamId(email) { var d = teamDomain(); return email.slice(-d.length) === d ? email.slice(0, -d.length) : email; }
+function renderTeamPanel() {
+  setTopbar('ทีมงาน', 'ใครเข้าระบบได้ และเข้าได้แค่ไหน');
+  el('topbarActions').innerHTML = '';
+  el('topbarActions').appendChild(makeBtn('btn btn-primary btn-sm', '&#x2B; เพิ่มทีมงาน', openTeamAdd));
+  el('content').innerHTML = ''; el('content').appendChild(makeSpinner());
+  Promise.all([apiCall('adminStaff', 'list'), new Promise(function(done) { if (allLists.length) done(); else loadAllLists(done); })]).then(function(all) {
+    var res = all[0];
+    if (currentPanel !== 'team') return;
+    el('content').innerHTML = '';
+    if (res.status !== 'Success') { el('content').appendChild(div('state-empty', '&#x26A0;&#xFE0F; ' + escapeHtml(res.message || 'โหลดไม่สำเร็จ'))); return; }
+    var card = div('section-card team-card');
+    card.appendChild(div('section-card-header', '<div class="section-card-title">&#x1F465; ทีมงาน</div>'));
+    var note = div('team-note');
+    note.innerHTML = '<span class="team-role admin">แอดมิน</span> ใช้ได้ทุกหน้า ทุกรอบ &nbsp; <span class="team-role pos">POS</span> เข้าได้แค่หน้าขายหน้าร้าน เฉพาะรอบที่เลือกให้ (ขาย ดูยอดขาย POS) แก้สินค้า ดูออเดอร์ สลิป หรือข้อมูลลูกค้าไม่ได้';
+    card.appendChild(note);
+    var list = div('team-list');
+    (res.owners || []).forEach(function(e) { list.appendChild(teamRow(e, 'admin', true, res.me)); });
+    (res.staff || []).forEach(function(s) { list.appendChild(teamRow(s.email, s.role, false, res.me, s.listIds || [])); });
+    if (!(res.staff || []).length) list.appendChild(div('team-empty', 'ยังไม่มีทีมงาน กด “+ เพิ่มทีมงาน” เพื่อสร้างชื่อผู้ใช้ เช่น staff'));
+    card.appendChild(list);
+    el('content').appendChild(card);
+  });
+}
+function teamRow(email, role, owner, me, listIds) {
+  var row = div('team-row');
+  var who = div('team-who');
+  var id = document.createElement('strong'); id.textContent = teamId(email); who.appendChild(id);
+  var full = document.createElement('span'); full.className = 'team-email'; full.textContent = email; who.appendChild(full);
+  row.appendChild(who);
+  if (owner) {
+    row.appendChild(div('team-role admin', 'แอดมินหลัก'));
+    return row;
+  }
+  var sel = document.createElement('select'); sel.className = 'team-select'; sel.setAttribute('aria-label', 'สิทธิ์ของ ' + email);
+  Object.keys(TEAM_ROLES).forEach(function(k) { var o = document.createElement('option'); o.value = k; o.textContent = TEAM_ROLES[k]; if (k === role) o.selected = true; sel.appendChild(o); });
+  sel.disabled = email === me;
+  sel.onchange = function() {
+    sel.disabled = true;
+    apiCall('adminStaff', 'role', { email: email, role: sel.value }).then(function(r) {
+      sel.disabled = false;
+      if (r.status !== 'Success') { toast(r.message || 'เปลี่ยนสิทธิ์ไม่สำเร็จ', 'error'); sel.value = role; return; }
+      role = sel.value; toast('เปลี่ยนสิทธิ์ ' + teamId(email) + ' แล้ว', 'success'); renderTeamPanel();
+    });
+  };
+  row.appendChild(sel);
+  var acts = div('team-acts');
+  if (role === 'pos') {
+    // Which rounds this POS login may sell from
+    var names = (listIds || []).map(function(id) { var l = allLists.filter(function(x) { return x.sheetId === id; })[0]; return l ? l.name : ''; }).filter(Boolean);
+    var rinfo = div('team-rounds-info' + (names.length ? '' : ' none'));
+    rinfo.textContent = names.length ? 'ขายได้ ' + names.length + ' รอบ: ' + names.join(', ') : 'ยังไม่ได้เลือกรอบ (ขายไม่ได้)';
+    rinfo.title = rinfo.textContent;
+    row.appendChild(rinfo);
+    var rb = makeBtn('btn btn-ghost btn-sm', 'เลือกรอบ', function() { openTeamRounds(email, listIds || []); }); rb.type = 'button';
+    acts.appendChild(rb);
+  }
+  var pw = makeBtn('btn btn-ghost btn-sm', 'เปลี่ยนรหัสผ่าน', function() { openTeamPassword(email); }); pw.type = 'button';
+  acts.appendChild(pw);
+  if (email !== me) {
+    var del = makeBtn('btn btn-ghost btn-sm team-del', 'ลบ', function() {
+      askConfirm('ลบ ' + teamId(email) + ' ออกจากทีม? บัญชีนี้จะเข้าระบบไม่ได้อีก (ลบแล้วกู้คืนไม่ได้ ต้องสร้างใหม่)', 'ลบ').then(function(yes) {
+        if (!yes) return;
+        apiCall('adminStaff', 'remove', { email: email }).then(function(r) {
+          if (r.status !== 'Success') { toast(r.message || 'ลบไม่สำเร็จ', 'error'); return; }
+          toast('ลบ ' + teamId(email) + ' แล้ว', 'success'); renderTeamPanel();
+        });
+      });
+    });
+    del.type = 'button'; acts.appendChild(del);
+  }
+  row.appendChild(acts);
+  return row;
+}
+// Tick boxes for every round (open ones first). Returns { el, read() → [listIds] }
+function teamRoundsBox(selected) {
+  var on = {}; (selected || []).forEach(function(id) { on[id] = true; });
+  var wrap = div('team-rounds');
+  var tools = div('team-rounds-tools');
+  var list = div('team-rounds-list');
+  var rows = allLists.slice().sort(function(a, b) { return (a.status === 'Open' ? 0 : 1) - (b.status === 'Open' ? 0 : 1); });
+  if (!rows.length) list.appendChild(div('team-empty', 'ยังไม่มีรอบ'));
+  rows.forEach(function(l) {
+    var lab = document.createElement('label'); lab.className = 'team-round' + (l.status === 'Open' ? '' : ' closed');
+    var cb = document.createElement('input'); cb.type = 'checkbox'; cb.value = l.sheetId; cb.checked = !!on[l.sheetId];
+    var t = document.createElement('span'); t.textContent = l.name;
+    lab.appendChild(cb); lab.appendChild(t);
+    if (l.status !== 'Open') { var c = document.createElement('small'); c.textContent = 'ปิดรับ'; lab.appendChild(c); }
+    list.appendChild(lab);
+  });
+  var setAll = function(v, onlyOpen) { list.querySelectorAll('input').forEach(function(cb) { if (!onlyOpen || !cb.parentNode.classList.contains('closed')) cb.checked = v; }); };
+  var bAll = makeBtn('btn btn-ghost btn-sm', 'ทุกรอบที่เปิด', function() { setAll(false); setAll(true, true); }); bAll.type = 'button';
+  var bNone = makeBtn('btn btn-ghost btn-sm', 'ล้าง', function() { setAll(false); }); bNone.type = 'button';
+  tools.appendChild(bAll); tools.appendChild(bNone);
+  wrap.appendChild(tools); wrap.appendChild(list);
+  return { el: wrap, read: function() { return Array.prototype.map.call(list.querySelectorAll('input:checked'), function(cb) { return cb.value; }); } };
+}
+function openTeamRounds(email, listIds) {
+  openModal('&#x1F4CB; รอบที่ ' + escapeHtml(teamId(email)) + ' ขายได้', '<div class="team-form"><div id="teamRoundsSlot"></div><div class="team-err" id="teamErr3" role="alert"></div></div>', function() {
+    el('modalSave').disabled = true;
+    apiCall('adminStaff', 'rounds', { email: email, listIds: box.read() }).then(function(r) {
+      el('modalSave').disabled = false;
+      if (r.status !== 'Success') { el('teamErr3').textContent = r.message || 'บันทึกไม่สำเร็จ'; return; }
+      closeModal(); toast('บันทึกรอบของ ' + teamId(email) + ' แล้ว', 'success'); renderTeamPanel();
+    });
+  }, 'บันทึก');
+  var box = teamRoundsBox(listIds);
+  el('teamRoundsSlot').appendChild(box.el);
+}
+// A readable password: 10 characters without look-alikes (0/O, 1/l)
+function teamPassword() {
+  var c = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789', out = '', b = new Uint32Array(10);
+  (window.crypto || window.msCrypto).getRandomValues(b);
+  for (var i = 0; i < 10; i++) out += c.charAt(b[i] % c.length);
+  return out;
+}
+function teamPwField(id) {
+  return '<label class="team-field"><span>รหัสผ่าน (อย่างน้อย 8 ตัว)</span><span class="team-pw"><input type="text" id="' + id + '" autocomplete="new-password" minlength="8" maxlength="72" spellcheck="false">' +
+    '<button type="button" class="btn btn-ghost btn-sm" id="' + id + 'Gen">สุ่ม</button></span></label>';
+}
+function openTeamAdd() {
+  openModal('&#x1F465; เพิ่มทีมงาน',
+    '<div class="team-form">' +
+    '<label class="team-field"><span>ชื่อผู้ใช้</span><span class="team-idwrap"><input type="text" id="teamId" placeholder="staff" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="40"><span class="team-domain"></span></span></label>' +
+    teamPwField('teamPw') +
+    '<div class="team-field"><span>สิทธิ์</span><div class="team-roles">' +
+      '<label><input type="radio" name="teamRole" value="pos" checked> <b>POS</b> — ขายหน้าร้านอย่างเดียว</label>' +
+      '<label><input type="radio" name="teamRole" value="admin"> <b>แอดมิน</b> — ใช้ได้ทุกหน้า</label>' +
+    '</div></div>' +
+    '<div class="team-field" id="teamRoundsField"><span>รอบที่ขายได้ (POS)</span></div>' +
+    '<div class="team-err" id="teamErr" role="alert"></div></div>', saveTeamAdd, 'สร้างบัญชี');
+  el('modalBody').querySelector('.team-domain').textContent = teamDomain();
+  var rf = el('teamRoundsField'), box = teamRoundsBox([]);
+  rf.appendChild(box.el); rf._read = box.read;
+  document.querySelectorAll('input[name=teamRole]').forEach(function(r) {
+    r.onchange = function() { rf.hidden = (document.querySelector('input[name=teamRole]:checked') || {}).value !== 'pos'; };
+  });
+  if (!allLists.length) loadAllLists(function() { var b2 = teamRoundsBox([]); rf.replaceChild(b2.el, rf.lastChild); rf._read = b2.read; });
+  el('teamPwGen').onclick = function() { el('teamPw').value = teamPassword(); };
+  el('teamPw').value = teamPassword();
+  setTimeout(function() { el('teamId').focus(); }, 50);
+}
+function saveTeamAdd() {
+  var id = el('teamId').value.trim().toLowerCase(), pw = el('teamPw').value, role = (document.querySelector('input[name=teamRole]:checked') || {}).value;
+  if (!/^[a-z0-9._-]{2,40}$/.test(id)) { el('teamErr').textContent = 'ชื่อผู้ใช้ใช้ได้แค่ a-z 0-9 . _ - (2–40 ตัว)'; return; }
+  if (pw.length < 8) { el('teamErr').textContent = 'รหัสผ่านต้องยาวอย่างน้อย 8 ตัว'; return; }
+  el('modalSave').disabled = true; el('teamErr').textContent = '';
+  var rounds = role === 'pos' ? el('teamRoundsField')._read() : [];
+  apiCall('adminStaff', 'create', { email: id, password: pw, role: role, listIds: rounds }).then(function(r) {
+    el('modalSave').disabled = false;
+    if (r.status !== 'Success') { el('teamErr').textContent = r.message || 'สร้างไม่สำเร็จ'; return; }
+    closeModal();
+    teamShowLogin(id, pw, role);
+    renderTeamPanel();
+  });
+}
+// After creating or resetting: show the sign-in details once, ready to copy and send
+function teamShowLogin(id, pw, role) {
+  var text = 'เข้าระบบที่: ' + new URL('admin-login.html', location.href).href + '\nชื่อผู้ใช้: ' + id + '\nรหัสผ่าน: ' + pw;
+  openModal('&#x2705; บัญชีพร้อมใช้',
+    '<div class="team-form"><p class="team-done">ส่งข้อมูลนี้ให้ทีมงานได้เลย' + (role ? ' (สิทธิ์: ' + escapeHtml(TEAM_ROLES[role] || role) + ')' : '') + ' รหัสผ่านจะไม่แสดงอีก</p>' +
+    '<pre class="team-login" id="teamLogin"></pre>' +
+    '<button type="button" class="btn btn-primary btn-sm" id="teamCopy">คัดลอก</button></div>', null);
+  el('teamLogin').textContent = text;
+  el('teamCopy').onclick = function() {
+    (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).then(function() { toast('คัดลอกแล้ว', 'success'); }, function() { toast('คัดลอกไม่ได้ เลือกข้อความแล้วคัดลอกเองนะคะ', 'error'); });
+  };
+}
+function openTeamPassword(email) {
+  openModal('&#x1F511; เปลี่ยนรหัสผ่าน · ' + escapeHtml(teamId(email)),
+    '<div class="team-form">' + teamPwField('teamPw2') + '<div class="team-err" id="teamErr2" role="alert"></div></div>', function() {
+      var pw = el('teamPw2').value;
+      if (pw.length < 8) { el('teamErr2').textContent = 'รหัสผ่านต้องยาวอย่างน้อย 8 ตัว'; return; }
+      el('modalSave').disabled = true;
+      apiCall('adminStaff', 'password', { email: email, password: pw }).then(function(r) {
+        el('modalSave').disabled = false;
+        if (r.status !== 'Success') { el('teamErr2').textContent = r.message || 'เปลี่ยนไม่สำเร็จ'; return; }
+        closeModal(); teamShowLogin(teamId(email), pw, '');
+      });
+    }, 'บันทึกรหัสใหม่');
+  el('teamPw2Gen').onclick = function() { el('teamPw2').value = teamPassword(); };
+  el('teamPw2').value = teamPassword();
 }
 
 function renderTagsPanel() {
@@ -7385,16 +7620,17 @@ function renderStockContent() {
   var grid = document.createElement('div'); grid.id = 'stockCardGrid'; grid.className = 'wh-grid';
   wrap.appendChild(grid);
 
-  // ── Bottom bar: search + scan; the import row appears once something is selected ──
+  // ── Search + scan at the top (stays put while scrolling); the bottom bar only
+  // appears once something is selected to import or delete ──
   var bar = div('wh-bar');
-  var sRow = div('wh-search');
+  var sRow = div('wh-search wh-search-top');
   var sInp = document.createElement('input'); sInp.type = 'search'; sInp.id = 'whSearch';
   sInp.placeholder = 'ค้นหาชื่อหรือบาร์โค้ด…'; sInp.setAttribute('aria-label', 'ค้นหาสินค้าในคลัง'); sInp.value = stockSearchQuery;
   sInp.oninput = function() { stockSearchQuery = sInp.value.toLowerCase().trim(); renderStockCards(grid, stockSearchQuery); };
   var scan = makeBtn('wh-scan', '&#x1F4F7;'); scan.type = 'button'; scan.title = 'สแกนบาร์โค้ด 1 ชิ้นเพื่อค้นหาและเลือกสินค้า'; scan.setAttribute('aria-label', 'สแกนบาร์โค้ดเพื่อค้นหาสินค้า');
   scan.onclick = whScanOnce;
   sRow.appendChild(sInp); if (!_whDelMode) sRow.appendChild(scan);
-  bar.appendChild(sRow);
+  wrap.insertBefore(sRow, wrap.firstChild);
   var act = div('wh-act'); act.id = 'whAct';
   var cnt = document.createElement('span'); cnt.className = 'wh-count'; cnt.id = 'whCount';
   if (_whDelMode) {

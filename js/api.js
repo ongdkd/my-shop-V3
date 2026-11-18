@@ -423,6 +423,28 @@
     return s;
   }
 
+  // Which pages this login may use: 'admin' (everything), 'pos' (POS only) or null.
+  // Before supabase/migrations/2026-11-22-staff-roles.sql is run, only admins exist.
+  var _myRole;
+  async function myRole() {
+    if (_myRole !== undefined) return _myRole;
+    var r = await sb.rpc('my_role');
+    if (r.error) {
+      var a = await sb.rpc('is_admin');
+      _myRole = !a.error && a.data === true ? 'admin' : null;
+    } else _myRole = r.data || null;
+    if (_myRole === 'admin') _adminVerified = true;
+    return _myRole;
+  }
+  // POS calls: admins and POS staff
+  async function requireStaff() {
+    var s = await getSession();
+    if (!s) throw { __json: err('Unauthorised — กรุณาเข้าสู่ระบบใหม่') };
+    var role = await myRole();
+    if (role !== 'admin' && role !== 'pos') throw { __json: err('Forbidden — บัญชีนี้ไม่มีสิทธิ์ใช้งาน POS') };
+    return s;
+  }
+
   // rowIndex ↔ database-id maps (the old sheet UI addresses rows by
   // sheet row number; we fabricate stable indexes per fetch)
   var _listRowMap = {};              // rowIndex -> order_lists.id
@@ -714,13 +736,13 @@
       if (!username || !password) return { ok: false };
       var r = await sb.auth.signInWithPassword({ email: username, password: password });
       if (r.error) return { ok: false };
-      var adminCheck = await sb.rpc('is_admin');
-      if (adminCheck.error || adminCheck.data !== true) {
+      _myRole = undefined;
+      var role = await myRole();
+      if (role !== 'admin' && role !== 'pos') {
         await sb.auth.signOut();
-        return { ok: false, message: 'บัญชีนี้ไม่มีสิทธิ์ผู้ดูแลระบบ' };
+        return { ok: false, message: 'บัญชีนี้ไม่มีสิทธิ์ใช้งานระบบ' };
       }
-      _adminVerified = true;
-      return { ok: true };
+      return { ok: true, role: role };
     },
 
     // Legacy shim kept for compatibility — reports whether a Supabase
@@ -918,7 +940,7 @@
     // ════════════════════════════════════════════════════════
     adminGetOrderLists: async function () {
       try {
-        requireSb(); await requireAdmin();
+        requireSb(); await requireStaff(); // POS staff too
         var data = await fetchLists();
         var covers = await firstProductImages(true);
         _listRowMap = {};
@@ -1563,7 +1585,7 @@
     // transaction). items: [{ id, quantity, selectedOption }]
     adminSubmitPosSale: async function (sheetId, items, checkoutId) {
       try {
-        requireSb(); await requireAdmin();
+        requireSb(); await requireStaff(); // POS staff too
         if (!items || !items.length) return err('ไม่มีสินค้าในตะกร้า');
         var params = { p_list_id: sheetId, p_items: items };
         if (checkoutId) params.p_checkout_id = checkoutId;
@@ -1588,7 +1610,7 @@
     // checkout_id so a basket with several products appears as one sale.
     adminGetPosHistory: async function (sheetId) {
       try {
-        requireSb(); await requireAdmin();
+        requireSb(); await requireStaff(); // POS staff too
         var rows = [], from = 0, pageSize = 1000, truncated = false;
         while (true) {
           var r = await sb.from('orders')
@@ -1759,7 +1781,7 @@
 
     adminGetProducts: async function (sheetId) {
       try {
-        requireSb(); await requireAdmin();
+        requireSb(); await requireStaff(); // POS staff too
         var data = await fetchProducts(sheetId);
         var map = {};
         var products = data.map(function (r, i) {
@@ -2099,6 +2121,44 @@
 
     // Ask Faye — Supabase Edge Function "faye-chat" turns a typed sentence into one
     // action ({ do, say, customer, item, qty, panel, from, to, query }); see the function.
+    // 'admin', 'pos' or null for the signed-in login (pages use it to pick where to go)
+    getMyRole: async function () {
+      try {
+        requireSb();
+        if (!(await getSession())) return ok({ role: null });
+        return ok({ role: await myRole() });
+      } catch (e) { return ok({ role: null }); }
+    },
+
+    // POS: this login's role and the rounds it may sell from (rounds: null = every round)
+    getMyPosRounds: async function () {
+      try {
+        requireSb();
+        if (!(await getSession())) return ok({ role: null, rounds: [] });
+        var role = await myRole();
+        if (role === 'admin') return ok({ role: role, rounds: null });
+        var r = await sb.rpc('my_pos_lists');
+        return ok({ role: role, rounds: r.error ? null : (r.data || []) });
+      } catch (e) { return ok({ role: null, rounds: [] }); }
+    },
+
+    // admin → ทีมงาน: list | create | rounds | role | password | remove (staff-users function)
+    adminStaff: async function (action, data) {
+      try {
+        requireSb(); await requireAdmin();
+        var body = Object.assign({ action: action }, data || {});
+        if (body.email) body.email = toAdminEmail(body.email);
+        var r = await sb.functions.invoke('staff-users', { body: body });
+        if (r.error) {
+          var st = r.error.context && r.error.context.status;
+          return err(st === 404 ? 'ยังไม่ได้ deploy ฟังก์ชัน staff-users' : 'ติดต่อเซิร์ฟเวอร์ไม่ได้' + (st ? ' (' + st + ')' : ''));
+        }
+        var d = r.data || {};
+        if (!d.ok) return err(d.message || 'ทำรายการไม่สำเร็จ');
+        return ok(d);
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
     adminFayeAsk: async function (text, ctx) {
       try {
         requireSb(); await requireAdmin();
@@ -2838,7 +2898,7 @@
 
   window.__api = API;
   window.__sbSignOut = function () {
-    _adminVerified = false;
+    _adminVerified = false; _myRole = undefined;
     return sb ? sb.auth.signOut() : Promise.resolve();
   };
 

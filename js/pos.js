@@ -91,9 +91,63 @@ function posGoBack() {
   if (window.closePOSMode) { window.closePOSMode(); return; }
   if (window.parent && window.parent !== window) return;
   if (POS_CART.length && !confirm('ตะกร้ายังมีสินค้า ออกจาก POS ใช่ไหม?')) return;
+  // POS staff: back to the round picker (they have no admin pages)
+  if (POS_ROLE === 'pos') { location.href = 'pos.html'; return; }
   // Opened in its own tab: close it. Opened inside the installed app (same window): back to admin.
   if (window.opener) { window.close(); if (window.closed) return; }
   location.href = 'admin.html';
+}
+
+// ── Who is using POS: 'admin' or 'pos' (POS staff), and the rounds a POS login may sell
+// from (null = every round). The database enforces this too; here it just keeps the screens honest. ──
+var POS_ROLE = null, POS_ROUNDS = null;
+var POS_WHO = new Promise(function(resolve) {
+  google.script.run.withSuccessHandler(function(r) {
+    try { var x = JSON.parse(r); POS_ROLE = x.role || null; POS_ROUNDS = x.rounds === undefined ? null : x.rounds; } catch (e) {}
+    resolve();
+  }).withFailureHandler(function() { resolve(); }).getMyPosRounds();
+});
+function posMaySell(listId) { return !POS_ROUNDS || POS_ROUNDS.indexOf(listId) !== -1; }
+
+// ── No round chosen (POS staff sign in here): pick the round to sell from ──
+function showRoundPicker() {
+  showLoading('กำลังโหลดรอบ...', '');
+  POS_WHO.then(function() { google.script.run.withSuccessHandler(function(r) {
+    var res = {}; try { res = JSON.parse(r); } catch (e) {}
+    if (res.status !== 'Success') { showLoading('โหลดไม่สำเร็จ', res.message || 'กรุณาลองใหม่'); return; }
+    hideLoading();
+    var rows = (res.rows || []).filter(function(it) { return posMaySell(it.sheetId); }).sort(function(a, b) {
+      return (a.status === 'Open' ? 0 : 1) - (b.status === 'Open' ? 0 : 1);
+    });
+    var box = document.createElement('div'); box.className = 'pos-picker'; box.id = 'posPicker';
+    var card = document.createElement('div'); card.className = 'pos-picker-card';
+    var h = document.createElement('h1'); h.textContent = 'เลือกรอบที่จะขาย'; card.appendChild(h);
+    var list = document.createElement('div'); list.className = 'pos-picker-list';
+    if (!rows.length) { var none = document.createElement('p'); none.className = 'pos-picker-none'; none.textContent = POS_ROLE === 'pos' ? 'ยังไม่มีรอบที่คุณขายได้ ให้แอดมินเลือกรอบให้ที่หน้า ทีมงาน' : 'ยังไม่มีรอบ'; list.appendChild(none); }
+    rows.forEach(function(it) {
+      var a = document.createElement('a'); a.className = 'pos-picker-item' + (it.status === 'Open' ? '' : ' closed');
+      a.href = 'pos.html?sheetId=' + encodeURIComponent(it.sheetId) + '&listName=' + encodeURIComponent(it.name);
+      if (it.cover || it.image) { var img = document.createElement('img'); img.src = it.cover || it.image; img.alt = ''; img.loading = 'lazy'; a.appendChild(img); }
+      var t = document.createElement('span'); t.className = 'pos-picker-name'; t.textContent = it.name; a.appendChild(t);
+      if (it.status !== 'Open') { var c = document.createElement('span'); c.className = 'pos-picker-tag'; c.textContent = 'ปิดรับ'; a.appendChild(c); }
+      list.appendChild(a);
+    });
+    card.appendChild(list);
+    var foot = document.createElement('div'); foot.className = 'pos-picker-foot';
+    var out = document.createElement('button'); out.type = 'button'; out.className = 'pos-picker-out';
+    if (POS_ROLE === 'admin') {
+      out.textContent = '← กลับหน้าแอดมิน'; out.onclick = function() { location.href = 'admin.html'; };
+    } else {
+      out.textContent = 'ออกจากระบบ';
+      out.onclick = function() {
+        var go = function() { location.replace('admin-login.html'); };
+        (window.__sbSignOut ? window.__sbSignOut() : Promise.resolve()).then(go, go);
+      };
+    }
+    foot.appendChild(out); card.appendChild(foot);
+    box.appendChild(card);
+    document.body.appendChild(box);
+  }).withFailureHandler(function() { showLoading('เชื่อมต่อไม่ได้', 'กรุณาลองใหม่'); }).adminGetOrderLists(); });
 }
 
 // ══════════════════════════════════
@@ -1237,10 +1291,7 @@ window.addEventListener('DOMContentLoaded', function() {
     });
   }
 
-  if (!sheetId) {
-    showLoading('ไม่พบรายการสินค้า', 'ปิดหน้าต่างนี้แล้วลองใหม่');
-    return;
-  }
+  if (!sheetId) { showRoundPicker(); return; }
 
   document.getElementById('posTitle').textContent = 'POS — ' + listName;
   showLoading('กำลังเชื่อมต่อ...', listName);
@@ -1255,7 +1306,14 @@ window.addEventListener('DOMContentLoaded', function() {
             showLoading('โหลดไม่สำเร็จ', res.message || 'กรุณาลองใหม่');
             return;
           }
-          openPOS(res.products || [], listName, sheetId);
+          POS_WHO.then(function() {
+            if (!posMaySell(sheetId)) {
+              showLoading('ไม่มีสิทธิ์ขายรอบนี้', 'กำลังกลับไปหน้าเลือกรอบ…');
+              setTimeout(function() { location.href = 'pos.html'; }, 1800);
+              return;
+            }
+            openPOS(res.products || [], listName, sheetId);
+          });
         } catch(e) {
           showLoading('เกิดข้อผิดพลาด', 'กรุณาปิดและเปิดใหม่');
         }
