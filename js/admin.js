@@ -2810,6 +2810,9 @@ function renderOrdersTable(orders, holder, isAllView) {
       var rmBtn = makeBtn('btn btn-ghost btn-sm', '&#x1F5D1; ลบบิล', (function(items, who, paid) { return function() { confirmRemoveOrder(items, who, paid); }; })(g.items, o0.customer, pays.length));
       rmBtn.title = 'ลบออเดอร์นี้ทั้งบิล (เช่น ลูกค้าไม่โอน) และคืนสต็อก'; rmBtn.style.color = 'var(--error)';
       ship.appendChild(rmBtn);
+      var addBtn = makeBtn('btn btn-ghost btn-sm', '&#x2B; เพิ่มสินค้า', (function(gr) { return function() { openAddItemsModal(gr.items[0], gr.items[0].billNo || 1); }; })(g));
+      addBtn.title = 'เพิ่มสินค้าให้ลูกค้าคนนี้ ของแถมนับรวมกับบิลนี้ แล้วแจ้งยอดที่ต้องโอนเพิ่ม';
+      ship.appendChild(addBtn);
     }
     ship.appendChild(makeBtn('btn btn-sm ' + (waiting ? 'btn-primary' : 'btn-ghost'), waiting ? '&#x1F4E6; อัปเดตสถานะ' : 'แก้ไข',
       (function(items) { return function() { openStatusModal(items); }; })(g.items)));
@@ -2909,6 +2912,119 @@ var SLIP_RE = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+\/]+=*$/;
 // api — server call (old-sheet rows use adminSetLegacyStatus); labels —
 // custom labels to offer; after — redraw instead of the order cards.
 var STATUS_FIXED = { 'จัดส่งแล้ว': 1, 'กำลังมาไทย': 1, 'ถึงไทยแล้ว': 1, 'ฝากของ': 1, 'คืนเงิน': 1, 'มีปัญหา': 1, 'ยกเลิก': 1 };
+// ── Admin: add items to a customer's bill ──
+// Gifts are counted per bill: once a bill is paid, the customer's own next order starts a new
+// bill with its own gift count. Only here can items join an earlier bill (open or closed
+// round); its gifts are recounted, and the customer is told what to transfer.
+function openAddItemsModal(o0, bill) {
+  var listId = o0.listId, who = o0.customer;
+  var mine = ((_ordLast && _ordLast.orders) || []).filter(function(o) { return o.listId === listId && normCust(o.customer) === normCust(who) && o.remark !== 'POS'; });
+  var bills = {}; mine.forEach(function(o) { bills[o.billNo || 1] = true; });
+  var billNos = Object.keys(bills).map(Number).sort(function(a, b) { return a - b; });
+  if (billNos.indexOf(bill) === -1) billNos.push(bill);
+  openModal('&#x2B; เพิ่มสินค้าให้ลูกค้า', '<div class="addi" id="addiBody">' + '<div class="state-loading"><div class="spinner"></div> กำลังโหลดสินค้า...</div></div>', saveAdd, 'เพิ่มสินค้า');
+  el('modalSave').disabled = true;
+  var picks = {}; // key → { id, option, deposit, qty, price }
+  var products = [];
+  apiCall('adminGetProducts', listId).then(function(res) {
+    var body = el('addiBody'); if (!body) return;
+    if (res.status !== 'Success') { body.innerHTML = ''; body.appendChild(div('disc-err', escapeHtml(res.message || 'โหลดสินค้าไม่สำเร็จ'))); return; }
+    products = res.products || [];
+    body.innerHTML = '';
+    var top = div('addi-top');
+    var whoEl = document.createElement('div'); whoEl.className = 'addi-who'; whoEl.textContent = who + ' · ' + (o0.shopName || selectedSheetName || '');
+    top.appendChild(whoEl);
+    if (billNos.length > 1) {
+      var sel = document.createElement('select'); sel.id = 'addiBill'; sel.className = 'team-select';
+      billNos.forEach(function(n) { var op = document.createElement('option'); op.value = n; op.textContent = 'บิล ' + n; if (n === bill) op.selected = true; sel.appendChild(op); });
+      top.appendChild(sel);
+    }
+    body.appendChild(top);
+    body.appendChild(div('addi-note', 'ของแถมจะนับรวมกับสินค้าเดิมในบิลที่เลือก · ลูกค้าโอนเพิ่มจากหน้าเช็คสถานะได้เหมือนเดิม'));
+    var search = document.createElement('input'); search.type = 'search'; search.className = 'addi-search'; search.placeholder = 'ค้นหาสินค้า…';
+    body.appendChild(search);
+    var list = div('addi-list'); body.appendChild(list);
+    var sumEl = div('addi-sum'); body.appendChild(sumEl);
+    body.appendChild(div('disc-err', '')); body.lastChild.id = 'addiErr';
+    function refresh() {
+      var n = 0, total = 0;
+      Object.keys(picks).forEach(function(k) { var x = picks[k]; if (x.qty > 0) { n += x.qty; total += x.qty * x.price; } });
+      sumEl.textContent = n ? 'เพิ่ม ' + n + ' ชิ้น · ' + baht(total) : 'ยังไม่ได้เลือกสินค้า';
+      el('modalSave').disabled = !n;
+    }
+    products.forEach(function(p) {
+      var opts = String(p.options || '').split(',').map(function(s) { return s.trim(); }).filter(Boolean);
+      var row = div('addi-row'); row.setAttribute('data-q', String(p.name || '').toLowerCase());
+      var info = div('addi-info');
+      var nm = document.createElement('div'); nm.className = 'addi-name'; nm.textContent = p.name; info.appendChild(nm);
+      var meta = document.createElement('div'); meta.className = 'addi-meta';
+      meta.textContent = baht(p.price) + (Number(p.deposit) > 0 ? ' · มัดจำ ' + baht(p.deposit) : '') + (p.remaining !== null && p.remaining !== undefined && p.remaining !== '' ? ' · เหลือ ' + p.remaining : '') + (p.status !== 'Open' ? ' · ปิดขาย' : '');
+      info.appendChild(meta);
+      var optSel = null, depCk = null;
+      if (opts.length) {
+        optSel = document.createElement('select'); optSel.className = 'addi-opt';
+        opts.forEach(function(o) { var op = document.createElement('option'); op.value = o; op.textContent = o.split(':')[0]; optSel.appendChild(op); });
+        info.appendChild(optSel);
+      }
+      if (Number(p.deposit) > 0) {
+        var dl = document.createElement('label'); dl.className = 'addi-dep';
+        depCk = document.createElement('input'); depCk.type = 'checkbox';
+        dl.appendChild(depCk); dl.appendChild(document.createTextNode(' จ่ายมัดจำ'));
+        info.appendChild(dl);
+      }
+      row.appendChild(info);
+      var step = div('addi-step');
+      var minus = makeBtn('pstep', '&#x2212;'), qty = document.createElement('span'), plus = makeBtn('pstep', '+');
+      minus.type = plus.type = 'button'; qty.className = 'addi-qty'; qty.textContent = '0';
+      function keyNow() { return p.id + '|' + (optSel ? optSel.value : '') + '|' + (depCk && depCk.checked ? 'd' : 'f'); }
+      function set(delta) {
+        var k = keyNow(), x = picks[k] || (picks[k] = { id: p.id, option: optSel ? optSel.value : '', deposit: !!(depCk && depCk.checked), qty: 0, price: depCk && depCk.checked ? Number(p.deposit) : Number(p.price) });
+        x.qty = Math.max(0, Math.min(100, x.qty + delta));
+        qty.textContent = x.qty; row.classList.toggle('on', x.qty > 0); refresh();
+      }
+      minus.onclick = function() { set(-1); }; plus.onclick = function() { set(1); };
+      var show = function() { var x = picks[keyNow()]; qty.textContent = x ? x.qty : 0; };
+      if (optSel) optSel.onchange = show; if (depCk) depCk.onchange = show;
+      step.appendChild(minus); step.appendChild(qty); step.appendChild(plus);
+      row.appendChild(step);
+      list.appendChild(row);
+    });
+    search.oninput = function() { var t = search.value.trim().toLowerCase(); list.querySelectorAll('.addi-row').forEach(function(r) { r.hidden = t && r.getAttribute('data-q').indexOf(t) === -1; }); };
+    refresh();
+  });
+  function saveAdd() {
+    var items = Object.keys(picks).map(function(k) { return picks[k]; }).filter(function(x) { return x.qty > 0; })
+      .map(function(x) { return { id: x.id, quantity: x.qty, isDeposit: x.deposit, selectedOption: x.option }; });
+    if (!items.length) return;
+    var b = el('addiBill') ? Number(el('addiBill').value) : bill;
+    el('modalSave').disabled = true; el('addiErr').textContent = '';
+    apiCall('adminAddItems', listId, who, b, items).then(function(r) {
+      if (r.status !== 'Success') { el('modalSave').disabled = false; el('addiErr').textContent = r.message || 'เพิ่มสินค้าไม่สำเร็จ'; return; }
+      closeModal();
+      addItemsDone(r, listId, o0.shopName || selectedSheetName || '');
+      if (typeof renderOrdersPanel === 'function' && currentPanel === 'orders') renderOrdersPanel();
+    });
+  }
+}
+// After adding: what to tell the customer, ready to copy
+function addItemsDone(r, listId, roundName) {
+  var link = new URL('status.html', location.href);
+  link.searchParams.set('name', r.customer); link.searchParams.set('pay', listId);
+  var msg = r.customer + ' แอดมินเพิ่มสินค้าให้แล้วค่ะ' + (roundName ? ' (รอบ ' + roundName + ')' : '') +
+    '\nยอดที่เพิ่ม ' + baht(r.added) + (r.gifts && r.gifts.length ? '\nได้ของแถมเพิ่ม: ' + r.gifts.join(', ') : '') +
+    '\nยอดที่ต้องโอนเพิ่ม ' + baht(r.owed) +
+    '\nส่งสลิปได้ที่ ' + link.href;
+  openModal('&#x2705; เพิ่มสินค้าแล้ว',
+    '<div class="team-form"><div class="addi-owed">ลูกค้าต้องโอนเพิ่ม <b></b></div>' +
+    '<p class="team-done">ส่งข้อความนี้ให้ลูกค้า ลูกค้าส่งสลิปจากลิงก์ได้เลย</p><pre class="team-login" id="addiMsg"></pre>' +
+    '<button type="button" class="btn btn-primary btn-sm" id="addiCopy">คัดลอกข้อความ</button></div>', null);
+  el('modalBody').querySelector('.addi-owed b').textContent = baht(r.owed);
+  el('addiMsg').textContent = msg;
+  el('addiCopy').onclick = function() {
+    (navigator.clipboard ? navigator.clipboard.writeText(msg) : Promise.reject()).then(function() { toast('คัดลอกแล้ว', 'success'); }, function() { toast('คัดลอกไม่ได้ เลือกข้อความแล้วคัดลอกเองนะคะ', 'error'); });
+  };
+}
+
 function openStatusModal(items, opts) {
   opts = opts || {};
   var pending = items.filter(isWaiting);
@@ -4613,7 +4729,7 @@ function stageOf(o, B) {
   }
   // A sent bill waits in step 2 until the customer pays it
   if (b) return b.sentAt && B.billPaid[b.id] ? 'ship' : 'arrive';
-  return B.paid[o.listId + '|' + normCust(o.customer)] || PAID_RE.test(o.status || '') ? 'arrive' : 'pay';
+  return B.paidOrder[o.id] || PAID_RE.test(o.status || '') ? 'arrive' : 'pay';
 }
 
 function renderStatusPanel() {
@@ -4646,11 +4762,11 @@ function drawStages() {
   }
   B.billById = {}; B.billByTracking = {};
   B.deliveries.forEach(function(b) { B.billById[b.id] = b; if (b.tracking) B.billByTracking[b.tracking] = b; });
-  B.paid = {}; B.billPaid = {};
-  B.payments.forEach(function(p) {
-    if (p.deliveryId) B.billPaid[p.deliveryId] = true;
-    else B.paid[p.listId + '|' + normCust(p.customer)] = true;
-  });
+  B.billPaid = {};
+  B.payments.forEach(function(p) { if (p.deliveryId) B.billPaid[p.deliveryId] = true; });
+  // Slips pay each customer's orders oldest first (js/paid.js, same rule as the status page):
+  // what they order after paying, or what admin adds later, waits in รอชำระเงิน
+  B.paidOrder = window.Paid ? Paid.paidOrders(B.orders, B.payments) : {};
   // Marked paid by the shop (no slip) counts the same
   B.deliveries.forEach(function(b) { if (b.paidMarkAt) B.billPaid[b.id] = true; });
   var listName = {};

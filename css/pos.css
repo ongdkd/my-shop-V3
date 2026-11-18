@@ -371,3 +371,22 @@ button,.pos-prod-card,.qty-step-btn,.sum-qty-btn{touch-action:manipulation;}
 .pos-picker-foot{margin-top:16px;text-align:center;}
 .pos-picker-out{border:0;background:none;color:#8A6577;font:inherit;font-weight:600;padding:8px 12px;border-radius:10px;cursor:pointer;}
 .pos-picker-out:hover{background:#FFF0F6;color:#C94B82;}
+/* Staff guide (วิธีใช้ POS) */
+.pos-help-btn{flex:none;width:36px;height:36px;border-radius:50%;border:1.5px solid #F7DCE8;background:#fff;color:#C94B82;font-weight:800;font-size:1rem;cursor:pointer;margin-right:6px;}
+.pos-help-btn:hover,.pos-help-btn:focus-visible{background:#FFF0F6;border-color:#E4639B;}
+.pos-guide{position:fixed;inset:0;z-index:300;display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:max(16px,env(safe-area-inset-top)) 12px 24px;background:rgba(74,46,61,.45);}
+.pos-guide-card{width:min(560px,100%);margin:auto 0;background:#fff;border-radius:22px;padding:18px 18px 16px;box-shadow:0 24px 60px rgba(74,46,61,.3);}
+.pos-guide-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
+.pos-guide-head h2{margin:0;font-size:1.2rem;color:#4A2E3D;}
+.pos-guide-x{width:36px;height:36px;border:0;border-radius:50%;background:#FFF0F6;color:#8A6577;font-size:1rem;cursor:pointer;}
+.pos-guide-steps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;}
+.pos-guide-steps li{display:flex;gap:12px;align-items:flex-start;padding:10px 12px;border-radius:14px;background:#FFF7FB;border:1px solid #F7DCE8;}
+.pos-guide-ic{flex:none;width:34px;height:34px;display:grid;place-items:center;border-radius:10px;background:#fff;font-size:1.15rem;box-shadow:0 2px 6px rgba(201,75,130,.12);}
+.pos-guide-steps b{display:block;color:#4A2E3D;font-size:.92rem;margin-bottom:2px;}
+.pos-guide-steps p{margin:0;color:#6E5160;font-size:.84rem;line-height:1.55;}
+.pos-guide-steps li:nth-child(6){background:#E8FAF3;border-color:#B5EBD8;}
+.pos-guide-tips{margin-top:12px;padding:10px 12px;border-radius:14px;background:#FFF8E6;border:1px solid #F6E2A8;}
+.pos-guide-tips b{color:#7A5A00;font-size:.88rem;}
+.pos-guide-tips ul{margin:6px 0 0;padding-left:18px;color:#6E5A2A;font-size:.82rem;line-height:1.6;}
+.pos-guide-ok{display:block;width:100%;margin-top:14px;min-height:48px;border:0;border-radius:14px;background:linear-gradient(135deg,#F27FB0,#E4639B);color:#fff;font:inherit;font-weight:700;font-size:1rem;cursor:pointer;}
+.pos-picker-foot{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;}

@@ -109,6 +109,70 @@ var POS_WHO = new Promise(function(resolve) {
 });
 function posMaySell(listId) { return !POS_ROUNDS || POS_ROUNDS.indexOf(listId) !== -1; }
 
+// ── วิธีใช้: a short guide for staff, in the words of the buttons they'll see.
+// Opens by itself the first time a POS staff login uses POS on this device. ──
+var POS_GUIDE = [
+  ['🗂️', 'เลือกรอบ', 'หลังเข้าระบบ เลือกรอบที่จะขาย เห็นเฉพาะรอบที่แอดมินให้สิทธิ์ ปุ่ม ‹ มุมซ้ายบนพากลับมาหน้าเลือกรอบ'],
+  ['👆', 'เพิ่มสินค้าลงตะกร้า', 'แตะการ์ดสินค้า 1 ครั้ง = 1 ชิ้น ตัวเลขบนการ์ดคือจำนวนในตะกร้า แตะปุ่ม − บนการ์ดเพื่อลด สินค้าที่มีหลายแบบจะมีหน้าต่างให้เลือกแบบและจำนวนก่อน'],
+  ['🔍', 'หาสินค้าเร็ว ๆ', 'พิมพ์ชื่อในช่อง “ค้นหาสินค้า” หรือกด “สแกน” แล้วส่องบาร์โค้ดที่สินค้า ใช้เครื่องยิงบาร์โค้ดก็ได้ ยิงลงช่องค้นหาแล้วกด Enter สินค้าจะเข้าตะกร้าเลย'],
+  ['🛒', 'ตรวจตะกร้า', 'กด “ดูตะกร้าสินค้า” ด้านล่าง (จอใหญ่: ตะกร้าอยู่ด้านขวา) ดูรายการ แก้จำนวน หรือ “ล้างตะกร้า” ถ้าเริ่มใหม่ แล้วกด “ยืนยันและชำระเงิน”'],
+  ['💳', 'รับเงิน', 'ให้ลูกค้าสแกน QR บนจอเพื่อโอน หรือรับเงินสด: พิมพ์จำนวนที่รับมาในช่อง “รับเงินมา” ระบบบอกเงินทอนให้เอง'],
+  ['✅', 'บันทึกการขาย (สำคัญ)', 'ได้เงินครบแล้วกด “ชำระเงินแล้ว — บันทึกการขาย” ทุกครั้ง ยอดขายและสต็อกจะถูกบันทึกตอนนี้เท่านั้น ถ้าขึ้นว่าบันทึกไม่สำเร็จ กดใหม่ได้ ไม่บันทึกซ้ำ'],
+  ['📊', 'ดูยอดขาย', 'ปุ่ม “ยอดขาย” มุมขวาบน ดูยอดวันนี้และทุกบิลที่ขายในรอบนี้'],
+  ['👋', 'เลิกงาน', 'กด ‹ กลับไปหน้าเลือกรอบ แล้วกด “ออกจากระบบ” โดยเฉพาะถ้าใช้เครื่องร่วมกับคนอื่น'],
+];
+var POS_GUIDE_TIPS = [
+  'สินค้าที่ขึ้นว่า “หมด” ขายไม่ได้ ถ้าของมีจริงให้แจ้งแอดมินเติมสต็อก',
+  'อย่าปิดหน้าหรือกดย้อนกลับระหว่างรอ “กำลังบันทึกการขาย…”',
+  'ลูกค้าเปลี่ยนใจหลังบันทึกแล้ว ให้แจ้งแอดมินแก้ไข (พนักงาน POS แก้หรือลบบิลเองไม่ได้)',
+];
+function openPosGuide() {
+  if (document.getElementById('posGuide')) return;
+  var ov = document.createElement('div'); ov.className = 'pos-guide'; ov.id = 'posGuide';
+  ov.setAttribute('role', 'dialog'); ov.setAttribute('aria-modal', 'true'); ov.setAttribute('aria-labelledby', 'posGuideTitle');
+  var card = document.createElement('div'); card.className = 'pos-guide-card';
+  var head = document.createElement('div'); head.className = 'pos-guide-head';
+  var h = document.createElement('h2'); h.id = 'posGuideTitle'; h.textContent = 'วิธีใช้ POS'; head.appendChild(h);
+  var x = document.createElement('button'); x.type = 'button'; x.className = 'pos-guide-x'; x.setAttribute('aria-label', 'ปิด'); x.textContent = '✕';
+  head.appendChild(x); card.appendChild(head);
+  var ol = document.createElement('ol'); ol.className = 'pos-guide-steps';
+  POS_GUIDE.forEach(function(s, i) {
+    var li = document.createElement('li');
+    var ic = document.createElement('span'); ic.className = 'pos-guide-ic'; ic.setAttribute('aria-hidden', 'true'); ic.textContent = s[0];
+    var body = document.createElement('div');
+    var t = document.createElement('b'); t.textContent = (i + 1) + '. ' + s[1];
+    var d = document.createElement('p'); d.textContent = s[2];
+    body.appendChild(t); body.appendChild(d);
+    li.appendChild(ic); li.appendChild(body); ol.appendChild(li);
+  });
+  card.appendChild(ol);
+  var tips = document.createElement('div'); tips.className = 'pos-guide-tips';
+  var tt = document.createElement('b'); tt.textContent = '💡 ควรรู้'; tips.appendChild(tt);
+  var ul = document.createElement('ul');
+  POS_GUIDE_TIPS.forEach(function(t) { var li = document.createElement('li'); li.textContent = t; ul.appendChild(li); });
+  tips.appendChild(ul); card.appendChild(tips);
+  var ok = document.createElement('button'); ok.type = 'button'; ok.className = 'pos-guide-ok'; ok.textContent = 'เข้าใจแล้ว เริ่มขาย';
+  card.appendChild(ok);
+  ov.appendChild(card);
+  function close() {
+    document.removeEventListener('keydown', onKey, true);
+    ov.remove();
+    try { localStorage.setItem('posGuideSeen', '1'); } catch (e) {}
+  }
+  function onKey(e) { if (e.key === 'Escape') { e.stopPropagation(); close(); } }
+  x.onclick = close; ok.onclick = close;
+  ov.onclick = function(e) { if (e.target === ov) close(); };
+  document.addEventListener('keydown', onKey, true);
+  document.body.appendChild(ov);
+  ok.focus({ preventScroll: true }); // keyboard users land on the button; everyone starts reading at step 1
+  ov.scrollTop = 0;
+}
+// First visit by a POS staff login on this device: show the guide once
+POS_WHO.then(function() {
+  var seen = false; try { seen = localStorage.getItem('posGuideSeen') === '1'; } catch (e) {}
+  if (POS_ROLE === 'pos' && !seen) setTimeout(openPosGuide, 600);
+});
+
 // ── No round chosen (POS staff sign in here): pick the round to sell from ──
 function showRoundPicker() {
   showLoading('กำลังโหลดรอบ...', '');
@@ -144,7 +208,9 @@ function showRoundPicker() {
         (window.__sbSignOut ? window.__sbSignOut() : Promise.resolve()).then(go, go);
       };
     }
-    foot.appendChild(out); card.appendChild(foot);
+    var help = document.createElement('button'); help.type = 'button'; help.className = 'pos-picker-out'; help.textContent = '❓ วิธีใช้ POS';
+    help.onclick = openPosGuide;
+    foot.appendChild(help); foot.appendChild(out); card.appendChild(foot);
     box.appendChild(card);
     document.body.appendChild(box);
   }).withFailureHandler(function() { showLoading('เชื่อมต่อไม่ได้', 'กรุณาลองใหม่'); }).adminGetOrderLists(); });

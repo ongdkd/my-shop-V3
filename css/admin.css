@@ -1375,3 +1375,23 @@ body.touch-dragging *{-webkit-touch-callout:none;}
 /* Faye: a chip that opens one of this screen's own buttons */
 .faye-sug.act{background:var(--primary);color:#fff;}
 .faye-sug.act:hover,.faye-sug.act:focus-visible{filter:brightness(1.06);}
+/* Admin: add items to a customer bill */
+.addi{display:flex;flex-direction:column;gap:10px;}
+.addi-top{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+.addi-who{font-weight:700;}
+.addi-note{font-size:.78rem;color:var(--text-2);}
+.addi-search{min-height:40px;padding:0 12px;border:1.5px solid var(--border);border-radius:10px;background:var(--surface-2);font:inherit;color:var(--text);}
+.addi-list{display:flex;flex-direction:column;gap:6px;max-height:min(46vh,380px);overflow-y:auto;}
+.addi-row{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:12px;background:var(--surface-2);}
+.addi-row.on{border-color:var(--primary);background:var(--surface);}
+.addi-row[hidden]{display:none;}
+.addi-info{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;}
+.addi-name{font-size:.86rem;font-weight:600;}
+.addi-meta{font-size:.74rem;color:var(--text-3);}
+.addi-opt{max-width:100%;min-height:32px;border:1px solid var(--border);border-radius:8px;background:var(--surface);font:inherit;font-size:.8rem;}
+.addi-dep{font-size:.78rem;color:var(--text-2);display:flex;align-items:center;gap:4px;}
+.addi-step{display:flex;align-items:center;gap:4px;flex:none;}
+.addi-qty{min-width:28px;text-align:center;font-weight:700;}
+.addi-sum{font-weight:700;color:var(--primary);}
+.addi-owed{font-size:1rem;}
+.addi-owed b{font-size:1.4rem;color:#C42B2B;}

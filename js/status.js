@@ -85,14 +85,14 @@
   // it's delivered (iShip says so, or the shop marks it); hand-shipped items are done
   var DELIVERED = /นำจ่ายสำเร็จ|จัดส่งสำเร็จ|ส่งสำเร็จ|ผู้รับได้รับ|เซ็นรับ/;
   function isDelivered(b) { return !!(b && (b.deliveredAt || DELIVERED.test(b.ishipStatus || ''))); }
-  function webStage(o, paidList, bills) {
+  function webStage(o, paid, bills) {
     if (o.status === 'ยกเลิก') return 'done';
     if (o.shippedAt) {
       var b = o.deliveryId ? bills[o.deliveryId] : null;
       return b && (b.tracking || o.tracking) && !isDelivered(b) ? 'ship' : 'done';
     }
     if (o.deliveryId) return 'balance';
-    return paidList[o.listId] || PAID.test(o.status || '') ? 'arrive' : 'pay';
+    return paid[o.id] || PAID.test(o.status || '') ? 'arrive' : 'pay';
   }
   // Old sheet rows carry no payment info; anything still open was ordered and paid for
   function legacyStage(s) {
@@ -148,16 +148,20 @@
       return;
     }
 
-    var paidList = {};
-    pays.forEach(function (p) { if (!p.deliveryId) paidList[p.listId] = true; });
-    var ctx = { pays: pays, bills: {}, trackStatus: {} };
+    // Slips pay this customer's orders oldest first (js/paid.js): what they order after
+    // paying — or what the shop adds later — waits in รอชำระเงิน as a new bill
+    var paid = window.Paid ? Paid.paidOrders(orders, pays) : {};
+    var ctx = { pays: pays, bills: {}, trackStatus: {}, listDue: {} };
+    // What is still owed per round (the slip check asks for exactly this)
+    orders.forEach(function (o) { if (o.status !== 'ยกเลิก') ctx.listDue[o.listId] = (ctx.listDue[o.listId] || 0) + (Number(o.total) || 0); });
+    pays.forEach(function (p) { if (!p.deliveryId) ctx.listDue[p.listId] = (ctx.listDue[p.listId] || 0) - (Number(p.amount) || 0); });
     (res.deliveries || []).forEach(function (d) {
       ctx.bills[d.id] = d;
       if (d.tracking && d.ishipStatus) ctx.trackStatus[d.tracking] = d.ishipStatus; // kept fresh by iShip
     });
     var groups = {};
     TABS.forEach(function (t) { groups[t.id] = { orders: [], legacy: [] }; });
-    orders.forEach(function (o) { groups[webStage(o, paidList, ctx.bills)].orders.push(o); });
+    orders.forEach(function (o) { groups[webStage(o, paid, ctx.bills)].orders.push(o); });
     legacy.forEach(function (r) { groups[legacyStage(r.status)].legacy.push(r); });
 
     // One per checkout (its rows are written in one transaction, so they
@@ -246,8 +250,11 @@
         owed += restOf(o);
       });
       var mine = ctx.pays.filter(function (p) { return p.listId === l.id && !p.deliveryId; });
-      var sent = mine.length ? '✓ ส่งสลิปแล้ว ' + mine.length + ' ครั้ง' : tab.id === 'pay' ? 'ยังไม่ได้ส่งสลิป' : owed > 0 ? '✓ ชำระมัดจำแล้ว' : '✓ ชำระแล้ว';
-      head.appendChild(h('div', 'st-card-meta' + (mine.length || tab.id !== 'pay' ? ' ok' : ''), tab.id === 'done' || tab.id === 'ship' ? pcs + ' ชิ้น · ' + baht(sum) : sent));
+      var sent = tab.id === 'pay' ? (mine.length ? 'รายการใหม่ · ยังไม่ได้ชำระ' : 'ยังไม่ได้ส่งสลิป')
+        : mine.length ? '✓ ส่งสลิปแล้ว ' + mine.length + ' ครั้ง' : owed > 0 ? '✓ ชำระมัดจำแล้ว' : '✓ ชำระแล้ว';
+      head.appendChild(h('div', 'st-card-meta' + (tab.id !== 'pay' ? ' ok' : ''), tab.id === 'done' || tab.id === 'ship' ? pcs + ' ชิ้น · ' + baht(sum) : sent));
+      // A slip may have covered part of an order: ask for exactly what's still owed
+      if (tab.id === 'pay' && ctx.listDue[l.id] > 0.009 && ctx.listDue[l.id] < sum) sum = Math.round(ctx.listDue[l.id] * 100) / 100;
       card.appendChild(head);
       // One parcel for the whole card: its status and tracking show once, under the items
       var parcels = {};

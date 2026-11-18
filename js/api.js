@@ -598,6 +598,7 @@
       fullPrice: num(r.full_price),
       totalFull: num(r.total_full),
       remark: r.remark || '',
+      billNo: Number(r.bill_no) || 1,   // gift count / bill (2026-11-22c-gift-bills.sql)
       checkoutId: r.checkout_id || '',  // groups the items of one checkout
       id: r.id,
       listId: r.list_id || '',
@@ -2128,6 +2129,22 @@
         if (!(await getSession())) return ok({ role: null });
         return ok({ role: await myRole() });
       } catch (e) { return ok({ role: null }); }
+    },
+
+    // Admin adds items to a customer's bill (gifts recounted on that bill). items like
+    // submit_order: [{ id, quantity, isDeposit, selectedOption }]. Returns added + owed.
+    adminAddItems: async function (listId, customer, bill, items) {
+      try {
+        requireSb(); await requireAdmin();
+        var r = await sb.rpc('admin_add_items', { p_list_id: listId, p_customer: String(customer || ''), p_bill: Number(bill) || 1, p_items: items || [] });
+        if (r.error) {
+          if (/admin_add_items/.test(r.error.message)) return err('ยังไม่ได้รันไฟล์ supabase/migrations/2026-11-22c-gift-bills.sql ใน SQL Editor');
+          return err(r.error.message);
+        }
+        var d = r.data || {};
+        if (d.status !== 'Success') return err(d.message || 'เพิ่มสินค้าไม่สำเร็จ');
+        return ok({ added: Number(d.added) || 0, owed: Number(d.owed) || 0, gifts: d.gifts || [], customer: d.customer || customer });
+      } catch (e) { return e.__json || err(e.message || e); }
     },
 
     // POS: this login's role and the rounds it may sell from (rounds: null = every round)
