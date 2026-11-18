@@ -196,7 +196,8 @@ function fayePoke(n) {
   if (!faye || fayePaused) return;
   var t = window.FayeVoice ? FayeVoice.tap(n) : { text: 'หืม?', anim: 'surprise' };
   faye.wake(); fayeSyncNap();
-  try { faye.play(t.anim); } catch (x) {}
+  var reactions = ['poke', 'tickle', 'hideFace', 'peace', 'annoyed'];
+  try { faye.play(reactions[Math.min(n - 1, reactions.length - 1)] || 'poke'); } catch (x) {}
   if (fayeHelp.open) fayeSays(t.text); else fayeSay(t.text, 3000, false);
 }
 // Every 3–6 minutes, if he's awake and nothing else is going on, he says something
@@ -244,6 +245,32 @@ function fayeSide() {
   fayeBox.classList.toggle('left', r.left + r.width / 2 < innerWidth / 2);
 }
 window.addEventListener('resize', fayePlace);
+var fayeStrolling = false, fayeWalkX = 0;
+function fayeSavePosition() {
+  var r = fayeBox.getBoundingClientRect();
+  fayeStore('fayePos', JSON.stringify({
+    x: innerWidth > r.width ? r.left / (innerWidth - r.width) : 0,
+    y: innerHeight > r.height ? r.top / (innerHeight - r.height) : 0
+  }));
+  fayeSide();
+}
+fayeHelp.querySelector('.faye-stage').addEventListener('faye:walk', function(e) {
+  if (fayeHeld || fayePaused || fayeHelp.open || document.hidden || fayeReducedMotion.matches) return;
+  var r = fayeBox.getBoundingClientRect();
+  if (r.bottom < innerHeight - 40) return;
+  if (!fayeStrolling) fayeWalkX = r.left;
+  fayeStrolling = true;
+  fayeWalkX = Math.max(0, Math.min(innerWidth - r.width, fayeWalkX + e.detail.dx));
+  fayeBox.style.left = Math.round(fayeWalkX) + 'px';
+  fayeBox.style.right = 'auto';
+  fayeSide();
+});
+fayeHelp.querySelector('.faye-stage').addEventListener('faye:state', function(e) {
+  if (fayeStrolling && e.detail.id !== 'walk') {
+    fayeStrolling = false;
+    fayeSavePosition();
+  }
+});
 
 // ── Pick up and drop ──
 (function() {
@@ -278,12 +305,7 @@ window.addEventListener('resize', fayePlace);
     if (e.type === 'pointercancel' && faye) faye.release();
     dragged = true; fayeHeld = false;
     fayeBox.classList.remove('held');
-    var r = fayeBox.getBoundingClientRect();
-    fayeStore('fayePos', JSON.stringify({
-      x: innerWidth > r.width ? r.left / (innerWidth - r.width) : 0,
-      y: innerHeight > r.height ? r.top / (innerHeight - r.height) : 0
-    }));
-    fayeSide();
+    fayeSavePosition();
     if (faye) faye.release(); // lands, settles, carries on
     fayeNapLater();
   }
@@ -507,6 +529,7 @@ function fayeRun(a) {
         row('หน้าเว็บ', s.web) + '\n' + row('หน้าร้าน (POS)', s.pos) + '\nรวม ' + baht(s.web.baht + s.pos.baht) +
         (s.noPrice ? '\n(ไม่นับ ' + s.noPrice + ' รายการที่ไม่มีราคา)' : '') +
         fayeQuip(s.web.baht + s.pos.baht > 0 ? 'salesUp' : 'salesZero'));
+      fayeDo(s.web.baht + s.pos.baht > 0 ? 'countMoney' : 'sad');
     });
   } else if (a.do === 'buy_list') {
     // What to buy for a round — the numbers of "สรุปตามสินค้า" on the orders page
@@ -750,7 +773,7 @@ loadAllLists(function() { switchPanel(panelFromHash()); loadTagMatcher(); });
 // ── HELPERS ──
 var _toastTimer = null;
 // action (optional): { label, onClick } — adds a button and keeps the toast up longer
-function toast(msg, type, action) {
+function toast(msg, type, action, fayeAnimation) {
   var el = document.getElementById('toast');
   el.textContent = msg; el.className = (type || 'success') + ' show';
   el.style.pointerEvents = action ? 'auto' : '';
@@ -761,7 +784,7 @@ function toast(msg, type, action) {
   }
   if (_toastTimer) clearTimeout(_toastTimer);
   _toastTimer = setTimeout(function() { el.classList.remove('show'); el.style.pointerEvents = ''; _toastTimer = null; }, action ? 7000 : 3500);
-  if (typeof fayeDo === 'function') fayeDo(type === 'error' ? 'oops' : 'yes'); // nod at good news, "oops" at errors
+  if (typeof fayeDo === 'function') fayeDo(fayeAnimation || (type === 'error' ? 'sad' : 'yes'));
   // …and now and then a word of his own (not every time, or it gets old)
   if (typeof fayeLine === 'function' && !fayeHelp.open && document.getElementById('fayeBubble').hidden && !(faye && faye.asleep) &&
       Math.random() < (type === 'error' ? .6 : .3)) {
@@ -2799,7 +2822,7 @@ function openStatusModal(items, opts) {
       // Update the loaded orders in place and redraw — no reload needed
       chosen.forEach(function(o) { o.shippedAt = res.shippedAt || ''; o.tracking = res.tracking || ''; o.status = res.orderStatus || ''; o.courier = res.courier || ''; });
       closeModal();
-      toast('อัปเดตสถานะแล้ว ' + chosen.length + ' รายการ', 'success');
+      toast('อัปเดตสถานะแล้ว ' + chosen.length + ' รายการ', 'success', null, res.shippedAt ? 'orderShipped' : 'yes');
       if (opts.after) opts.after();
       else if (_ordLast && document.body.contains(_ordLast.holder)) renderOrdersTable(_ordLast.orders, _ordLast.holder, _ordLast.isAllView);
     }).withFailureHandler(function() {
@@ -3179,7 +3202,7 @@ function applyStatusFromSheet(groups, total) {
     el('modalCancel').disabled = false;
     closeModal();
     if (failed) toast('อัปเดตแล้ว ' + done + ' · ไม่สำเร็จ ' + failed + (firstError ? ' — ' + firstError : ''), 'error');
-    else toast('อัปเดตสถานะแล้ว ' + done + ' รายการ', 'success');
+    else toast('อัปเดตสถานะแล้ว ' + done + ' รายการ', 'success', null, groups.some(function(g) { return g.shipped; }) ? 'orderShipped' : 'yes');
   });
 }
 
@@ -5446,7 +5469,7 @@ function openIshipModalNow(b, x, after) {
       });
       Couriers.learn([{ code: chosen.code, name: chosen.name }]);
       closeModal();
-      toast('สร้างเลขพัสดุแล้ว ' + res.tracking + ' — กด 🖨 เพื่อพิมพ์ใบปะหน้า', 'success');
+      toast('สร้างเลขพัสดุแล้ว ' + res.tracking + ' — กด 🖨 เพื่อพิมพ์ใบปะหน้า', 'success', null, 'orderShipped');
       if (after) after();
     });
   }
@@ -9639,7 +9662,7 @@ function notifAnnounce(fresh) {
   toast('🔔 ' + first, 'success');
   // a new order or slip: he says something about it, then the notice itself
   var ev = fresh[0], kind = ev.type === 'order' || ev.type === 'po_arrived' || ev.type === 'delivered' ? ev.type : ev.deliveryId ? 'remaining' : 'slip';
-  var anim = { order: 'letter', slip: 'celebrate', remaining: 'yes', po_arrived: 'hello', delivered: 'celebrate' }[kind];
+  var anim = { order: 'newOrder', slip: 'slipChecked', remaining: 'slipChecked', po_arrived: 'newOrder', delivered: 'orderShipped' }[kind];
   var say = fayeLine('event', kind);
   fayeSay((say ? say + '\n' : '') + first, 8000, anim);
   if (_notif.audio) {

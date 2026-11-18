@@ -27,12 +27,21 @@
     ['bubble','Blowing bubbles','hum',2400],
     ['rain','Watching the rain','stand',3200],
     ['toeTap','Tapping a foot','stand',1050],
+    ['walk','Walking','stand',4000],
+    ['ramen','Eating ramen','book',3200], ['rice','Eating rice','stand',3000],
+    ['onigiri','Eating onigiri','stand',2800], ['sticks','Biscuit sticks','stand',2800],
+    ['taiyaki','Eating taiyaki','stand',2800], ['iceCream','Ice cream','stand',2800],
+    ['cola','Drinking cola','stand',3000], ['boba','Bubble tea','stand',3200],
+    ['strawberryMilk','Strawberry milk','stand',2600], ['ramune','Drinking ramune','stand',2600],
+    ['dance','Dancing','music',2400], ['chill','Chill music','music',2800],
+    ['idleFun','Bored antics','stand',3200],
   ];
   const thinking = [
     ['ponder','Pondering','think',2200],
     ['search','Searching','search',2450],
     ['process','Working it out','write',2450],
     ['idea','Lightbulb moment','idea',2100],
+    ['thinkAlt','Thinking another way','think',2800],
   ];
   const reactions = [
     ['hello','Wave hello','wave',1100], ['celebrate','Celebrate','wave',1250],
@@ -43,6 +52,12 @@
     ['letter','Love letter','letter',1900], ['laugh','Laughing','wakeStretch',1400],
     ['yes','Nodding yes','stand',1100], ['no','Shaking his head','stand',900],
     ['blush','Blushing','stand',1650], ['highFive','High five','wave',1000],
+    ['newOrder','New order','stand',1800], ['orderShipped','Parcel shipped','stand',1800],
+    ['slipChecked','Slip checked','stand',1800], ['countMoney','Counting sales','stand',2400],
+    ['sad','Feeling sad','stand',750], ['dizzy','Feeling dizzy','stand',750],
+    ['annoyed','Annoyed pout','stand',750], ['relieved','Feeling relieved','stand',750],
+    ['poke','Poked','stand',1000], ['tickle','Ticklish giggle','stand',1200],
+    ['hideFace','Hiding his face','stand',1000], ['peace','Peace sign','stand',1200],
   ];
   const actions = Object.freeze(Object.fromEntries([...idle,...thinking,...reactions].map(
     ([id,label,pose,duration])=>[id,Object.freeze({id,label,pose,duration})])));
@@ -60,7 +75,7 @@
     cheer: ['cheerJump','cheerLand','laughBack','laughForward'],
     feelings: ['feelSurprise','feelOops','feelBlush','feelNo'],
     sneeze: ['sneezeIn','sneezeHold','sneezeRelease','sneezeAfter'],
-    'carry-motion': ['carryGrab','carryLeft','carryRight','carryLand'],
+    carry: ['carryGrab','carryLeft','carryRight','carryLand'],
     letter: ['letterHide','letterOffer','shrugStart','shrugFull'],
     think: ['ponderLeft','ponderRight','ideaLift','ideaPoint'],
     search: ['searchLeft','searchRight','searchFront','searchFound'],
@@ -85,16 +100,41 @@
     'bag-empty': ['bagLook','bagFlap','bagRise','bagPat'],
     'hobby-motion': ['flowerLow','flowerNear','strumReady','strumDown'],
     talk: ['talkClosed','talkHalf','talkWide','talkBlink'],
+    walk: ['walkContactLeft','walkPassLeft','walkContactRight','walkPassRight'],
+    'shop-order': ['orderPhone','orderParcel','orderTape','orderThumb'],
+    'shop-money': ['slipHappy','slipInspect','moneyFan','moneyHug'],
+    moods: ['moodSad','moodDizzy','moodAnnoyed','moodRelieved'],
+    poke: ['pokeFlinch','pokeGiggle','pokeHide','pokePeace'],
+    'music-2': ['vibeCenter','vibeDown','humLeft','humRight'],
+    'think-2': ['ponderUp','ponderTap','ponderCross','ponderHmm'],
+    'look-2': ['lookForward','peekLeftUp','peekRightUp','lookWonder'],
+    'eat-onigiri': ['onigiriAdmire','onigiriBite','onigiriChew','onigiriFilling'],
+    'drink-cola': ['colaOpen','colaDrink','colaAhh','colaBurp'],
+    'eat-ramen': ['ramenLook','ramenSlurp','ramenChew','ramenSoup'],
+    'eat-rice': ['riceProud','riceBite','riceChew','riceEmpty'],
+    'eat-sticks': ['sticksPull','sticksCool','sticksCrunch','sticksOffer'],
+    'drink-boba': ['bobaAdmire','bobaSip','bobaChew','bobaShake'],
+    'vibe-2': ['danceLeft','danceRight','danceGuitar','dancePoint'],
+    'think-3': ['thinkCount','thinkTemple','thinkPencil','thinkSkeptical'],
+    'drink-milk': ['milkSip','milkSqueeze','ramuneOpen','ramuneDrink'],
+    'vibe-3': ['chillLeft','chillRight','chillSnap','chillSing'],
+    'idle-fun': ['funGlasses','funBubble','funPop','funBalance'],
+    'eat-sweets': ['taiyakiAdmire','taiyakiBite','iceLick','iceDrip'],
+    'bridge-wake': ['bridgeWakeFrom','bridgeWakeOne','bridgeWakeTwo','bridgeWakeTo'],
+    'bridge-vibe': ['bridgeVibeFrom','bridgeVibeOne','bridgeVibeTwo','bridgeVibeTo'],
+    'bridge-hum': ['bridgeHumFrom','bridgeHumOne','bridgeHumTwo','bridgeHumTo'],
+    'bridge-ponder': ['bridgePonderFrom','bridgePonderOne','bridgePonderTwo','bridgePonderTo'],
   };
   const clips = {
-    breathe:['exhale','exhale','inhale','inhale'], vibe:['vibeLeft','vibeRight','vibeLeft','vibeRight'],
+    breathe:['exhale','exhale','inhale','inhale'], vibe:['vibeLeft','vibeCenter','vibeRight','vibeDown'],
     sleep:['sleepIn','sleepOut','sleepIn','sleepOut'], game:['gameFocus','gameLeft','gameRight','gameWin'],
     page:['bookRead','bookPinch','bookLift','bookSweep'],
     tea:['teaBlow','teaPeek','teaBlow','teaSigh','teaPeek'], daydream:['dreamClasp','dreamLean','dreamClasp','dreamLean'],
     stretch:['anticipate','stretchUp','stretchSide','stretchUp'], yawn:['yawnStart','yawnFull','yawnStart','yawnFull','talkClosed'],
-    peek:['lookLeft','lookRight','lookLeft','lookRight'], hum:['humOpen','humSmile','humOpen','humSmile'],
+    peek:['lookForward','lookLeft','peekLeftUp','lookForward','lookRight','peekRightUp'],
+    hum:['humOpen','humLeft','humSmile','humRight'],
     sway:['weightShift','exhale','weightShift','inhale'], fidget:['bagTwist','bagSwing','bagTwist','bagSwing'],
-    stargaze:['starUpLeft','starUp','starUpRight','starSigh'],
+    stargaze:['starUpLeft','starUp','lookWonder','starUpRight','starSigh'],
     sip:['teaBlow','teaDrink','teaSigh','teaDrink','teaPeek'],
     snack:['cookieChew','cookieLick','cookieChew','cookieLick'],
     flower:['flowerLow','flowerNear','flowerLow','flowerNear','flowerLow','flowerNear'],
@@ -103,7 +143,8 @@
     bubble:['bubbleBlow','bubbleWatch','bubbleBlow','bubbleWatch'],
     rain:['rainUmbrella','rainCatch','rainUmbrella','rainCatch','rainUmbrella','rainCatch'],
     toeTap:['exhale','tapFoot','exhale','tapFoot'],
-    ponder:['ponderLeft','ponderRight','ponderLeft','ponderRight'], search:['searchLeft','searchRight','searchFront','searchFound'],
+    ponder:['ponderLeft','ponderUp','ponderRight','ponderTap','ponderCross','ponderHmm'],
+    search:['searchLeft','searchRight','searchFront','searchFound'],
     process:['writeFast','writeCheek','writeHead','writeProud'],
     idea:['ideaLift','ideaPoint','ideaLift','ideaPoint','ideaPoint','ideaLift'],
     hello:['waveLift','waveLeft','waveRight','waveLeft','waveRight','waveLift'],
@@ -115,10 +156,34 @@
     yes:['talkClosed','lookNod','talkClosed','lookNod','talkClosed'], no:['talkClosed','feelNo','talkClosed','feelNo'],
     blush:['talkClosed','feelBlush','feelBlush','talkClosed','standSettle'],
     highFive:['waveLift','palmHighFive','palmHighFive','waveLift'],
+    walk:['walkContactLeft','walkPassLeft','walkContactRight','walkPassRight'],
+    ramen:['ramenLook','ramenSlurp','ramenChew','ramenSoup'],
+    rice:['riceProud','riceBite','riceChew','riceEmpty'],
+    onigiri:['onigiriAdmire','onigiriBite','onigiriChew','onigiriFilling'],
+    sticks:['sticksPull','sticksCool','sticksCrunch','sticksOffer'],
+    taiyaki:['taiyakiAdmire','taiyakiBite','taiyakiAdmire','taiyakiBite'],
+    iceCream:['iceLick','iceDrip','iceLick','iceDrip'],
+    cola:['colaOpen','colaDrink','colaAhh','colaBurp'],
+    boba:['bobaAdmire','bobaSip','bobaChew','bobaShake'],
+    strawberryMilk:['milkSip','milkSqueeze','milkSip','milkSqueeze'],
+    ramune:['ramuneOpen','ramuneDrink','ramuneOpen','ramuneDrink'],
+    dance:['danceLeft','danceRight','danceGuitar','dancePoint'],
+    chill:['chillLeft','chillRight','chillSnap','chillSing'],
+    idleFun:['funGlasses','funBubble','funPop','funBalance'],
+    thinkAlt:['thinkCount','thinkTemple','thinkPencil','thinkSkeptical'],
+    newOrder:['orderPhone','orderParcel','orderPhone','orderParcel'],
+    orderShipped:['orderTape','orderParcel','orderThumb','orderParcel'],
+    slipChecked:['slipInspect','slipHappy','slipInspect','slipHappy'],
+    countMoney:['moneyFan','moneyHug','moneyFan','moneyHug'],
+    sad:['moodSad'], dizzy:['moodDizzy'], annoyed:['moodAnnoyed'], relieved:['moodRelieved'],
+    poke:['pokeFlinch','pokePeace'], tickle:['pokeGiggle','pokeFlinch','pokeGiggle'],
+    hideFace:['pokeHide','pokeFlinch','pokeHide'], peace:['pokePeace','pokeGiggle','pokePeace'],
   };
   const props={
     game:'console',read:'book',page:'book',tea:'mug',sip:'mug',snack:'cookie',flower:'flower',
     photo:'camera',strum:'ukulele',plane:'paper',process:'notebook',letter:'letter',
+    ramen:'ramen',rice:'rice',onigiri:'onigiri',sticks:'sticks',taiyaki:'taiyaki',iceCream:'iceCream',
+    cola:'cola',boba:'boba',strawberryMilk:'milk',ramune:'ramune',
   };
   const propPixels={
     paper:[['00001111','00111110','11111100','00111000','00010000'],'#fff1d7'],
@@ -129,6 +194,25 @@
     ukulele:['bagUkuleleHalf','bagUkuleleChest'], letter:['bagLetterHalf','bagLetterChest'],
     notebook:['bagNotebookHalf','bagNotebookChest'], paper:['bagPlaneHalf','bagPlaneChest'],
     console:['bagConsoleHalf','bagConsoleSit'], book:['bagBookHalf','bagBookSit'],
+    ramen:['bagRamenHalf','bagRamenSit'],rice:['bagRiceHalf','riceProud'],
+    onigiri:['bagOnigiriHalf','onigiriAdmire'],sticks:['bagSticksHalf','sticksPull'],
+    taiyaki:['bagTaiyakiHalf','taiyakiAdmire'],iceCream:['bagIceHalf','iceLick'],
+    cola:['bagColaHalf','colaOpen'],boba:['bagBobaHalf','bobaAdmire'],
+    milk:['bagMilkHalf','milkSip'],ramune:['bagRamuneHalf','ramuneOpen'],
+  };
+  // Reuse the approved prop pixels at their original scale for the new food bag handoffs.
+  const foodInBag={
+    bagRamenHalf:{pose:'ramenLook',crop:[30,52,17,12]},
+    bagRamenSit:{pose:'ramenLook',crop:[30,52,17,12],crouch:true},
+    bagRiceHalf:{pose:'riceProud',crop:[35,50,13,9]},
+    bagOnigiriHalf:{pose:'onigiriAdmire',crop:[31,46,11,10]},
+    bagSticksHalf:{pose:'sticksPull',crop:[39,48,10,13]},
+    bagTaiyakiHalf:{pose:'taiyakiAdmire',crop:[28,46,18,11]},
+    bagIceHalf:{pose:'iceLick',crop:[29,46,11,15]},
+    bagColaHalf:{pose:'colaOpen',crop:[43,47,9,12]},
+    bagBobaHalf:{pose:'bobaAdmire',crop:[30,45,15,16]},
+    bagMilkHalf:{pose:'milkSip',crop:[31,45,13,15]},
+    bagRamuneHalf:{pose:'ramuneOpen',crop:[32,49,10,15]},
   };
   const glyphs = {
     note:['00110','00101','00100','11100','11100'],
@@ -167,7 +251,14 @@
     imagePromise = Promise.all(Object.entries(authored).map(([file,poses])=>loadSheet(file).then(
       img=>poses.map((pose,i)=>[pose,{img,left:i%2*288,top:Math.floor(i/2)*328}]),
       error=>{if(required.includes(file)) throw error; console.warn('Faye:',error.message); return [];},
-    ))).then(items=>Object.fromEntries(items.flat())).catch(error=>{imagePromise=undefined;throw error});
+    ))).then(items=>{
+      const result=Object.fromEntries(items.flat());
+      for(const [pose,prop] of Object.entries(foodInBag)) {
+        const body=result[prop.crouch?'bagRise':'bagOpen'];
+        if(body&&result[prop.pose]) result[pose]={...body,prop};
+      }
+      return result;
+    }).catch(error=>{imagePromise=undefined;throw error});
     return imagePromise;
   }
   const W=144,H=164, FLOOR=150, TAU=2*Math.PI;
@@ -178,7 +269,7 @@
   const transitionFrames=['anticipate','hopUp','land','standSettle'];
   const wakeFrames=[
     [0,'sleepOut'],[.12,'awake'],[.25,'eyeRub'],[.47,'awake'],
-    [.54,'wakeStretch'],[.75,'wakeRise'],[.86,'standSettle'],[.94,'talkClosed'],
+    [.54,'wakeStretch'],[.70,'wakeRise'],[.78,'bridgeWakeOne'],[.86,'bridgeWakeTwo'],[.94,'standSettle'],[.98,'talkClosed'],
   ];
   const readFrames=[
     [0,'bookRead'],[780,'bookPinch'],[1310,'bookLift'],
@@ -190,6 +281,11 @@
   ];
   const neutralTalk=new Set(['inhale','exhale','weightShift','tapFoot','talkClosed','standSettle']);
   const mouthFrames=['talkClosed','talkHalf','talkWide','talkHalf'];
+  const actionBridges={
+    vibe:['bridgeVibeOne','bridgeVibeTwo'],
+    hum:['bridgeHumOne','bridgeHumTwo'],
+    ponder:['bridgePonderOne','bridgePonderTwo'],
+  };
   // Coordinates on the sheets' 72×82 logical pixel grid, measured over each visible iris.
   const eyelids={
     // inhale / exhale / weightShift / tapFoot are built from talkClosed (scripts note in ART-PROMPTS.md)
@@ -258,6 +354,7 @@
     let started=clock(), next=Infinity, x=0,y=0, moved=false, pointer=null, carry=0;
     let idleIndex=1,thinkIndex=0,transition=null,bridge=null,visual=null,afterDrag=null,bagIntro=null;
     let swing=0,swingVelocity=0,lastTick=null;
+    let walkDirection=-1;
     let activity={automatic:auto,linked:false,returning:false},following=null;
     let napping=false,paused=false,resting=false,talkStart=0,talkEnd=0;
     const blinkGap=()=>3000+Math.random()*3000;
@@ -299,7 +396,11 @@
       if(!continueBag) bagIntro=switchProp?buildBagIntro(from,to,outgoing,incoming,now,shown):null;
       if(bagIntro) bridge=null;
       transition=!bagIntro&&interruptible&&!reduced.matches&&(sitDown||standUp)?{start:now,rising:standUp}:null;
-      const preludeMs=bagIntro?bagIntro.start+bagIntro.duration-now:transition?transitionMs:0;
+      const middle=actionBridges[id];
+      if(!bagIntro&&!transition&&!reduced.matches&&neutralTalk.has(shown)&&middle) {
+        bridge={from:visual,to:firstPose,start:now,duration:720,poses:[shown,...middle,firstPose],thinking:false};
+      }
+      const preludeMs=bagIntro?bagIntro.start+bagIntro.duration-now:transition?transitionMs:bridge?.poses?bridge.duration:0;
       current=actions[id];started=now+preludeMs;dirty=true;
       host.dispatchEvent(new CustomEvent('faye:state',{detail:{mode,id,label:current.label,preludeMs}}));
     }
@@ -406,7 +507,22 @@
       ctx.save();
       ctx.translate(Math.round(frame.x),Math.round(frame.y)+bob);
       ctx.rotate(frame.tilt);
+      if(current.id==='walk'&&drawTime>=started&&!bagIntro&&!transition&&walkDirection>0) ctx.scale(-1,1);
       ctx.drawImage(img,left,top,288,328,-W/2,41-FLOOR,W,H);
+      if(sprite.prop&&art[sprite.prop.pose]) {
+        const prop=sprite.prop,source=art[prop.pose];
+        const [px,py,pw,ph]=prop.crop;
+        const center=prop.crouch?72:95;
+        ctx.save();
+        if(!prop.crouch) {
+          ctx.beginPath();
+          ctx.rect(-W/2,41-FLOOR,W,128);
+          ctx.clip();
+        }
+        ctx.drawImage(source.img,source.left+px*4,source.top+py*4,pw*4,ph*4,
+          center-pw-W/2,128-ph*2+41-FLOOR,pw*2,ph*2);
+        ctx.restore();
+      }
       if(animate&&!beingCarried&&drawTime<blinkUntil&&eyelids[pose]) {
         for(const [x,y,w,h] of eyelids[pose]) {
           const left=x*2-W/2,top=y*2+41-FLOOR;
@@ -423,7 +539,7 @@
     const ease=p=>p*p*(3-2*p);
     function drawSprite(pose,dy=0,tilt=0) {
       const target={pose,x:W/2,y:FLOOR-41+dy,tilt};
-      if(!bridge||reduced.matches) {drawFrame(target);return;}
+      if(!bridge||bridge.poses||reduced.matches) {drawFrame(target);return;}
       const p=clamp((drawTime-bridge.start)/bridge.duration,0,1);
       if(p===1) {bridge=null;drawFrame(target);return;}
       const progress=ease(p);
@@ -542,6 +658,14 @@
         now=Math.max(now,started);
       }
       const {id,duration}=current;
+      if(bridge?.poses) {
+        if(now<started) {
+          const index=Math.max(0,Math.min(3,Math.floor((now-bridge.start)/180)));
+          drawSprite(bridge.poses[index]);
+          return;
+        }
+        bridge=null;
+      }
       if(id==='wake') {drawWake(now);return;}
       if(id==='plane') {drawPlane(((now-started)%duration)/duration);return;}
       if(id==='read') {
@@ -693,6 +817,19 @@
       if(pointer&&current.id==='grab'&&now-started>=current.duration) select('drag');
       const dt=lastTick===null?0:Math.min(.035,(raw-lastTick)/1000); // carry physics stay real-time
       lastTick=raw;
+      if(current.id==='walk'&&now>=started&&!bagIntro&&!transition&&!pointer&&!paused&&!reduced.matches) {
+        if(interactive) {
+          const edge=Math.max(0,host.clientWidth-W);
+          if(x<=0) walkDirection=1;
+          else if(x>=edge) walkDirection=-1;
+          position(x+walkDirection*18*dt,y);
+        } else {
+          const box=host.getBoundingClientRect();
+          if(box.left<=8) walkDirection=1;
+          else if(box.right>=innerWidth-8) walkDirection=-1;
+          host.dispatchEvent(new CustomEvent('faye:walk',{detail:{dx:walkDirection*18*dt}}));
+        }
+      }
       carry*=Math.exp(-8*dt);
       swingVelocity=(swingVelocity+(carry-swing)*54*dt)*Math.exp(-7*dt);
       swing=clamp(swing+swingVelocity*dt,-.22,.22);

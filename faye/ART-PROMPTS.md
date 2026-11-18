@@ -227,3 +227,168 @@ Put it next to `faye/ref/faye-reference-2x.png` and check:
 - [ ] **Face and outfit:** the sunglasses sit on his hair, not his eyes. He has the bag and strap, the pink sleeves, and white shoes with a blue stripe.
 - [ ] **Frames:** all four frames are the same size, the feet are on one line (except jumps or lifts), and nothing crosses into the next cell.
 - [ ] **Background:** flat green, with no shadows, scenery or text.
+
+---
+
+# Round 3: food, drinks and more variations
+
+Use the same workflow as above: a new chat per sheet, attach `faye/ref/faye-reference-2x.png`, paste the **style block**, then the **line-art lock** below, then **one** sheet prompt. Save the result as `faye/new/<sheet-name>.png`.
+
+Food and drink sheets are where ChatGPT drifts most. It shrinks the head to make room for a big bowl, lengthens the arms to reach the mouth, and redraws the hair in a new style. The lock below forbids all three.
+
+### Line-art lock (paste right after the style block, every time, unchanged)
+
+```text
+LINE-ART LOCK. These rules come before anything in the frame descriptions. If a pose conflicts with them, change the pose, never the character.
+
+1. THE HEAD IS COPIED, NOT REDRAWN. Copy the head (hair, ahoge, sunglasses, face shape, earrings) from reference frame 1 (top-left) pixel-block for pixel-block: the same hair outline, the same number and positions of spiky tufts on each side, the same curl direction of the ahoge (it curls to the viewer's RIGHT), and the same width and height. Only these may change inside the head: the eyes, eyebrows, mouth and blush. The head may tilt or turn only if a frame asks for it, and then it keeps the same size and silhouette.
+2. ONE OUTLINE. Every outline, including lines between overlapping parts (arm over the body, hand over a prop), is exactly 1 pixel-block thick and dark brown #34140C. No 2-block lines, no thin lines, no colored lines, no missing outline segments, no sketchy or broken lines.
+3. SAME PIXEL GRID. Every frame uses the same block size as the reference. Standing he is 72 blocks tall; seated he keeps the same head size and is shorter only in the body. Never mix big and small blocks in one image.
+4. SHORT ARMS ONLY. Shoulder to fingertips is no longer than his torso (collar to hoodie hem). He reaches his mouth by bending his elbow and bringing the hand up to the chin, like the reference poses. Never stretch an arm to reach something. If food is far away, he leans in or lifts it; his arms do not grow.
+5. SAME FACE. Eyes are the same size, shape and cyan color as the reference in every open-eyed frame. Closed eyes are short curved lines in the same place. The mouth stays small; even "wide open" or "chewing" mouths fit between the cheeks.
+6. OUTFIT LOCK. Cream hoodie with pink sleeves and the two blue chest marks, the brown strap across his chest, the cream bunny bag at his left hip, brown pants, white sneakers with one blue stripe. Never remove, recolor or move any of these, even when a prop covers part of them.
+7. PROPS ARE SMALL AND SIMPLE. Props use the same pixel-block size, the same 1-block #34140C outline and flat 2-3 tone colors as he does. A prop held in his hands is never wider than his torso, and never covers his face except where the frame asks for it. No brand names, logos, readable text or labels on any prop.
+8. CONSISTENT PROP. Within one sheet, the prop has the same size, shape and colors in every frame (only how full or bitten it is may change).
+
+Before finishing, compare each of the four frames with reference frame 1 side by side: if the hair outline, head size, arm length or outline thickness differs, redraw that frame.
+```
+
+### Redo message for line-art drift
+
+```text
+Redo the whole sheet. Problems: [say what, e.g. "hair redrawn with different spikes in frame 2", "outline thicker in frame 4", "arm too long reaching the mouth in frame 3", "bowl is wider than his body", "head smaller than the reference"]. Follow the LINE-ART LOCK exactly: copy the head from reference frame 1 block for block, 1-block #34140C outline everywhere, same block size, short arms that bend to reach the mouth, props never wider than his torso.
+```
+
+## Eating
+
+Each sheet is one food with a full little loop: look, bite, chew, happy reaction. In code each plays as its own idle, and the prop comes out of his bag first, like the others.
+
+### Sheet `eat-ramen`: ramen
+```text
+Four frames, sitting cross-legged on the floor exactly like reference frame 4, holding a small round ramen bowl (white bowl with a red rim band, no steam) in one hand at chest height and chopsticks in the other. The bowl is no wider than his torso. Inside: pale yellow noodles, one round pink-and-white fish cake slice, one half egg (white with an orange yolk), a small green onion sprinkle.
+1) Looking down into the bowl, excited sparkle eyes, mouth open "ooh".
+2) Lifting a few noodles with the chopsticks up to his mouth, slurping: lips pursed in a small "o", eyes closed, noodles hanging from the chopsticks to the bowl.
+3) Chewing with cheeks puffed, eyes ^^ happy arcs, chopsticks resting on the bowl rim.
+4) Tipping the bowl toward his mouth with both hands to drink the soup, eyes closed, the bowl hiding only his mouth and chin (not his eyes).
+```
+
+### Sheet `eat-rice`: bowl of rice
+```text
+Four frames, standing, holding a small rice bowl (light blue bowl with a white rim, white rice in a neat mound with one red pickled plum on top) in one hand at chest height and chopsticks in the other. The bowl is no wider than his torso.
+1) Holding the bowl up proudly, eyes closed, big smile.
+2) Bringing a small clump of rice to his mouth with the chopsticks, mouth open.
+3) Chewing with puffed cheeks, eyes ^^, one grain of rice on his cheek.
+4) Bowl now empty (only a few grains), holding it out toward the viewer, satisfied grin, tiny blush.
+```
+
+### Sheet `eat-onigiri`: rice ball
+```text
+Four frames, standing, holding one onigiri (white rice triangle with a dark green seaweed strip wrapped around the bottom) in both hands. The onigiri is about the size of both his fists together.
+1) Holding the onigiri up at face height, admiring it with sparkle eyes.
+2) Taking a big bite of the top corner, eyes closed, cheeks puffed.
+3) Chewing, eyes ^^, the onigiri now with a bite missing from the top corner (the bite shape stays the same in frames 3 and 4).
+4) Looking at the bitten onigiri, surprised happy face with a small "o" mouth; a little pink filling shows where he bit.
+```
+
+### Sheet `eat-sticks`: chocolate biscuit sticks
+```text
+Four frames, standing, holding a small slim red snack box (plain, no text or logo) in one hand and thin biscuit sticks (pale biscuit handle, chocolate-coated top half) with the other. Each stick is about as long as his forearm.
+1) Pulling one stick out of the box, curious face.
+2) "Cool" pose: one stick held between his lips pointing slightly up, smug half-closed eyes, the other hand on his hip, sunglasses still on his hair.
+3) Crunching: the stick now half as long, cheeks puffed, eyes ^^.
+4) Offering a stick toward the viewer with a bent (still short) arm, wink, open-mouth grin.
+```
+
+### Sheet `eat-sweets`: taiyaki and ice cream (optional extra)
+```text
+Four frames, standing:
+1) Holding a fish-shaped taiyaki (golden brown, fish tail and fin pattern, simple outline) in both hands, eyes sparkling.
+2) Biting the taiyaki's head, eyes closed, cheeks puffed; a bite missing from the head end.
+3) Holding a small ice cream cone (tan cone, one pink scoop) in one hand, licking it with his tongue out, eyes closed.
+4) The ice cream melting a little (one small drip down the cone), panicked happy face, licking the drip.
+```
+
+## Drinking
+
+### Sheet `drink-cola`: soda can
+```text
+Four frames, standing, holding one small red soda can with a plain white stripe around the middle (no logo or text). The can is about as tall as his hand plus one third.
+1) Opening the can: one finger on the tab, the can held away from his body, a tiny burst of three white fizz dots at the top, eyes wide.
+2) Drinking: can tilted up to his mouth, head tilted back slightly, eyes closed.
+3) After the gulp: can lowered to chest height, eyes squeezed shut, mouth wide in a satisfied "ahh", one small bubble near his mouth.
+4) Small burp: hand over his mouth, embarrassed blush, eyes looking to the side, one tiny bubble above his head.
+```
+
+### Sheet `drink-boba`: bubble tea
+```text
+Four frames, standing, holding a clear plastic cup of milk tea (light brown tea, dark brown tapioca pearls at the bottom, a flat lid, one thick pink straw). The cup is about the size of both his fists together.
+1) Holding the cup up at face height with both hands, sparkle eyes, mouth open in delight.
+2) Sipping through the straw, cheeks pulled in, eyes closed.
+3) Chewing a pearl, one cheek puffed, eyes ^^.
+4) Shaking the cup next to his ear, listening to the pearls, curious face, the pearls shifted to one side.
+```
+
+### Sheet `drink-milk`: strawberry milk and ramune (two drinks, two frames each)
+```text
+Four frames, standing:
+1) Holding a small pink milk carton (gable-top shape, plain, no text) with a straw, sipping, eyes closed, little blush.
+2) Same carton, squeezing it so the sides dent in to finish the last drop, eyes squeezed, cheeks pulled in.
+3) Holding a small light-blue glass soda bottle with a pinched neck and a clear marble in it, pressing the marble down with his thumb, eyes wide, three white fizz dots at the top.
+4) Drinking from that bottle, head tilted back slightly, eyes closed, the marble visible in the neck.
+```
+
+## Variations of existing animations
+
+These give the idle cycle more than one way to do each thing, so he doesn't repeat the same loop every time. They are new poses, separate from the round-2 in-betweens (`music-2`, `think-2`).
+
+### Sheet `think-3`: different ways of thinking
+```text
+Four frames, standing:
+1) Counting on his fingers: one hand raised showing three fingers, the other hand touching them, eyes looking up, lips moving.
+2) Hand on his temple, eyes closed tight, eyebrows scrunched, concentrating hard.
+3) Tapping a pencil against his chin, eyes looking to the viewer's LEFT, small sideways mouth.
+4) Arms folded, head tilted, one eye closed, one eyebrow raised, skeptical "hmm" mouth.
+```
+
+### Sheet `vibe-2`: dancing to music
+```text
+Four frames, all wearing blue over-ear headphones (a small blue band over the top of his hair, ear cups at the sides of his head, the sunglasses still on his hair):
+1) Side step: stepping to the viewer's LEFT, arms swinging, eyes closed, smile.
+2) Side step: stepping to the viewer's RIGHT, arms swinging the other way, open-mouth smile.
+3) Air guitar: knees bent, one hand "strumming" at his hip, the other hand up at chest height on an invisible guitar neck, eyes shut, mouth open singing.
+4) Finger point: one finger pointing up beside his head (short arm, hand no higher than the top of his hair), hip popped to the side, wink.
+```
+
+### Sheet `vibe-3`: chill music
+```text
+Four frames, the same headphones as vibe-2:
+1) Swaying gently with his hands in his hoodie pockets, eyes closed, calm smile, head tilted LEFT.
+2) Same, head tilted RIGHT.
+3) Snapping his fingers at shoulder height, one foot tapping (toe up), eyes half closed.
+4) Holding one ear cup with one hand, eyes closed, mouth open singing a high note.
+```
+
+### Sheet `idle-fun`: small things he does when bored
+```text
+Four frames, standing:
+1) Spinning his sunglasses on one finger at chest height (the sunglasses are OFF his hair only in this frame; the hair shape stays exactly the same without them), bored half-closed eyes.
+2) Blowing a small pink bubblegum bubble (no wider than his face), eyes crossed looking at it.
+3) Bubble popped: pink gum stuck on his cheeks and nose, surprised eyes, ahoge straight up.
+4) Balancing on one foot with arms out for balance, tongue out in concentration.
+```
+
+### Suggested order for round 3
+
+1. `eat-onigiri`, `drink-cola`: one simple prop each, a good test of whether ChatGPT keeps to the lock.
+2. `eat-ramen`, `eat-rice`, `eat-sticks`, `drink-boba`.
+3. `vibe-2`, `think-3`.
+4. `drink-milk`, `vibe-3`, `idle-fun`, `eat-sweets`.
+
+### Extra checks for round 3
+
+Along with the checklist above:
+- [ ] **Hair:** lay the frame over reference frame 1. The hair outline and tufts match, and the ahoge curls to the right.
+- [ ] **Outline:** every line is the same 1-block dark brown, including where the hand overlaps the prop.
+- [ ] **Hand to mouth:** the elbow bends, and the arm is no longer than in the reference.
+- [ ] **Prop size:** the bowl, cup or can is no wider than his torso, and stays the same size in all four frames.
+- [ ] **No text:** no brand, logo or letters on any can, box or carton.
