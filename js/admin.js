@@ -449,13 +449,18 @@ function fayeSuggestions() {
   var list = [];
   if (round && (currentPanel === 'orders' || currentPanel === 'products' || currentPanel === 'orderlists')) {
     list.push(['รอบนี้ต้องสั่งอะไรบ้าง?', { do: 'buy_list', listId: round.id, item: '' }]);
+    list.push(['รอบนี้ขายได้เท่าไร?', { do: 'round_sales', listId: round.id, query: '' }]);
   }
   if (currentPanel === 'stock' || currentPanel === 'restock') {
     list.push(['ของชิ้นไหนใกล้หมด?', { do: 'low_stock' }]);
     list.push(['เพิ่มสต็อก', { do: 'add_stock', item: '', qty: 0 }]);
   }
   if (currentPanel === 'status' || currentPanel === 'slips') list.push(['มีออเดอร์รอจัดส่งเท่าไร?', { do: 'waiting' }]);
+  var month = today.slice(0, 8) + '01';
   list.push(['วันนี้ขายได้เท่าไร?', { do: 'sales', from: today, to: today }]);
+  list.push(['ใครซื้อเยอะสุดเดือนนี้?', { do: 'top_customers', from: month, to: today, item: '', query: '' }]);
+  list.push(['ขายอะไรดีสุดเดือนนี้?', { do: 'top_products', from: month, to: today, query: '' }]);
+  list.push(['สัปดาห์นี้เทียบสัปดาห์ก่อน?', { do: 'sales_compare', from: B.shift(today, -6), to: today }]);
   list.push(['มีออเดอร์รอจัดส่งเท่าไร?', { do: 'waiting' }]);
   list.push(['7 วันนี้ขายได้เท่าไร?', { do: 'sales', from: B.day(new Date(Date.now() - 6 * 864e5).toISOString()), to: today }]);
   list.push(['ของชิ้นไหนใกล้หมด?', { do: 'low_stock' }]);
@@ -520,6 +525,14 @@ function fayePanels() {
 }
 function fayeFindOrders(q) { el('fayeFindInput').value = q; el('fayeFind').requestSubmit(); }
 function fayeDay(d) { return new Date(d + 'T00:00:00').toLocaleDateString('th-TH', { day: 'numeric', month: 'short' }); }
+// "17 พ.ย.", "1 – 18 พ.ย.", or "ทั้งหมด" when no dates were given
+function fayePeriod(from, to) {
+  var ok = /^\d{4}-\d{2}-\d{2}$/;
+  if (!ok.test(from || '')) return 'ทั้งหมด';
+  if (!ok.test(to || '') || to === from) return fayeDay(from);
+  return fayeDay(from) + ' – ' + fayeDay(to);
+}
+function fayeDates(a) { var ok = /^\d{4}-\d{2}-\d{2}$/; return { from: ok.test(a.from || '') ? a.from : '', to: ok.test(a.to || '') ? a.to : (ok.test(a.from || '') ? a.from : '') }; }
 // A short answer that also shows as his speech bubble (the panel may close on the way)
 function fayeNote(text, ms, anim) { fayeSays(text); fayeSay(text, ms, anim); }
 // What the AI remembers between questions (also after a reload): each question with the
@@ -608,6 +621,80 @@ function fayeRun(a) {
       fayeTell(text, round && round.listId ? [['เปิดสรุปตามสินค้าของรอบนี้', function() {
         selectedSheetId = round.listId; selectedSheetName = round.name; _ordView = 'items'; switchPanel('orders');
       }]] : []);
+    });
+  } else if (a.do === 'top_customers') {
+    // Who bought the most (or who bought one product, most pieces first)
+    var tcd = fayeDates(a);
+    fayeOrders(function(orders) {
+      var r = B.topCustomers(orders, { from: tcd.from, to: tcd.to, item: a.item || '', round: a.query || '' });
+      var what = (a.item ? 'ใครซื้อ “' + a.item + '”' : 'ลูกค้าที่ซื้อเยอะสุด') + (a.query ? ' · รอบ ' + a.query : '') + ' (' + fayePeriod(tcd.from, tcd.to) + ')';
+      if (!r.rows.length) return fayeTell(what + '\nยังไม่มีใครซื้อเลยครับ');
+      var lines = r.rows.slice(0, 10).map(function(c, i) {
+        return (i + 1) + '. ' + c.name + ' — ' + (r.byQty ? c.qty + ' ชิ้น (' + baht(c.baht) + ')' : baht(c.baht) + ' (' + c.qty + ' ชิ้น)');
+      });
+      if (r.rows.length > 10) lines.push('…และอีก ' + (r.rows.length - 10) + ' คน');
+      fayeTell(what + '\n' + lines.join('\n') + '\nรวม ' + r.rows.length + ' คน · ' + baht(r.baht) + ' · ' + r.qty + ' ชิ้น' + fayeQuip('salesUp'),
+        [['ดูออเดอร์ของ ' + r.rows[0].name, function() { fayeFindOrders(r.rows[0].name); }]]);
+    });
+  } else if (a.do === 'top_products') {
+    var tpd = fayeDates(a);
+    fayeOrders(function(orders) {
+      var list = B.topProducts(orders, { from: tpd.from, to: tpd.to, round: a.query || '' });
+      var what = 'สินค้าขายดี' + (a.query ? ' · รอบ ' + a.query : '') + ' (' + fayePeriod(tpd.from, tpd.to) + ')';
+      if (!list.length) return fayeTell(what + '\nยังไม่มีการขายในช่วงนี้ครับ' + fayeQuip('salesZero'));
+      var shown = list.slice(0, 10), count = {};
+      shown.forEach(function(x) { count[x.short] = (count[x.short] || 0) + 1; });
+      fayeTell(what + '\n' + shown.map(function(x, i) {
+        return (i + 1) + '. ' + (count[x.short] > 1 ? x.name : x.short) + ' — ' + x.qty + ' ชิ้น · ' + x.buyers + ' คน';
+      }).join('\n') + (list.length > 10 ? '\n…และอีก ' + (list.length - 10) + ' รายการ' : '') + fayeQuip('salesUp'));
+    });
+  } else if (a.do === 'customer_total' && a.customer) {
+    fayeOrders(function(orders) {
+      var c = B.customerTotal(orders, a.customer);
+      if (!c.names.length) return fayeTell('ไม่เจอลูกค้าชื่อ “' + a.customer + '” ในคำสั่งซื้อครับ');
+      if (c.names.length > 1) {
+        return fayeTell('เจอ ' + c.names.length + ' คนที่ชื่อคล้ายกัน หมายถึงคนไหนครับ?', c.names.slice(0, 6).map(function(n) {
+          return [n, function() { fayeRun({ do: 'customer_total', customer: n }); }];
+        }));
+      }
+      var who = c.names[0];
+      fayeTell(who + ' ซื้อไปทั้งหมด ' + baht(c.baht) + '\n' + c.qty + ' ชิ้น · ' + c.lines + ' รายการ · ' + c.rounds + ' รอบ' +
+        (c.first ? '\nสั่งครั้งแรก ' + fayeDay(c.first) + (c.last !== c.first ? ' · ล่าสุด ' + fayeDay(c.last) : '') : '') +
+        (c.top.length ? '\nซื้อบ่อย: ' + c.top.map(function(t) { return t.name + ' ×' + t.qty; }).join(', ') : '') +
+        (c.cancelled ? '\n(ไม่นับ ' + c.cancelled + ' รายการที่ยกเลิก)' : ''),
+        [['ดูออเดอร์ของ ' + who, function() { fayeFindOrders(who); }], ['ของถึงไหนแล้ว', function() { fayeRun({ do: 'ship_status', customer: who }); }]]);
+    });
+  } else if (a.do === 'round_sales') {
+    var here2 = selectedSheetId && selectedSheetId !== 'ALL' ? selectedSheetId : '';
+    var rq = B.roundWords(a.query || a.item || ''), rpick = a.listId || (rq ? '' : here2), rsd = fayeDates(a);
+    if (!rq && !rpick) return fayeTell('รอบไหนครับ? พิมพ์ชื่อรอบมาได้เลย เช่น “รอบ Shutline ขายได้เท่าไร”');
+    fayeOrders(function(orders) {
+      var r = B.roundSales(orders, rq, rpick, rsd.from, rsd.to);
+      if (r.rounds.length > 1) {
+        return fayeTell('เจอ ' + r.rounds.length + ' รอบที่ชื่อตรงกัน หมายถึงรอบไหนครับ?', r.rounds.slice(0, 8).map(function(x) {
+          return [x.name, function() { fayeRun({ do: 'round_sales', listId: x.listId, query: x.name, from: rsd.from, to: rsd.to }); }];
+        }));
+      }
+      if (!r.rounds.length) return fayeTell('ไม่เจอรอบ “' + (rq || selectedSheetName) + '” ครับ');
+      var round = r.rounds[0];
+      fayeTell('รอบ ' + round.name + (rsd.from ? ' (' + fayePeriod(rsd.from, rsd.to) + ')' : '') + '\n' +
+        'ยอดขาย ' + baht(r.baht) + ' · ' + r.qty + ' ชิ้น\n' +
+        'ลูกค้า ' + r.customers + ' คน · รอส่ง ' + r.waiting + ' รายการ · ส่งแล้ว ' + r.shipped +
+        (r.pos ? '\nหน้าร้าน (POS) ' + baht(r.pos) : '') +
+        (r.cancelled ? '\n(ไม่นับ ' + r.cancelled + ' รายการที่ยกเลิก)' : '') + fayeQuip(r.baht > 0 ? 'salesUp' : 'salesZero'),
+        round.listId ? [['ต้องสั่งอะไรบ้าง', function() { fayeRun({ do: 'buy_list', listId: round.listId, item: '' }); }],
+          ['เปิดสรุปตามสินค้า', function() { selectedSheetId = round.listId; selectedSheetName = round.name; _ordView = 'items'; switchPanel('orders'); }]] : []);
+    });
+  } else if (a.do === 'sales_compare') {
+    var scd = fayeDates(a), td = B.day(new Date().toISOString());
+    if (!scd.from) scd = { from: B.shift(td, -6), to: td }; // no dates: the last 7 days against the 7 before
+    fayeOrders(function(orders) {
+      var c = B.salesCompare(orders, scd.from, scd.to);
+      var trend = c.change === null ? (c.now ? 'ช่วงก่อนหน้ายังไม่มียอด' : 'ทั้งสองช่วงยังไม่มียอด')
+        : c.change > 0 ? '▲ เพิ่มขึ้น ' + c.change + '%' : c.change < 0 ? '▼ ลดลง ' + Math.abs(c.change) + '%' : 'เท่าเดิม';
+      fayeTell('ยอดขาย ' + fayePeriod(c.from, c.to) + ': ' + baht(c.now) + ' (' + c.nowQty + ' ชิ้น)\n' +
+        'ช่วงก่อนหน้า ' + fayePeriod(c.prevFrom, c.prevTo) + ': ' + baht(c.before) + ' (' + c.beforeQty + ' ชิ้น)\n' + trend +
+        fayeQuip(c.change !== null && c.change < 0 ? 'salesZero' : 'salesUp'));
     });
   } else if (a.do === 'waiting') {
     fayeOrders(function(orders) {

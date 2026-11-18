@@ -20,7 +20,8 @@ const reply = (body: unknown) =>
 const fail = (message: string) => reply({ ok: false, message });
 
 // What Faye can do. The page (js/admin.js fayeRun) runs these; anything else is ignored there.
-const ACTIONS = ["answer", "ship_status", "sales", "buy_list", "low_stock", "stock_of", "waiting", "goto", "find_orders", "add_stock"];
+const ACTIONS = ["answer", "ship_status", "sales", "buy_list", "low_stock", "stock_of", "waiting", "goto", "find_orders", "add_stock",
+  "top_customers", "top_products", "customer_total", "round_sales", "sales_compare"];
 
 const clip = (v: unknown, n: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 
@@ -57,6 +58,11 @@ Deno.serve(async (req) => {
 - ship_status: ถามว่าของ/ออเดอร์ของลูกค้าคนหนึ่งถึงไหน ส่งหรือยัง เลขพัสดุ → ใส่ customer (ชื่อที่พิมพ์มา ไม่ต้องแก้)
 - sales: ถามยอดขาย → ใส่ from และ to เป็น YYYY-MM-DD (วันนี้, เมื่อวาน, 7 วัน, เดือนนี้ ฯลฯ คิดจากวันนี้)
 - buy_list: ถามว่ารอบ/รายการ/ลิสต์หนึ่งต้องสั่งซื้อของอะไรบ้าง กี่ชิ้น ลูกค้าสั่งอะไรไปเท่าไร สรุปยอดตามสินค้าของรอบ → ใส่ item เป็นชื่อรอบตามที่พิมพ์ (ถ้าพูดว่า "รอบนี้" ให้เว้นว่าง)
+- top_customers: ถามว่าลูกค้าคนไหนซื้อเยอะสุด/ลูกค้าประจำ หรือใครซื้อสินค้าชิ้นหนึ่งบ้าง → ใส่ item ถ้าถามถึงสินค้า, query ถ้าจำกัดรอบ, from/to ถ้าบอกช่วงเวลา (ไม่บอกให้เว้นว่าง = ทั้งหมด)
+- top_products: ถามว่าสินค้าอะไรขายดีสุด/ขายได้กี่ชิ้น → query ถ้าจำกัดรอบ, from/to ถ้าบอกช่วงเวลา
+- customer_total: ถามว่าลูกค้าคนหนึ่งซื้อไปทั้งหมดเท่าไร กี่ชิ้น ซื้ออะไรบ่อย → ใส่ customer (ชื่อที่พิมพ์มา)
+- round_sales: ถามยอดขายของรอบ/รายการหนึ่ง ขายได้เท่าไร มีลูกค้ากี่คน → ใส่ query เป็นชื่อรอบ ("รอบนี้" ให้เว้นว่าง), from/to ถ้าบอกช่วงเวลา
+- sales_compare: ถามว่ายอดขายเพิ่มขึ้น/ลดลง ดีกว่าหรือแย่กว่าช่วงก่อน เทียบกับสัปดาห์/เดือนก่อน → ใส่ from/to เป็นช่วงปัจจุบัน (ระบบเทียบกับช่วงก่อนหน้าที่ยาวเท่ากันเอง)
 - low_stock: ถามว่าของชิ้นไหนใกล้หมด/หมดแล้วในคลัง
 - stock_of: ถามว่าในคลัง (ของที่มีอยู่บนชั้น) เหลือกี่ชิ้น เฉพาะคลังสินค้าเท่านั้น ไม่ใช่ยอดที่ลูกค้าสั่ง → ใส่ item
 - waiting: ถามว่ามีออเดอร์รอจัดส่งเท่าไร/รอบไหนยังไม่ส่ง
