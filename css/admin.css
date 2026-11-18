@@ -1308,3 +1308,25 @@ body.touch-dragging *{-webkit-touch-callout:none;}
 .faye.left.below .faye-bubble::after{transform:scale(-1,-1);}
 @keyframes fayePixPop{0%{transform:scale(.6);opacity:0;}50%{transform:scale(.9);opacity:1;}100%{transform:none;}}
 @media(prefers-reduced-motion:reduce){.faye-ready,.faye-ready rect,.faye-bubble{animation:none!important;}}
+/* Discounts: red sale chip, normal price struck through, the % button and its window */
+.tag-sale{background:#FFE4E4;border-color:#F7B4B4;color:#C42B2B;}
+.was-price{color:var(--text-3);font-weight:500;text-decoration-thickness:1.5px;}
+.sale-price{color:#D6304A;font-weight:700;}
+.prod-disc{font-weight:800;font-size:.9rem;color:var(--text-2);}
+.prod-disc.on{background:#FFE4E4;border-color:#F7B4B4;color:#C42B2B;}
+.pcard-bottom .prod-disc{margin-left:auto;}
+.pcard-bottom .prod-disc + .prod-edit{margin-left:6px;}
+.disc-form{display:flex;flex-direction:column;gap:12px;}
+.disc-name{font-weight:700;font-size:.95rem;}
+.disc-base{font-size:.85rem;color:var(--text-2);}
+.disc-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.disc-grid .field{display:flex;flex-direction:column;gap:4px;font-size:.78rem;font-weight:700;color:var(--text-2);}
+.disc-grid input{min-height:44px;padding:0 12px;border:1.5px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-2);font:inherit;font-size:1.05rem;color:var(--text);}
+.disc-grid input:focus{outline:none;border-color:var(--primary);}
+.disc-quick{display:flex;flex-wrap:wrap;gap:6px;}
+.disc-quick .price-chip{height:32px;padding:0 11px;font-size:.8rem;}
+.disc-preview{min-height:1.4em;font-size:.9rem;font-weight:700;color:#C42B2B;}
+.disc-err{min-height:1em;font-size:.8rem;color:var(--error);}
+.disc-err:empty{display:none;}
+.disc-off{align-self:flex-start;}
+.pcard .prod-disc{width:40px;height:40px;}

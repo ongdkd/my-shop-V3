@@ -3768,6 +3768,101 @@ function tagMinis(tags) {
   return row;
 }
 
+// ── Discounts (price maths in js/discount.js). A discounted product keeps its normal
+// price in priceBefore; price is what customers pay, so orders, POS and totals just work. ──
+// "฿150 ฿120": the normal price struck through, then the price now
+function fillPrice(node, p, money) {
+  if (window.Discount && Discount.isOn(p)) {
+    var was = document.createElement('s'); was.className = 'was-price'; was.textContent = money(p.priceBefore);
+    node.appendChild(was); node.appendChild(document.createTextNode(' '));
+    var now = document.createElement('span'); now.className = 'sale-price'; now.textContent = money(p.price);
+    node.appendChild(now);
+  } else node.appendChild(document.createTextNode(money(p.price)));
+}
+// The red "ลด 20%" chip, first among a product's tags
+function withSaleTag(row, p) {
+  var text = window.Discount ? Discount.label(p) : '';
+  if (!text) return row;
+  if (!row) row = div('tag-minis');
+  var s = document.createElement('span'); s.className = 'tag-mini tag-sale'; s.textContent = text;
+  row.insertBefore(s, row.firstChild);
+  return row;
+}
+function discountBtn(p) {
+  var on = window.Discount && Discount.isOn(p);
+  var b = makeBtn('btn-icon prod-disc' + (on ? ' on' : ''), '%');
+  b.type = 'button'; b.setAttribute('data-row', p.rowIndex);
+  b.title = on ? 'แก้ส่วนลด (' + Discount.label(p) + ')' : 'ลดราคา';
+  b.setAttribute('aria-label', (on ? 'แก้ส่วนลด ' : 'ลดราคา ') + p.name);
+  return b;
+}
+// Type the price you want OR the percent off; the other one fills itself in
+function openDiscountModal(sheetId, row) {
+  var p = (currentProductsCache || []).filter(function(x) { return x.rowIndex === row; })[0];
+  if (!p || !window.Discount) return;
+  var on = Discount.isOn(p), base = on ? Number(p.priceBefore) : Number(p.price);
+  var body = div('disc-form');
+  body.innerHTML =
+    '<div class="disc-name"></div>' +
+    '<div class="disc-base">ราคาปกติ <strong></strong></div>' +
+    '<div class="disc-grid">' +
+      '<label class="field"><span>ราคาหลังลด (฿)</span><input type="number" id="discPrice" min="0" step="1" inputmode="decimal"></label>' +
+      '<label class="field"><span>หรือ ลด (%)</span><input type="number" id="discPct" min="0" max="100" step="1" inputmode="decimal"></label>' +
+    '</div>' +
+    '<div class="disc-quick"></div>' +
+    '<div class="disc-preview" id="discPreview" role="status"></div>' +
+    '<div class="disc-err" id="discErr" role="alert"></div>';
+  body.querySelector('.disc-name').textContent = p.name;
+  body.querySelector('.disc-base strong').textContent = baht(base);
+  openModal('&#x1F3F7;&#xFE0F; ลดราคา', '', saveDiscount, on ? 'บันทึกส่วนลด' : 'ลดราคา');
+  el('modalBody').innerHTML = ''; el('modalBody').appendChild(body);
+  var priceIn = el('discPrice'), pctIn = el('discPct');
+  function show() {
+    var price = priceIn.value === '' ? NaN : Number(priceIn.value);
+    var bad = priceIn.value === '' ? '' : Discount.problem(base, price);
+    el('discErr').textContent = bad;
+    var dep = Number(p.deposit) || 0;
+    el('discPreview').textContent = priceIn.value === '' || bad ? '' :
+      baht(base) + ' → ' + baht(price) + ' (' + Discount.label({ price: price, priceBefore: base }) + ')' +
+      (dep > price ? ' · มัดจำจะลดเป็น ' + baht(price) : '');
+  }
+  priceIn.addEventListener('input', function() {
+    pctIn.value = priceIn.value === '' ? '' : Discount.percentOff(base, priceIn.value) || '';
+    show();
+  });
+  pctIn.addEventListener('input', function() {
+    priceIn.value = pctIn.value === '' ? '' : Discount.priceFromPercent(base, pctIn.value);
+    show();
+  });
+  // Common amounts in one tap
+  [10, 15, 20, 30, 50].forEach(function(n) {
+    var q = makeBtn('price-chip', n + '%', function() { pctIn.value = n; pctIn.dispatchEvent(new Event('input')); });
+    q.type = 'button'; body.querySelector('.disc-quick').appendChild(q);
+  });
+  if (on) {
+    priceIn.value = p.price; pctIn.value = Discount.percentOff(base, p.price);
+    var off = makeBtn('btn btn-ghost btn-sm disc-off', 'ยกเลิกส่วนลด (กลับเป็น ' + baht(base) + ')', function() { send(base, null); });
+    off.type = 'button'; body.appendChild(off);
+  }
+  show();
+  setTimeout(function() { priceIn.focus(); priceIn.select(); }, 50);
+  function saveDiscount() {
+    var price = Number(priceIn.value), bad = priceIn.value === '' ? 'กรุณาใส่ราคาหลังลด หรือ % ที่ลด' : Discount.problem(base, price);
+    if (bad) { el('discErr').textContent = bad; priceIn.focus(); return; }
+    send(price, base);
+  }
+  function send(price, before) {
+    el('modalSave').disabled = true;
+    apiCall('adminSetDiscount', sheetId, row, price, before, before === null ? undefined : Math.min(Number(p.deposit) || 0, price)).then(function(res) {
+      el('modalSave').disabled = false;
+      if (res.status !== 'Success') { el('discErr').textContent = res.message || 'บันทึกไม่สำเร็จ'; return; }
+      closeModal();
+      toast(before === null ? 'ยกเลิกส่วนลดแล้ว' : 'ลดราคาแล้ว · ' + Discount.label({ price: price, priceBefore: before }), 'success');
+      loadProducts(sheetId);
+    });
+  }
+}
+
 function renderTagsPanel() {
   setTopbar('แท็ก', 'จัดกลุ่มสินค้าตามเรื่อง ตัวละคร และประเภท');
   el('topbarActions').innerHTML = '';
@@ -5924,11 +6019,11 @@ function renderProductsTable(products, sheetId, holder) {
       var tdName = document.createElement('td');
       var nameDiv = document.createElement('div'); nameDiv.style.cssText = 'font-weight:600;font-size:0.85rem;'; nameDiv.textContent = p.name; tdName.appendChild(nameDiv);
       if (p.options) { var optDiv = document.createElement('div'); optDiv.style.cssText = 'font-size:0.72rem;color:var(--text-3);'; optDiv.textContent = 'ตัวเลือก: ' + p.options; tdName.appendChild(optDiv); }
-      var pTags = tagMinis(itemTags(prodTagText(p), sheetId)); if (pTags) tdName.appendChild(pTags);
+      var pTags = withSaleTag(tagMinis(itemTags(prodTagText(p), sheetId)), p); if (pTags) tdName.appendChild(pTags);
       tr.appendChild(tdName);
       tr.setAttribute('data-search', prodSearchText(p, sheetId));
 
-      var tdP = document.createElement('td'); tdP.className = 'num'; tdP.textContent = fmt(p.price); tr.appendChild(tdP);
+      var tdP = document.createElement('td'); tdP.className = 'num'; fillPrice(tdP, p, fmt); tr.appendChild(tdP);
       var tdD = document.createElement('td'); tdD.className = 'num'; tdD.textContent = fmt(p.deposit); tr.appendChild(tdD);
 
       var tdS = document.createElement('td'); tdS.className = 'num';
@@ -5959,7 +6054,7 @@ function renderProductsTable(products, sheetId, holder) {
       var delBtn = makeBtn('btn-icon prod-del', SVG_TRASH);
       delBtn.title = 'ลบ'; delBtn.style.cssText = 'color:var(--error);border-color:var(--error);';
       delBtn.setAttribute('data-row', p.rowIndex); delBtn.setAttribute('data-name', p.name);
-      actWrap.appendChild(editBtn); actWrap.appendChild(delBtn);
+      actWrap.appendChild(discountBtn(p)); actWrap.appendChild(editBtn); actWrap.appendChild(delBtn);
       tdActions.appendChild(actWrap); tr.appendChild(tdActions);
       tbody.appendChild(tr);
     }
@@ -6000,11 +6095,11 @@ function renderProductsTable(products, sheetId, holder) {
       pTL.appendChild(pCk); pTL.appendChild(pSld); pTop.appendChild(pTL);
       pMain.appendChild(pTop);
 
-      var meta = baht(pGrid.price) + (Number(pGrid.deposit) > 0 ? ' · มัดจำ ' + baht(pGrid.deposit) : '');
-      var pMeta = div('pcard-meta'); pMeta.textContent = meta;
+      var pMeta = div('pcard-meta'); fillPrice(pMeta, pGrid, baht);
+      if (Number(pGrid.deposit) > 0) pMeta.appendChild(document.createTextNode(' · มัดจำ ' + baht(pGrid.deposit)));
       if (pGrid.options) { var pOpt = document.createElement('span'); pOpt.className = 'pcard-opts'; pOpt.textContent = ' · ' + String(pGrid.options).split(',').length + ' ตัวเลือก'; pOpt.title = pGrid.options; pMeta.appendChild(pOpt); }
       pMain.appendChild(pMeta);
-      var gTags = tagMinis(itemTags(prodTagText(pGrid), sheetId)); if (gTags) pMain.appendChild(gTags);
+      var gTags = withSaleTag(tagMinis(itemTags(prodTagText(pGrid), sheetId)), pGrid); if (gTags) pMain.appendChild(gTags);
 
       var pBot = div('pcard-bottom');
       var pStep = div('pcard-stepper');
@@ -6017,6 +6112,7 @@ function renderProductsTable(products, sheetId, holder) {
       pStep.appendChild(pMinus); pStep.appendChild(pSI); pStep.appendChild(pPlus);
       pBot.appendChild(pStep);
       var pEB = makeBtn('btn-icon prod-edit', SVG_EDIT); pEB.title = 'แก้ไข'; pEB.setAttribute('aria-label', 'แก้ไข ' + pGrid.name); pEB.setAttribute('data-row', pGrid.rowIndex);
+      pBot.appendChild(discountBtn(pGrid));
       pBot.appendChild(pEB);
       pMain.appendChild(pBot);
 
@@ -6132,6 +6228,11 @@ function renderProductsTable(products, sheetId, holder) {
       if (si.value === '') { toast('สินค้านี้ไม่จำกัดจำนวน (∞) — พิมพ์ตัวเลขเพื่อกำหนดสต็อก', 'success'); si.focus(); return; }
       var nv = Math.max(0, (Number(si.value) || 0) + Number(st.getAttribute('data-d')));
       if (String(nv) !== si.value) { si.value = nv; si.dispatchEvent(new Event('input', { bubbles: true })); }
+      return;
+    }
+    var dsb = e.target.closest('.prod-disc');
+    if (dsb) {
+      openDiscountModal(sheetId, parseInt(dsb.getAttribute('data-row'), 10));
       return;
     }
     var eb = e.target.closest('.prod-edit');

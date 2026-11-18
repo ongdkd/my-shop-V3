@@ -264,7 +264,13 @@ function renderProducts(prods) {
 
     var price = document.createElement('div');
     price.className = 'pos-prod-price';
-    price.textContent = '฿' + (Number(p.price) || 0).toLocaleString('th-TH', { maximumFractionDigits: 2 }); // compact: ฿160 not ฿160.00
+    var money = function(n) { return '฿' + (Number(n) || 0).toLocaleString('th-TH', { maximumFractionDigits: 2 }); }; // compact: ฿160 not ฿160.00
+    if (window.Discount && Discount.isOn(p)) { // on discount: normal price struck through, then the price now and a chip
+      var was = document.createElement('s'); was.className = 'pos-was'; was.textContent = money(p.priceBefore);
+      var chip = document.createElement('span'); chip.className = 'pos-sale'; chip.textContent = Discount.label(p);
+      price.appendChild(was); price.appendChild(document.createTextNode(' ' + money(p.price) + ' ')); price.appendChild(chip);
+      price.classList.add('on-sale');
+    } else price.textContent = money(p.price);
     body.appendChild(price);
 
     if (p.remaining !== null && p.remaining !== undefined && p.remaining !== '') {

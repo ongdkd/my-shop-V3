@@ -1,3 +1,10 @@
+// Price cell: on discount, the normal price struck through above the sale price and a red "ลด 20%" chip (js/discount.js)
+function priceHtml(p){
+  var now=formatCurrency(Number(p.price)||0);
+  if(!window.Discount||!Discount.isOn(p)) return now;
+  return '<s class="was-price">'+formatCurrency(Number(p.priceBefore)||0)+'</s><span class="sale-price">'+now+'</span><span class="sale-chip">'+escapeHtml(Discount.label(p))+'</span>';
+}
+
 var PLACEHOLDER = 'https://www.svgrepo.com/show/508699/landscape-placeholder.svg';
 var products = [], cart = [], cartIdSeq = 0;
 var currentOrder = null, isSubmitted = false, summaryCache = null;
@@ -473,13 +480,13 @@ function populateProductTable() {
     var row=tbody.insertRow();
     row.className = (soldOut ? 'sold-out' : '') + (hasDep ? '' : ' no-dep');
     row.innerHTML=
-      '<td class="prod-img-cell"><img src="'+escapeHtml(thumbImg(p.image, 600))+'" alt="'+escapeHtml(p.name||'')+'" class="product-image" loading="lazy" width="50" height="50" data-fb="1">'+(soldOut?'<span class="sold-out-tag">หมดแล้ว</span>':'')+'</td>'+
+      '<td class="prod-img-cell"><img src="'+escapeHtml(thumbImg(p.image, 600))+'" alt="'+escapeHtml(p.name||'')+'" class="product-image" loading="lazy" width="50" height="50" data-fb="1">'+(soldOut?'<span class="sold-out-tag">หมดแล้ว</span>':'')+(!soldOut&&wasPrice(p)?'<span class="sale-badge">'+escapeHtml(Discount.label(p))+'</span>':'')+'</td>'+
       '<td class="prod-name-cell"><span class="prod-name">'+escapeHtml(p.name||'')+'</span>'+optHtml+'</td>'+
-      '<td class="center-align prod-price-cell">'+formatCurrency(Number(p.price)||0)+'</td>'+
+      '<td class="center-align prod-price-cell">'+priceHtml(p)+'</td>'+
       '<td class="center-align prod-dep-cell">'+(hasDep
         ? '<button type="button" class="dep-toggle" aria-pressed="false" data-psid="'+s2+'"'+(soldOut?' disabled':'')+' aria-label="จ่ายมัดจำ '+shortPrice(p.deposit)+'">มัดจำ</button>'
         : '<span class="no-dep-dash">&#x2014;</span>')+'</td>'+
-      '<td class="prod-action-cell"><button class="add-to-cart-btn atcbtn" data-psid="'+s2+'"'+(soldOut?' disabled':'')+' aria-label="ซื้อเลย '+escapeHtml(p.name||'')+' ราคา '+shortPrice(p.price)+'">'+(soldOut?'หมดแล้ว':buyLabel(p.price))+'</button></td>';
+      '<td class="prod-action-cell"><button class="add-to-cart-btn atcbtn" data-psid="'+s2+'"'+(soldOut?' disabled':'')+' aria-label="ซื้อเลย '+escapeHtml(p.name||'')+' ราคา '+shortPrice(p.price)+'">'+(soldOut?'หมดแล้ว':buyLabel(p.price,wasPrice(p)))+'</button></td>';
   }
   var tbl=document.getElementById('productTable');
   tbl.onclick=function(e){
@@ -575,12 +582,14 @@ function setPendingDep(s2,v){
   var row=document.querySelector('#productTable .atcbtn[data-psid="'+s2+'"]'); row=row&&row.closest('tr'); if(!row) return;
   var t=row.querySelector('.dep-toggle'); if(t){t.setAttribute('aria-pressed',p.pendingDeposit?'true':'false');t.classList.toggle('on',p.pendingDeposit);}
   var b=row.querySelector('.atcbtn');
-  if(b&&!b.disabled){var price=p.pendingDeposit?p.deposit:p.price;b.innerHTML=buyLabel(price);b.setAttribute('aria-label','ซื้อเลย '+(p.name||'')+' ราคา '+shortPrice(price)+(p.pendingDeposit?' (มัดจำ)':''));}
+  if(b&&!b.disabled){var price=p.pendingDeposit?p.deposit:p.price;b.innerHTML=buyLabel(price,p.pendingDeposit?0:wasPrice(p));b.setAttribute('aria-label','ซื้อเลย '+(p.name||'')+' ราคา '+shortPrice(price)+(p.pendingDeposit?' (มัดจำ)':''));}
 }
 // "฿120" / "฿1,250.50" — compact price for card buttons
 function shortPrice(n){return '฿'+(Number(n)||0).toLocaleString('th-TH',{maximumFractionDigits:2});}
 // Two-line buy button: small "ซื้อเลย" over the price being charged
-function buyLabel(n){return '<span class="buy-label">ซื้อเลย</span><span class="buy-price">'+shortPrice(n)+'</span>';}
+// was: the normal price, struck through before the sale price (only when not paying a deposit)
+function buyLabel(n,was){return '<span class="buy-label">ซื้อเลย</span><span class="buy-price">'+(was?'<s class="buy-was">'+shortPrice(was)+'</s> ':'')+shortPrice(n)+'</span>';}
+function wasPrice(p){return window.Discount&&Discount.isOn(p)?p.priceBefore:0;}
 
 function setFabVisible(v){document.getElementById('bottomBar').style.display=v?'flex':'none';}
 

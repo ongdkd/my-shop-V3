@@ -473,6 +473,11 @@
   // list_covers() (2026-10-31-iship.sql) also covers closed lists, whose products
   // customers can't read. all: admins also read the products themselves, which
   // adds hidden lists. Paged: one request returns at most 1000 rows.
+  // The round's own cover picture (set in its edit form), if it has a real one
+  function ownCover(row) {
+    var img = String(row.image || '').trim();
+    return /^https?:\/\//.test(img) ? img : '';
+  }
   async function firstProductImages(all) {
     var first = {};
     var c = await sb.rpc('list_covers');
@@ -825,7 +830,7 @@
           name: String(row.name || '').trim() || 'รายการสั่งซื้อ',
           description: String(row.description || '').trim(),
           // Cover = the first product's photo; the list's own image only when no product has one
-          image: covers[row.id] || String(row.image || '').trim() || PLACEHOLDER_IMG,
+          image: ownCover(row) || covers[row.id] || PLACEHOLDER_IMG, // the round's own cover first, else its first product's photo
           sheetId: row.id,
           giftRules: giftRulesOf(row),
           giftMode: row.gift_mode === 'best' ? 'best' : 'all'
@@ -845,6 +850,7 @@
             name: r.name,
             image: r.image ? String(r.image) : PLACEHOLDER_IMG,
             price: num(r.price),
+            priceBefore: r.price_before === null || r.price_before === undefined ? null : num(r.price_before), // normal price while on discount
             deposit: num(r.deposit),
             yuan: num(r.yuan), // for the cart's free-gift progress (¥ thresholds)
             remaining: r.remaining === null || r.remaining === undefined ? null : Number(r.remaining),
@@ -928,7 +934,7 @@
             name: String(row.name || 'รายการสั่งซื้อ').trim(),
             desc: String(row.description || '').trim(),
             image: String(row.image || '').trim(), // the list's own image (edit form)
-            cover: covers[row.id] || String(row.image || '').trim(), // what the cards show
+            cover: ownCover(row) || covers[row.id] || '', // what the cards show: the round's own cover first
             status: String(row.status || 'Open').trim(),
             display: String(row.display || '').trim(),
             giftRules: giftRulesOf(row),
@@ -1765,6 +1771,7 @@
             name: r.name,
             image: r.image || '',
             price: num(r.price),
+            priceBefore: r.price_before === null || r.price_before === undefined ? null : num(r.price_before), // normal price while on discount
             deposit: num(r.deposit),
             remaining: r.remaining === null || r.remaining === undefined ? null : Number(r.remaining),
             status: r.status || 'Open',
@@ -1907,6 +1914,24 @@
           options: String(options || '')
         }).eq('id', pid);
         if (r.error) return err(r.error.message);
+        return ok({});
+      } catch (e) { return e.__json || err(e.message || e); }
+    },
+
+    // Discount: price = what customers pay now, priceBefore = the normal price
+    // (null takes the discount off). A deposit can't be more than the new price.
+    adminSetDiscount: async function (sheetId, rowIndex, price, priceBefore, deposit) {
+      try {
+        requireSb(); await requireAdmin();
+        var pid = (_prodRowMap[sheetId] || {})[rowIndex];
+        if (!pid) return err('ไม่พบสินค้า (กรุณารีเฟรชหน้า)');
+        var row = { price: num(price), price_before: priceBefore === null || priceBefore === undefined ? null : num(priceBefore) };
+        if (deposit !== undefined && deposit !== null) row.deposit = Math.min(num(deposit), row.price);
+        var r = await sb.from('products').update(row).eq('id', pid);
+        if (r.error) {
+          if (/price_before/.test(r.error.message)) return err('ยังไม่ได้รันไฟล์ supabase/migrations/2026-11-22-discount.sql ใน SQL Editor');
+          return err(r.error.message);
+        }
         return ok({});
       } catch (e) { return e.__json || err(e.message || e); }
     },

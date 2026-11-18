@@ -2140,3 +2140,8 @@ revoke all on function public.customer_submit_payment(text, uuid, numeric, times
 grant execute on function public.customer_submit_payment(text, uuid, numeric, timestamptz, text, text, text, uuid, jsonb) to anon, authenticated;
 
 notify pgrst, 'reload schema';
+
+-- ── Product discounts (2026-11-22-discount.sql) ─────────────
+-- price_before keeps the normal price while a product is on discount; NULL = no discount.
+alter table public.products
+  add column if not exists price_before numeric;
