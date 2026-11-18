@@ -66,6 +66,27 @@
     reactions:Object.freeze(reactions.map(([id])=>id)),
   });
   const idleCycle=groups.idle.filter(id=>id!=='page'&&id!=='sleep'&&id!=='sip'&&id!=='wake');
+  // Idle is random: weighted picks (default weight 1), never one of the last few, and
+  // now and then (routineChance) a short routine played in order with no rest between.
+  // Short reactions in idleExtras happen on their own too, rarely.
+  const idleExtras=['sneeze','laugh','shrug'];
+  const food=['ramen','rice','onigiri','sticks','taiyaki','iceCream','cola','boba','strawberryMilk','ramune','snack'];
+  const idleWeight={walk:.6,plane:.6,yawn:.4,sneeze:.25,laugh:.3,shrug:.3,...Object.fromEntries(food.map(id=>[id,.5]))};
+  const routines=[
+    ['tea','snack'],                // tea break (he sips on his own)
+    ['vibe','dance','chill'],       // music on
+    ['hum','strum','sway'],         // jamming
+    ['toeTap','idleFun','stretch'], // bored
+    ['daydream','onigiri','cola'],  // got hungry
+    ['boba','taiyaki'],             // café treats
+    ['rain','stargaze'],            // looking outside
+    ['flower','photo'],             // a nice moment
+    ['walk','peek'],                // a stroll, then look around
+    ['read','stretch'],             // reads a page, then stretches
+    ['game','fidget'],              // game, then restless
+    ['ramen','yawn'],               // full and sleepy (yawn leads to a short nap)
+  ];
+  const routineChance=.3, recentSize=6;
   const authored = {
     'idle-breath': ['inhale','exhale','weightShift','tapFoot'],
     transition: ['anticipate','hopUp','land','standSettle'],
@@ -352,7 +373,7 @@
     const events=new AbortController(),signal=events.signal;
     let art,dead=false,frame,last=0,dirty=true,mode='idle', current=actions.breathe;
     let started=clock(), next=Infinity, x=0,y=0, moved=false, pointer=null, carry=0;
-    let idleIndex=1,thinkIndex=0,transition=null,bridge=null,visual=null,afterDrag=null,bagIntro=null;
+    let routine=[],recent=[],transition=null,bridge=null,visual=null,afterDrag=null,bagIntro=null;
     let swing=0,swingVelocity=0,lastTick=null;
     let walkDirection=-1;
     let activity={automatic:auto,linked:false,returning:false},following=null;
@@ -419,7 +440,19 @@
       next=oneCycle?started+(id==='sleep'?sleepMs:current.duration):automatic?started+(mode==='idle'?7600:4000):Infinity;
       if(id==='sleep'&&napping) next=Infinity; // a nap lasts until wake()
     }
+    const any=list=>list[Math.floor(Math.random()*list.length)];
+    function pickIdle() {
+      const pool=[...idleCycle,...idleExtras].filter(id=>(!rest||id!=='breathe')&&!recent.includes(id));
+      let r=Math.random()*pool.reduce((sum,id)=>sum+(idleWeight[id]??1),0);
+      return pool.find(id=>(r-=idleWeight[id]??1)<0)||pool[0];
+    }
+    function playIdle(id) {
+      recent=[...recent,id].slice(-recentSize);
+      scheduleActivity(id,{automatic:auto});
+    }
     function resume() {
+      // The next step of a routine follows straight on.
+      if(mode==='idle'&&auto&&routine.length) return playIdle(routine.shift());
       // Between idle activities: a calm pause (breathing, blinking) before the next one.
       if(mode==='idle'&&rest&&auto&&!resting) {
         resting=true;
@@ -428,26 +461,42 @@
         return;
       }
       resting=false;
-      const list=mode==='idle'?idleCycle.filter(id=>!rest||id!=='breathe'):groups.thinking;
-      const id=mode==='idle'?list[idleIndex++%list.length]:list[thinkIndex++%list.length];
-      scheduleActivity(id,{automatic:auto});
+      if(mode!=='idle') return scheduleActivity(any(groups.thinking.filter(id=>id!==current.id)),{automatic:auto});
+      if(auto&&Math.random()<routineChance) {
+        routine=[...any(routines)];
+        return playIdle(routine.shift());
+      }
+      playIdle(pickIdle());
+    }
+    // Waking up is never cut off: anything asked for meanwhile waits for it to finish,
+    // and the rest of the wake-up plays faster (wakeHurry) so the wait stays short.
+    const wakeHurry=.45;
+    let queued=null;
+    const waking=()=>current.id==='wake'&&clock()<started+current.duration;
+    function hurryWake() {
+      if(current.hurried) return;
+      const now=clock(),progress=Math.max(0,(now-started)/current.duration);
+      current={...current,duration:current.duration*wakeHurry,hurried:true};
+      started=now-progress*current.duration;
+      next=started+current.duration;
     }
     function play(id) {
       if(!actions[id]) throw new RangeError('Unknown Faye animation: '+id);
       if(pointer||bagIntro&&current.id===id&&clock()<started) return;
+      if(id!=='wake'&&waking()) {queued=id;hurryWake();return;}
       scheduleActivity(id);
     }
     function setMode(value) {
       if(value!=='idle'&&value!=='thinking') throw new RangeError('Use idle or thinking');
       // Already cycling (or mid-reaction) in this mode: leave him be.
       if(value===mode&&!napping&&(activity.automatic||groups.reactions.includes(current.id))) return;
-      mode=value;afterDrag=null;
-      if(!pointer&&!napping) resume();
+      mode=value;afterDrag=null;routine=[];
+      if(!pointer&&!napping&&!waking()) resume(); // mid wake-up: the new mode starts when he's up
     }
     // Long nap: yawn, curl up and stay asleep until wake() is called.
     function doze() {
       if(napping||pointer) return;
-      napping=true;mode='idle';
+      napping=true;mode='idle';routine=[];queued=null;
       scheduleActivity('yawn');
     }
     function wake() {
@@ -462,7 +511,7 @@
     function grab() {
       if(pointer) return;
       napping=false;
-      pointer={id:'host'};
+      pointer={id:'host'};queued=null;
       afterDrag=groups.reactions.includes(current.id)||['yawn','sleep','wake'].includes(current.id)?null:{id:current.id,...activity};
       following=null;moved=false;carry=0;swing=0;swingVelocity=0;
       select('grab');
@@ -797,7 +846,12 @@
     function step(raw) {
       const now=clock(raw);
       if(!pointer && now>=next) {
-        if(following) {
+        if(queued) {
+          const id=queued;
+          queued=null;
+          scheduleActivity(id);
+        }
+        else if(following) {
           const id=following;
           scheduleActivity(id,{
             automatic:activity.automatic,
@@ -840,7 +894,7 @@
     if(interactive) canvas.addEventListener('pointerdown',event=>{
       if(!event.isPrimary||event.button!==0||pointer) return;
       event.preventDefault();canvas.focus({preventScroll:true});canvas.setPointerCapture(event.pointerId);
-      pointer={id:event.pointerId,clientX:event.clientX,clientY:event.clientY,x,y,lastX:event.clientX};
+      queued=null;pointer={id:event.pointerId,clientX:event.clientX,clientY:event.clientY,x,y,lastX:event.clientX};
       if(!groups.reactions.includes(current.id)) afterDrag={id:current.id,...activity};
       following=null;
       moved=false;carry=0;swing=0;swingVelocity=0;
