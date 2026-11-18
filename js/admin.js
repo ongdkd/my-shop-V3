@@ -375,8 +375,9 @@ var FAYE_VIEWS = {
   news: 'มีอะไรใหม่', find: 'ค้นหาออเดอร์', go: 'ไปหน้าอื่น', tips: 'ถามเรื่องหน้านี้', settings: 'ตั้งค่า Faye'
 };
 function fayeUnread() { return typeof notifUnread === 'function' && _notif && _notif.loaded ? notifUnread() : 0; }
-// The chat log lives in the page: closing the panel or switching screens keeps it,
-// a reload (or "ล้างแชท") starts over. Old messages are trimmed past FAYE_LOG_MAX.
+// The chat log is saved in this browser (fayeChat), so it comes back after a reload or
+// when the page is reopened; "ล้างแชท" clears it. Answer buttons are not saved.
+// Old messages are trimmed past FAYE_LOG_MAX.
 var FAYE_LOG_MAX = 80, _fayePending = null;
 function fayeLogAdd(node) {
   var log = el('fayeLog');
@@ -385,9 +386,27 @@ function fayeLogAdd(node) {
   log.scrollTop = log.scrollHeight;
   return node;
 }
+var _fayeSaveTimer = null;
+function fayeLogSave() {
+  clearTimeout(_fayeSaveTimer);
+  _fayeSaveTimer = setTimeout(function() {
+    var rows = Array.prototype.filter.call(el('fayeLog').children, function(n) {
+      return n.tagName === 'P' && !n.classList.contains('wait');
+    }).slice(-40).map(function(n) { return [n.classList.contains('faye-you') ? 'y' : 'f', n.textContent]; });
+    fayeStore('fayeChat', rows.length ? JSON.stringify(rows) : null);
+  }, 300);
+}
+(function fayeLogRestore() {
+  var rows = []; try { rows = JSON.parse(fayeStore('fayeChat') || '[]'); } catch (e) {}
+  rows.forEach(function(r) {
+    var p = document.createElement('p'); p.className = r[0] === 'y' ? 'faye-you' : 'faye-reply'; p.textContent = r[1];
+    fayeLogAdd(p);
+  });
+})();
 function fayeYou(text) {
   var p = document.createElement('p'); p.className = 'faye-you'; p.textContent = text;
-  return fayeLogAdd(p);
+  fayeLogAdd(p); fayeLogSave();
+  return p;
 }
 // Faye's turn. Fills the "…" bubble of a question still being answered, else adds one.
 // acts: [[label, fn], …] → buttons under this answer.
@@ -405,6 +424,7 @@ function fayeSays(text, acts) {
     r.after(box);
   }
   el('fayeLog').scrollTop = el('fayeLog').scrollHeight;
+  fayeLogSave();
   if (faye && faye.talk && text) faye.talk(Math.max(650, Math.min(2100, text.length * 26)));
   fayeSuggest();
   return r;
@@ -458,7 +478,7 @@ function fayeGreet() {
   fayeSays(hi + (unread ? '\nมีเรื่องใหม่ ' + unread + ' เรื่องนะ ดูที่ ☰ เมนู → มีอะไรใหม่' : ''));
 }
 el('fayeClear').addEventListener('click', function() {
-  el('fayeLog').innerHTML = ''; _fayePending = null; fayeGreet();
+  el('fayeLog').innerHTML = ''; _fayePending = null; fayeStore('fayeMemo', null); fayeGreet();
   el('fayeAskInput').focus();
 });
 
@@ -466,7 +486,7 @@ el('fayeClear').addEventListener('click', function() {
 // goes to the faye-chat function (Gemini), which only picks ONE action from a fixed
 // list. The page then looks the data up itself (js/faye-brain.js), so the AI never
 // sees shop data. This version only reads and opens screens — it changes nothing. ──
-var _fayeAsked = '', _fayePrev = '', _fayeOrders = null, _fayeOrdersAt = 0, _fayeKeep = false;
+var _fayeAsked = '', _fayeOrders = null, _fayeOrdersAt = 0, _fayeKeep = false;
 // Faye answers in his panel; acts: [[label, fn], …] become buttons under the answer
 function fayeTell(text, acts) {
   if (!fayeHelp.open) fayeHelp.open = true;
@@ -491,8 +511,20 @@ function fayeFindOrders(q) { el('fayeFindInput').value = q; el('fayeFind').reque
 function fayeDay(d) { return new Date(d + 'T00:00:00').toLocaleDateString('th-TH', { day: 'numeric', month: 'short' }); }
 // A short answer that also shows as his speech bubble (the panel may close on the way)
 function fayeNote(text, ms, anim) { fayeSays(text); fayeSay(text, ms, anim); }
+// What the AI remembers between questions (also after a reload): each question with the
+// action Faye took and his own short line. His answers with shop data are never included.
+function fayeMemo() { try { return JSON.parse(fayeStore('fayeMemo') || '[]'); } catch (e) { return []; } }
+function fayeRemember(q, a) {
+  if (!q) return;
+  var m = fayeMemo();
+  if (m.length && m[m.length - 1].q === q && m[m.length - 1].do === a.do) return; // a button under the same answer
+  m.push({ q: String(q).slice(0, 200), do: String(a.do || ''), say: String(a.say || '').slice(0, 200),
+    about: String(a.customer || a.item || a.query || a.panel || (a.from ? a.from + (a.to && a.to !== a.from ? '..' + a.to : '') : '')).slice(0, 80) });
+  fayeStore('fayeMemo', JSON.stringify(m.slice(-8)));
+}
 function fayeRun(a) {
   var B = window.FayeBrain;
+  fayeRemember(_fayeAsked, a);
   if (a.do === 'goto' && VALID_PANELS.indexOf(a.panel) !== -1) {
     switchPanel(a.panel); fayeNote(a.say || 'มาแล้วครับ', 5000, 'yes');
   } else if (a.do === 'find_orders' && (a.query || a.customer)) {
@@ -612,14 +644,14 @@ el('fayeAsk').addEventListener('submit', function(e) {
   var cmd = window.FayeBrain.local(text, fayePanels());
   if (cmd) return fayeRun(cmd);
   fayeWaiting();
-  var prev = _fayePrev; _fayePrev = text;
+  var history = fayeMemo();
   var tips = (FAYE_TIPS[currentPanel] || []).concat(FAYE_TIPS.common);
   google.script.run.withSuccessHandler(function(r) {
     var res = {}; try { res = JSON.parse(r); } catch (x) {}
-    if (res.status !== 'Success') return fayeTell(res.message || 'ผมตอบไม่ได้ ลองใหม่อีกครั้งนะครับ');
+    if (res.status !== 'Success') return fayeTell(res.message || 'ขอโทษนะบอส ตอนนี้หัวผมตื้อไปแป๊บ… ลองถามใหม่อีกทีนะ');
     fayeRun(res.action || {});
-  }).withFailureHandler(function() { fayeTell('ผมตอบไม่ได้ ลองใหม่อีกครั้งนะครับ'); })
-    .adminFayeAsk(text, { panels: fayePanels(), tips: tips, prev: prev });
+  }).withFailureHandler(function() { fayeTell('ขอโทษนะบอส ตอนนี้หัวผมตื้อไปแป๊บ… ลองถามใหม่อีกทีนะ'); })
+    .adminFayeAsk(text, { panels: fayePanels(), tips: tips, history: history });
 });
 function fayeMenuLabel(id, text) { el(id).querySelector('.faye-lbl').textContent = text; }
 function fayeView(name) {

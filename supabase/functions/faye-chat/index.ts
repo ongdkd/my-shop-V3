@@ -9,6 +9,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 
 const KEY = Deno.env.get("GEMINI_API_KEY") ?? "";
 const MODEL = Deno.env.get("FAYE_MODEL") || Deno.env.get("GEMINI_MODEL") || "gemini-flash-lite-latest";
+const FALLBACK = "gemini-flash-latest"; // tried once when MODEL stays busy
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -64,6 +65,7 @@ Deno.serve(async (req) => {
 - goto: ให้ไปหน้าอื่น → ใส่ panel เป็น id ของหน้า: ${panels.map((p) => p.id + " = " + p.label).join(", ")}
 - answer: ทักทาย ถามวิธีใช้ หรือเรื่องที่ทำไม่ได้ → ตอบใน say
 กติกา:
+- ใช้บทสนทนาก่อนหน้าเข้าใจคำอย่าง "คนนั้น" "อันนั้น" "แล้วเมื่อวานล่ะ" "อีกที" ให้ใส่ชื่อลูกค้า/สินค้า/วันที่ที่หมายถึงลงในช่องให้ครบ และจำสิ่งที่บอสเล่าไว้ในแชทได้
 - คุณไม่เห็นข้อมูลร้าน ห้ามแต่งตัวเลข ชื่อ หรือสถานะเอง หน้าเว็บจะหาข้อมูลจริงมาแสดงเอง
 - คุณแก้ไขหรือลบข้อมูลไม่ได้ ถ้าถูกขอให้ทำ ใช้ answer แล้วบอกว่ายังทำไม่ได้ ให้กดทำเองในหน้านั้น
 - คำถามเรื่องใครจ่ายแล้ว/ยังไม่จ่าย/สลิป: ใช้ goto ไปหน้าสลิป แล้วบอกใน say ว่าระบบเริ่มบันทึกการชำระเงินตั้งแต่ 13 พ.ย. 2026
@@ -71,16 +73,14 @@ Deno.serve(async (req) => {
 วิธีใช้ของหน้าที่เปิดอยู่ (ใช้ตอบคำถามวิธีใช้):
 ${tips.join("\n") || "-"}`;
 
-  const prev = clip(b.prev, 300);
+  // The last few turns (questions, the action taken, Faye's own short line; never shop data)
+  const history = (Array.isArray(b.history) ? b.history : []).slice(-8).map((h) =>
+    `บอส: ${clip(h?.q, 200)}\nFaye: [${clip(h?.do, 20)}${h?.about ? " " + clip(h.about, 80) : ""}] ${clip(h?.say, 200)}`);
+  const context = history.length ? `(บทสนทนาก่อนหน้า เก่าไปใหม่:\n${history.join("\n")})\nคำถามตอนนี้: ` : "";
   const S = (description: string) => ({ type: "STRING", description });
-  let r: Response;
-  try {
-    r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": KEY },
-      body: JSON.stringify({
+  const request = JSON.stringify({
         systemInstruction: { parts: [{ text: system }] },
-        contents: [{ role: "user", parts: [{ text: (prev ? `(คำถามก่อนหน้า: ${prev})\n` : "") + text }] }],
+        contents: [{ role: "user", parts: [{ text: context + text }] }],
         generationConfig: {
           temperature: 0.2, maxOutputTokens: 400, responseMimeType: "application/json",
           responseSchema: {
@@ -94,15 +94,31 @@ ${tips.join("\n") || "-"}`;
             required: ["do", "say"],
           },
         },
-      }),
-      signal: AbortSignal.timeout(20_000),
-    });
-  } catch {
-    return fail("AI ไม่ตอบ ลองใหม่อีกครั้งนะครับ");
+      });
+  // Gemini is sometimes busy (503) or rate-limited (429): try again, then a second model,
+  // and if it still fails Faye says so in his own words (no error codes on screen).
+  const tries = [MODEL, MODEL, ...(FALLBACK !== MODEL ? [FALLBACK] : [])];
+  let body: any = null;
+  for (let i = 0; i < tries.length && !body; i++) {
+    if (i) await new Promise((res) => setTimeout(res, 800 * i));
+    try {
+      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${tries[i]}:generateContent`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": KEY },
+        body: request,
+        signal: AbortSignal.timeout(12_000),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (r.ok) body = data;
+      else {
+        console.error("gemini", tries[i], r.status, data?.error?.message);
+        if (r.status !== 429 && r.status < 500) break; // a bad request won't get better by retrying
+      }
+    } catch (e) {
+      console.error("gemini", tries[i], String(e));
+    }
   }
-  const body = await r.json().catch(() => ({}));
-  if (r.status === 429) return fail("ตอนนี้ AI ใช้งานเต็มโควตา รอสักครู่แล้วลองใหม่นะครับ");
-  if (!r.ok) { console.error("gemini", r.status, body?.error?.message); return fail(`AI ตอบไม่ได้ (${r.status})`); }
+  if (!body) return fail("ขอโทษนะบอส ตอนนี้หัวผมตื้อไปแป๊บ… ลองถามใหม่อีกทีนะ");
 
   let out: Record<string, unknown> = {};
   try { out = JSON.parse(body?.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text ?? "").join("") ?? ""); } catch { /* not JSON */ }

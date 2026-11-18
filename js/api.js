@@ -2079,11 +2079,11 @@
         requireSb(); await requireAdmin();
         var r = await sb.functions.invoke('faye-chat', { body: Object.assign({ text: String(text || '') }, ctx || {}) });
         if (r.error) {
-          var st = r.error.context && r.error.context.status;
-          return err(st === 404 ? 'ยังไม่ได้ deploy ฟังก์ชัน faye-chat' : 'AI ไม่ตอบ' + (st ? ' (' + st + ')' : '') + ' ลองใหม่อีกครั้งนะครับ');
+          console.error('faye-chat', r.error.context && r.error.context.status, r.error);
+          return err('ขอโทษนะบอส ตอนนี้หัวผมตื้อไปแป๊บ… ลองถามใหม่อีกทีนะ');
         }
         var d = r.data || {};
-        if (!d.ok) return err(d.message || 'AI ตอบไม่ได้');
+        if (!d.ok) return err(d.message || 'ขอโทษนะบอส ตอนนี้หัวผมตื้อไปแป๊บ… ลองถามใหม่อีกทีนะ');
         return ok({ action: d });
       } catch (e) { return e.__json || err(e.message || e); }
     },
