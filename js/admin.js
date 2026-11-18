@@ -196,8 +196,7 @@ function fayePoke(n) {
   if (!faye || fayePaused) return;
   var t = window.FayeVoice ? FayeVoice.tap(n) : { text: 'หืม?', anim: 'surprise' };
   faye.wake(); fayeSyncNap();
-  var reactions = ['poke', 'tickle', 'hideFace', 'peace', 'annoyed'];
-  try { faye.play(reactions[Math.min(n - 1, reactions.length - 1)] || 'poke'); } catch (x) {}
+  try { faye.play(t.anim); } catch (x) {}
   if (fayeHelp.open) fayeSays(t.text); else fayeSay(t.text, 3000, false);
 }
 // Every 3–6 minutes, if he's awake and nothing else is going on, he says something
