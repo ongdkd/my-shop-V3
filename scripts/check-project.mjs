@@ -32,7 +32,7 @@ assert.ok(api.includes(".eq('source_stock_item_id', parentId)"), 'warehouse sync
 assert.ok(api.includes('source_stock_item_id: p.id'), 'new warehouse imports must create the stable link');
 assert.ok(api.includes('adminFindStockByBarcode'), 'warehouse add flow must support barcode lookup');
 assert.ok(api.includes('fetchStockBarcodeMatches(requestedCodes)'), 'warehouse creation must reject existing barcodes server-side');
-assert.ok(admin.includes('function openCreateStockForm(prefillBarcode, defaults)'), 'new warehouse products must receive the checked barcode');
+assert.ok(admin.includes('function openCreateStockForm(prefillBarcode, defaults, restore)'), 'new warehouse products must receive the checked barcode');
 assert.ok(admin.includes('function captureDraft()'), 'single/options form switching must preserve draft values');
 assert.ok(admin.includes('function openMatchedStockEditor(item, refreshed)'), 'existing warehouse barcodes must open their edit form');
 assert.ok(admin.includes("var bar = div('wh-bar')") && admin.includes("sInp.id = 'whSearch'"), 'warehouse search must live in the sticky bottom bar');

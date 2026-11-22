@@ -1649,6 +1649,7 @@ function openModal(title, bodyHtml, saveFn, saveLabel) {
   el('modal').classList.add('open');
 }
 function closeModal() {
+  stockFormRemember();
   el('modal').classList.remove('open');
   modalSaveFn = null;
   pendingImg = {};
@@ -8169,7 +8170,23 @@ function openMatchedStockEditor(item, refreshed) {
 
 // ── Create Stock Product — barcode-first duplicate check ──
 // defaults: prices carried over from "บันทึก + เพิ่มต่อ"
+// ── Unsaved "add stock" form: kept in memory when the window is closed so
+// reopening brings the typing back. Cleared on save, by ล้างฟอร์ม, or a page refresh.
+var _stockFormDraft = null;   // { draft, isOptionsMode, images } — see openCreateStockForm
+var _stockFormLive = null;    // the open form's capture(), while it is on screen
+var _stockLookupDraft = '';   // barcode typed in the lookup step
+
+var _bulkStockDraft = null;   // same idea for "เพิ่มหลาย": { rows, keySeq, images }
+var _bulkStockLive = null;
+
+function stockFormRemember() {
+  if (_stockFormLive) { try { _stockFormLive(); } catch (e) {} }
+  if (_bulkStockLive) { try { _bulkStockLive(); } catch (e) {} }
+}
+
 function openCreateStockModal(defaults) {
+  // An unsaved form from before → straight back to it (the barcode was already checked)
+  if (_stockFormDraft && !defaults) { openCreateStockForm(null, null, true); return; }
   el('modalBody').innerHTML = '';
 
   var intro = document.createElement('div');
@@ -8183,12 +8200,14 @@ function openCreateStockModal(defaults) {
   var input = document.createElement('input');
   input.id = 'stockLookupBarcode'; input.type = 'text'; input.placeholder = 'สแกนหรือพิมพ์บาร์โค้ด';
   input.autocomplete = 'off'; input.inputMode = 'numeric';
+  if (!defaults) input.value = _stockLookupDraft;
+  input.addEventListener('input', function() { _stockLookupDraft = input.value; });
 
   var scanBtn = document.createElement('button'); scanBtn.type = 'button'; scanBtn.className = 'sf-bc-btn cam';
   scanBtn.innerHTML = '📷'; scanBtn.title = 'สแกนบาร์โค้ด';
   var randomBtn = document.createElement('button'); randomBtn.type = 'button'; randomBtn.className = 'sf-bc-btn';
   randomBtn.innerHTML = '🎲 สุ่ม';
-  randomBtn.onclick = function() { input.value = generateRandomBarcode(); input.focus(); };
+  randomBtn.onclick = function() { input.value = generateRandomBarcode(); _stockLookupDraft = input.value; input.focus(); };
 
   row.appendChild(input); row.appendChild(scanBtn); row.appendChild(randomBtn);
   group.appendChild(label); group.appendChild(row); el('modalBody').appendChild(group);
@@ -8244,7 +8263,7 @@ function openCreateStockModal(defaults) {
 }
 
 // ── Create Stock Product Form (shared draft across single/options modes) ──
-function openCreateStockForm(prefillBarcode, defaults) {
+function openCreateStockForm(prefillBarcode, defaults, restore) {
   el('modalBody').innerHTML = '';
   var isOptionsMode = false; // toggle state
   var addNext = false;       // set by the "บันทึก + เพิ่มต่อ" button
@@ -8254,6 +8273,13 @@ function openCreateStockForm(prefillBarcode, defaults) {
     singleId: String(prefillBarcode || '').trim(), singleStock: '',
     options: []
   };
+  var restored = !!(restore && _stockFormDraft);
+  if (restored) {
+    draft = JSON.parse(JSON.stringify(_stockFormDraft.draft));
+    isOptionsMode = _stockFormDraft.isOptionsMode;
+    pendingImg = Object.assign({}, _stockFormDraft.images); // picked photos not uploaded yet
+  }
+  _stockLookupDraft = '';
 
   function captureDraft() {
     if (el('spName')) draft.name = el('spName').value;
@@ -8271,6 +8297,17 @@ function openCreateStockForm(prefillBarcode, defaults) {
 
   function buildForm() {
     el('modalBody').innerHTML = '';
+
+    if (restored) {
+      var note = div('stock-draft-note');
+      var nt = document.createElement('span'); nt.textContent = '↩ ข้อมูลที่กรอกค้างไว้ครั้งก่อน';
+      var clr = makeBtn('btn btn-ghost btn-sm', 'ล้างฟอร์ม', function() {
+        _stockFormLive = null; _stockFormDraft = null; pendingImg = {};
+        closeModal(); openCreateStockModal();
+      });
+      note.appendChild(nt); note.appendChild(clr);
+      el('modalBody').appendChild(note);
+    }
 
     // ── Mode toggle ──
     var toggleWrap = document.createElement('div');
@@ -8447,6 +8484,7 @@ function openCreateStockForm(prefillBarcode, defaults) {
             var res = JSON.parse(r);
             if (res.status === 'Success') {
               toast('เพิ่มสินค้าในคลังแล้ว!', 'success'); loadStock(renderStockContent);
+              _stockFormLive = null; _stockFormDraft = null; // saved — nothing to keep
               closeModal();
               if (wantNext) openCreateStockModal({ price: product.price, deposit: product.deposit, yuan: product.yuan });
             }
@@ -8463,6 +8501,20 @@ function openCreateStockForm(prefillBarcode, defaults) {
   saveNextBtn.hidden = false;
   saveNextBtn.onclick = function() { addNext = true; if (modalSaveFn) modalSaveFn(); };
   el('modal').classList.add('open');
+
+  // Remember the form when the window closes — only while this form is
+  // still what the window shows (another window may have replaced it)
+  _stockFormLive = function() {
+    _stockFormLive = null;
+    if (!el('spName') || el('modalTitle').textContent.indexOf('เพิ่มสินค้าในคลัง') === -1) return;
+    captureDraft();
+    var hasText = [draft.name, draft.image, draft.singleStock].some(function(v) { return String(v || '').trim(); }) ||
+      draft.options.length || Object.keys(pendingImg).length ||
+      String(draft.singleId || '').trim() !== String(prefillBarcode || '').trim() ||
+      String(draft.price || '') !== String(defaults.price || '') || restored;
+    if (hasText) _stockFormDraft = { draft: JSON.parse(JSON.stringify(draft)), isOptionsMode: isOptionsMode, images: Object.assign({}, pendingImg) };
+    else if (prefillBarcode) _stockLookupDraft = String(prefillBarcode); // nothing typed: reopen at the checked barcode
+  };
 }
 
 // ── Option row rendering helpers ──
@@ -8780,6 +8832,14 @@ function openBulkStockModal(prefill) {
     if (r.opts.length) r.mode = 'options';
     return r;
   }) : [makeBulkSRow()];
+  // "เพิ่มหลาย" reopened after closing → bring back the unsaved rows (not for the
+  // ย้ายสินค้าเข้าคลัง flow, which arrives with its own prefill)
+  var restoredBulk = !prefill && !!_bulkStockDraft;
+  if (restoredBulk) {
+    bulkSRows = JSON.parse(JSON.stringify(_bulkStockDraft.rows));
+    keySeq = _bulkStockDraft.keySeq;
+    pendingImg = Object.assign({}, _bulkStockDraft.images);
+  }
 
   function makeBulkSRow(d) {
     return {
@@ -8971,6 +9031,16 @@ function openBulkStockModal(prefill) {
 
   function buildBulkSUI() {
     el('modalBody').innerHTML = '';
+    if (restoredBulk) {
+      var note = div('stock-draft-note');
+      var nt = document.createElement('span'); nt.textContent = '↩ ข้อมูลที่กรอกค้างไว้ครั้งก่อน';
+      note.appendChild(nt);
+      note.appendChild(makeBtn('btn btn-ghost btn-sm', 'ล้างฟอร์ม', function() {
+        _bulkStockLive = null; _bulkStockDraft = null; pendingImg = {};
+        closeModal(); openBulkStockModal();
+      }));
+      el('modalBody').appendChild(note);
+    }
     var bar = document.createElement('div'); bar.className = 'bulk-toolbar';
     var multi = document.createElement('input'); multi.type = 'file'; multi.accept = 'image/*'; multi.multiple = true; multi.hidden = true;
     multi.onchange = function() { if (multi.files.length) addPhotos(multi.files); multi.value = ''; };
@@ -9304,6 +9374,27 @@ function openBulkStockModal(prefill) {
   }, 'บันทึกทั้งหมด');
 
   el('modal').classList.add('open');
+
+  // Remember unsaved rows when the window closes (saved rows are dropped;
+  // when everything saved there is nothing left to keep)
+  if (!prefill) _bulkStockLive = function() {
+    _bulkStockLive = null;
+    if (!document.getElementById('bulkSList') || el('modalTitle').textContent.indexOf('เพิ่มสินค้าหลายรายการ') === -1) return;
+    var rows = bulkSRows.filter(function(r) {
+      if (r.status === 'done') return false;
+      // a row holding only the price carried over from the row above counts as empty
+      return r.name.trim() || rowImage(r) || String(r.stock).trim() || !r.idAuto || r.opts.length;
+    });
+    if (!rows.length) { _bulkStockDraft = null; return; }
+    var images = {};
+    rows.forEach(function(r) {
+      if (pendingImg[r.key]) images[r.key] = pendingImg[r.key];
+      r.opts.forEach(function(o) { if (pendingImg[o.key]) images[o.key] = pendingImg[o.key]; });
+    });
+    rows = JSON.parse(JSON.stringify(rows));
+    rows.forEach(function(r) { r.status = 'pending'; if (r.ai === 'busy') r.ai = ''; r.opts.forEach(function(o) { if (o.ai === 'busy') o.ai = ''; }); });
+    _bulkStockDraft = { rows: rows, keySeq: keySeq, images: images };
+  };
 }
 
 

@@ -1628,7 +1628,7 @@
         }
 
         var sales = [], byCheckout = {};
-        var totalSales = 0, totalItems = 0, todaySales = 0;
+        var totalSales = 0, totalItems = 0, todaySales = 0, todayItems = 0, todayBills = {};
         var today = new Date();
         var todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
         var tomorrowStart = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1).getTime();
@@ -1658,13 +1658,15 @@
           totalSales += lineTotal;
           totalItems += qty;
           var stamp = new Date(createdAt).getTime();
-          if (stamp >= todayStart && stamp < tomorrowStart) todaySales += lineTotal;
+          if (stamp >= todayStart && stamp < tomorrowStart) { todaySales += lineTotal; todayItems += qty; todayBills[key] = true; }
         });
 
         return ok({
           sales: sales.slice(0, 100),
           totalSales: totalSales,
           todaySales: todaySales,
+          todayItems: todayItems,
+          todayCount: Object.keys(todayBills).length,
           transactionCount: sales.length,
           totalItems: totalItems,
           historyLimited: sales.length > 100,
