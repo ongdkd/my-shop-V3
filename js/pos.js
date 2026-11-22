@@ -6,6 +6,7 @@ var POS_CART = [];          // [{product, qty, option, lineTotal}]
 var POS_LIST_NAME = '';
 var POS_LIST_ID = '';
 var POS_HISTORY_DATA = null;
+var POS_HISTORY_RANGE = 'today'; // sales screen filter: 'today' | 'all'
 
 var _qtyProduct = null;
 var _qtyValue = 1;
@@ -220,6 +221,7 @@ function showRoundPicker() {
 // POS SALES HISTORY
 // ══════════════════════════════════
 function openPosHistory() {
+  try { var saved = localStorage.getItem('posHistoryRange'); if (saved === 'all' || saved === 'today') POS_HISTORY_RANGE = saved; } catch (e) {}
   goScreen('history', 'pos');
   var subtitle = document.getElementById('historySubtitle');
   if (subtitle) subtitle.textContent = POS_LIST_NAME || 'ยอดขายหน้าร้าน';
@@ -263,15 +265,42 @@ function renderPosHistoryError(message) {
   empty.appendChild(text); container.appendChild(empty);
 }
 
+function setPosHistoryRange(range) {
+  POS_HISTORY_RANGE = range === 'all' ? 'all' : 'today';
+  try { localStorage.setItem('posHistoryRange', POS_HISTORY_RANGE); } catch (e) {}
+  if (POS_HISTORY_DATA) renderPosHistory(POS_HISTORY_DATA);
+}
+
+function isTodayStamp(value) {
+  var d = new Date(value), now = new Date();
+  return !isNaN(d.getTime()) && d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+}
+
 function renderPosHistory(data) {
   var container = document.getElementById('historyContent');
   if (!container) return;
   container.innerHTML = '';
+  var isToday = POS_HISTORY_RANGE === 'today';
+
+  // Filter: วันนี้ / ทั้งหมด
+  var seg = document.createElement('div'); seg.className = 'history-range'; seg.setAttribute('role', 'tablist'); seg.setAttribute('aria-label', 'ช่วงเวลายอดขาย');
+  [['today', 'วันนี้', data.todaySales], ['all', 'ทั้งหมด', data.totalSales]].forEach(function(opt) {
+    var b = document.createElement('button'); b.type = 'button'; b.setAttribute('role', 'tab');
+    var on = POS_HISTORY_RANGE === opt[0];
+    b.className = 'history-range-btn' + (on ? ' on' : ''); b.setAttribute('aria-selected', on ? 'true' : 'false');
+    var t = document.createElement('span'); t.textContent = opt[1];
+    var v = document.createElement('small'); v.textContent = fmt(opt[2] || 0);
+    b.appendChild(t); b.appendChild(v);
+    b.onclick = function() { setPosHistoryRange(opt[0]); };
+    seg.appendChild(b);
+  });
+  container.appendChild(seg);
 
   var hero = document.createElement('div'); hero.className = 'history-hero';
-  var heroLabel = document.createElement('div'); heroLabel.className = 'history-hero-label'; heroLabel.textContent = 'ยอดขายรวมทั้งหมด';
-  var heroValue = document.createElement('div'); heroValue.className = 'history-hero-value'; heroValue.textContent = fmt(data.totalSales || 0);
-  var heroSub = document.createElement('div'); heroSub.className = 'history-hero-sub'; heroSub.textContent = 'เฉพาะยอดขายที่บันทึกผ่าน POS ของรายการนี้';
+  var heroLabel = document.createElement('div'); heroLabel.className = 'history-hero-label'; heroLabel.textContent = isToday ? 'ยอดขายวันนี้' : 'ยอดขายรวมทั้งหมด';
+  var heroValue = document.createElement('div'); heroValue.className = 'history-hero-value'; heroValue.textContent = fmt((isToday ? data.todaySales : data.totalSales) || 0);
+  var heroSub = document.createElement('div'); heroSub.className = 'history-hero-sub';
+  heroSub.textContent = isToday ? new Date().toLocaleDateString('th-TH', { dateStyle: 'full' }) + ' · เฉพาะ POS ของรายการนี้' : 'เฉพาะยอดขายที่บันทึกผ่าน POS ของรายการนี้';
   hero.appendChild(heroLabel); hero.appendChild(heroValue); hero.appendChild(heroSub); container.appendChild(hero);
 
   var stats = document.createElement('div'); stats.className = 'history-stats';
@@ -281,8 +310,9 @@ function renderPosHistory(data) {
     var v = document.createElement('div'); v.className = 'history-stat-value'; v.textContent = value;
     card.appendChild(l); card.appendChild(v); stats.appendChild(card);
   }
-  addStat('ยอดขายวันนี้', fmt(data.todaySales || 0));
-  addStat('จำนวนออเดอร์', Number(data.transactionCount || 0).toLocaleString('th-TH') + ' รายการ');
+  var billCount = Number((isToday ? data.todayCount : data.transactionCount) || 0);
+  addStat('จำนวนออเดอร์', billCount.toLocaleString('th-TH') + ' รายการ');
+  addStat('จำนวนชิ้น', Number((isToday ? data.todayItems : data.totalItems) || 0).toLocaleString('th-TH') + ' ชิ้น');
   container.appendChild(stats);
 
   if (data.truncated) {
@@ -291,16 +321,16 @@ function renderPosHistory(data) {
     container.appendChild(warning);
   }
 
-  var sales = data.sales || [];
+  var sales = (data.sales || []).filter(function(sale) { return !isToday || isTodayStamp(sale.createdAt); });
   var sectionHead = document.createElement('div'); sectionHead.className = 'history-section-head';
-  var sectionTitle = document.createElement('div'); sectionTitle.className = 'history-section-title'; sectionTitle.textContent = 'ออเดอร์ล่าสุด';
+  var sectionTitle = document.createElement('div'); sectionTitle.className = 'history-section-title'; sectionTitle.textContent = isToday ? 'ออเดอร์วันนี้' : 'ออเดอร์ล่าสุด';
   var sectionCount = document.createElement('div'); sectionCount.className = 'history-section-count';
-  sectionCount.textContent = sales.length + ' จาก ' + Number(data.transactionCount || 0).toLocaleString('th-TH');
+  sectionCount.textContent = sales.length + ' จาก ' + billCount.toLocaleString('th-TH');
   sectionHead.appendChild(sectionTitle); sectionHead.appendChild(sectionCount); container.appendChild(sectionHead);
 
   if (!sales.length) {
     var empty = document.createElement('div'); empty.className = 'history-empty';
-    empty.innerHTML = '<div style="font-size:2.2rem;">🧾</div><div>ยังไม่มีประวัติการขายผ่าน POS</div>';
+    empty.innerHTML = '<div style="font-size:2.2rem;">🧾</div><div>' + (isToday ? 'วันนี้ยังไม่มีการขายผ่าน POS' : 'ยังไม่มีประวัติการขายผ่าน POS') + '</div>';
     container.appendChild(empty); return;
   }
 
@@ -327,7 +357,7 @@ function renderPosHistory(data) {
     card.appendChild(items); container.appendChild(card);
   });
 
-  if (data.historyLimited) {
+  if (data.historyLimited && (!isToday || sales.length < billCount)) {
     var limited = document.createElement('div'); limited.className = 'history-warning';
     limited.textContent = 'แสดง 100 ออเดอร์ล่าสุด โดยยอดขายรวมยังคำนวณจากข้อมูลทั้งหมด';
     container.appendChild(limited);
