@@ -41,6 +41,8 @@ function openPOS(products, listName, listId) {
   goScreen('pos', null);
   hideLoading();
 
+  startPosAutoRefresh();
+
   // Warm up the barcode library in the background so the first
   // scanner tap only has to start the camera
   setTimeout(function() { ensureScannerLib().catch(function() {}); }, 1500);
@@ -362,6 +364,77 @@ function renderPosHistory(data) {
     limited.textContent = 'แสดง 100 ออเดอร์ล่าสุด โดยยอดขายรวมยังคำนวณจากข้อมูลทั้งหมด';
     container.appendChild(limited);
   }
+}
+
+// ══════════════════════════════════
+// STOCK REFRESH — the 🔄 button, every 30 s while selling, and on return to the app
+// ══════════════════════════════════
+var POS_REFRESH_MS = 30000;
+var _posRefreshTimer = null, _posRefreshing = false;
+
+function posProductKey(p) { return p.id ? 'id:' + p.id : 'row:' + p.rowIndex; }
+
+function startPosAutoRefresh() {
+  if (_posRefreshTimer) return;
+  _posRefreshTimer = setInterval(function() { refreshPosProducts(false); }, POS_REFRESH_MS);
+  document.addEventListener('visibilitychange', function() { if (!document.hidden) refreshPosProducts(false); });
+}
+
+// manual = the button: spin it and say what happened; auto = silent, and
+// skipped while it could get in the way (another screen, e.g. paying; qty popup)
+function refreshPosProducts(manual) {
+  if (!POS_LIST_ID || _posRefreshing) return;
+  if (!manual) {
+    var onPos = document.getElementById('screen-pos').classList.contains('active');
+    if (document.hidden || !onPos || _qtyProduct) return;
+  }
+  _posRefreshing = true;
+  var btn = document.getElementById('posRefreshBtn');
+  if (manual && btn) { btn.disabled = true; btn.classList.add('spinning'); }
+  function done() { _posRefreshing = false; if (btn) { btn.disabled = false; btn.classList.remove('spinning'); } }
+
+  google.script.run.withSuccessHandler(function(r) {
+    done();
+    try {
+      var res = JSON.parse(r);
+      if (res.status !== 'Success') { if (manual) posToast(res.message || 'อัปเดตสต็อกไม่สำเร็จ', 'error'); return; }
+      applyPosProducts(res.products || [], manual);
+    } catch (e) { if (manual) posToast('อัปเดตสต็อกไม่สำเร็จ', 'error'); }
+  }).withFailureHandler(function() {
+    done();
+    if (manual) posToast('อัปเดตสต็อกไม่สำเร็จ — กรุณาลองใหม่', 'error');
+  }).adminGetProducts(POS_LIST_ID);
+}
+
+function applyPosProducts(products, manual) {
+  var fresh = products.filter(function(p) { return p.status === 'Open'; });
+  if (!manual && JSON.stringify(fresh) === JSON.stringify(POS_PRODUCTS)) return; // nothing changed
+
+  // Point cart lines at the fresh product rows (rowIndex can shift when
+  // products are added or removed); drop lines whose product closed or vanished
+  var byKey = {};
+  fresh.forEach(function(p) { byKey[posProductKey(p)] = p; });
+  var dropped = [];
+  POS_CART = POS_CART.filter(function(item) {
+    var np = byKey[posProductKey(item.product)];
+    if (!np) { dropped.push(item.product.name); return false; }
+    item.product = np;
+    item.lineTotal = item.qty * Number(np.price);
+    return true;
+  });
+  var short = POS_CART.some(function(item) { return posStockLeft(item.product, item.option) < 0; });
+
+  POS_PRODUCTS = fresh;
+  document.getElementById('posSub').textContent = POS_PRODUCTS.length + ' รายการสินค้า';
+  var scroller = document.querySelector('#screen-pos .pos-product-scroll');
+  var top = scroller ? scroller.scrollTop : 0;
+  renderProducts(POS_PRODUCTS);
+  if (scroller) scroller.scrollTop = top;
+  updateCartFab();
+
+  if (dropped.length) posToast('นำออกจากตะกร้า (ปิดขาย/ถูกลบ): ' + dropped.join(', '), 'error');
+  else if (short) posToast('สต็อกบางรายการในตะกร้าเหลือไม่พอแล้ว — ตรวจตะกร้าก่อนชำระเงิน', 'error');
+  else if (manual) posToast('อัปเดตสต็อกแล้ว ✓', 'success');
 }
 
 // ══════════════════════════════════
