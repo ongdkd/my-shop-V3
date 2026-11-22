@@ -876,6 +876,7 @@ a.ocard-phone{text-decoration:underline;text-decoration-color:var(--border-stron
 .wh-act.show{display:flex;}
 .wh-count{flex:1;min-width:0;font-size:0.84rem;font-weight:700;color:var(--primary);}
 .wh-act .btn{min-height:44px;}
+.stock-draft-note{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:14px;padding:8px 8px 8px 12px;border-radius:var(--radius-sm);background:var(--warning-light);color:#7A5000;font-size:0.8rem;font-weight:600;}
 .wcard.del.selected{border-color:var(--error);box-shadow:0 0 0 3px var(--error-light);}
 .wcard.del.selected .wcard-check{background:var(--error);border-color:var(--error);}
 .wh-act.del .wh-count{color:var(--error);}
