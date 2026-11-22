@@ -8176,8 +8176,12 @@ var _stockFormDraft = null;   // { draft, isOptionsMode, images } — see openCr
 var _stockFormLive = null;    // the open form's capture(), while it is on screen
 var _stockLookupDraft = '';   // barcode typed in the lookup step
 
+var _bulkStockDraft = null;   // same idea for "เพิ่มหลาย": { rows, keySeq, images }
+var _bulkStockLive = null;
+
 function stockFormRemember() {
   if (_stockFormLive) { try { _stockFormLive(); } catch (e) {} }
+  if (_bulkStockLive) { try { _bulkStockLive(); } catch (e) {} }
 }
 
 function openCreateStockModal(defaults) {
@@ -8828,6 +8832,14 @@ function openBulkStockModal(prefill) {
     if (r.opts.length) r.mode = 'options';
     return r;
   }) : [makeBulkSRow()];
+  // "เพิ่มหลาย" reopened after closing → bring back the unsaved rows (not for the
+  // ย้ายสินค้าเข้าคลัง flow, which arrives with its own prefill)
+  var restoredBulk = !prefill && !!_bulkStockDraft;
+  if (restoredBulk) {
+    bulkSRows = JSON.parse(JSON.stringify(_bulkStockDraft.rows));
+    keySeq = _bulkStockDraft.keySeq;
+    pendingImg = Object.assign({}, _bulkStockDraft.images);
+  }
 
   function makeBulkSRow(d) {
     return {
@@ -9019,6 +9031,16 @@ function openBulkStockModal(prefill) {
 
   function buildBulkSUI() {
     el('modalBody').innerHTML = '';
+    if (restoredBulk) {
+      var note = div('stock-draft-note');
+      var nt = document.createElement('span'); nt.textContent = '↩ ข้อมูลที่กรอกค้างไว้ครั้งก่อน';
+      note.appendChild(nt);
+      note.appendChild(makeBtn('btn btn-ghost btn-sm', 'ล้างฟอร์ม', function() {
+        _bulkStockLive = null; _bulkStockDraft = null; pendingImg = {};
+        closeModal(); openBulkStockModal();
+      }));
+      el('modalBody').appendChild(note);
+    }
     var bar = document.createElement('div'); bar.className = 'bulk-toolbar';
     var multi = document.createElement('input'); multi.type = 'file'; multi.accept = 'image/*'; multi.multiple = true; multi.hidden = true;
     multi.onchange = function() { if (multi.files.length) addPhotos(multi.files); multi.value = ''; };
@@ -9352,6 +9374,27 @@ function openBulkStockModal(prefill) {
   }, 'บันทึกทั้งหมด');
 
   el('modal').classList.add('open');
+
+  // Remember unsaved rows when the window closes (saved rows are dropped;
+  // when everything saved there is nothing left to keep)
+  if (!prefill) _bulkStockLive = function() {
+    _bulkStockLive = null;
+    if (!document.getElementById('bulkSList') || el('modalTitle').textContent.indexOf('เพิ่มสินค้าหลายรายการ') === -1) return;
+    var rows = bulkSRows.filter(function(r) {
+      if (r.status === 'done') return false;
+      // a row holding only the price carried over from the row above counts as empty
+      return r.name.trim() || rowImage(r) || String(r.stock).trim() || !r.idAuto || r.opts.length;
+    });
+    if (!rows.length) { _bulkStockDraft = null; return; }
+    var images = {};
+    rows.forEach(function(r) {
+      if (pendingImg[r.key]) images[r.key] = pendingImg[r.key];
+      r.opts.forEach(function(o) { if (pendingImg[o.key]) images[o.key] = pendingImg[o.key]; });
+    });
+    rows = JSON.parse(JSON.stringify(rows));
+    rows.forEach(function(r) { r.status = 'pending'; if (r.ai === 'busy') r.ai = ''; r.opts.forEach(function(o) { if (o.ai === 'busy') o.ai = ''; }); });
+    _bulkStockDraft = { rows: rows, keySeq: keySeq, images: images };
+  };
 }
 
 
