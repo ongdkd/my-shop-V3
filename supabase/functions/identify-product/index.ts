@@ -164,13 +164,13 @@ const sniff = (b: Uint8Array) =>
   : String.fromCharCode(...b.subarray(0, 4)) === "RIFF" && String.fromCharCode(...b.subarray(8, 12)) === "WEBP" ? "image/webp"
   : "";
 
-// Shop naming format: "[Series] ประเภทสินค้า Product name", e.g.
-// "[Codename: Anastasia] ซองสุ่มการ์ด Trading Photo Card Vol. 2 (Set 2) by Mercury Studio".
+// Shop naming format: "Series - ประเภทสินค้า details", e.g.
+// "Codename: Anastasia - ซองสุ่มการ์ด Vol. 2 (Set 2) by Mercury Studio".
 // Gemini returns the three parts; formatName joins them so the format never drifts.
 const NAME_PARTS = `Return the name in three parts:
 - series: the franchise / series / title the goods belong to, using its official English title (e.g. "Codename: Anastasia", "Blue Lock", "Hatsune Miku"); keep the original only if no English title exists. This is the story / anime / game / webtoon, NOT the product line or brand of the goods: a card line such as "Highlight Pick" belongs in product, while the webtoon / anime title printed on THIS box is the series. Never guess a series that is not printed on the item or named by the search clues. Read titles printed in Korean / Japanese / Chinese and give their official English title. Empty if none.
 - type_th: the product type in short everyday Thai, e.g. ซองสุ่มการ์ด (random card pack), การ์ด, สแตนดี้อะคริลิค, พวงกุญแจ, เข็มกลัด, กล่องสุ่ม, ฟิกเกอร์, ตุ๊กตา, โปสเตอร์, สติกเกอร์, แฟ้ม, หนังสือ. Use one of these when it fits.
-- product: the specific product IN ENGLISH, without repeating the series: English product type (e.g. "Trading Photo Card", "Acrylic Stand", "Can Badge"), volume / set / edition number written the English way ("Vol. 2", "Set 2" — never "第2弾" or "第二弹"), character name(s) in their usual English spelling, and "by <maker>" when listings name the maker. Use the official English name when one exists; otherwise translate Chinese / Japanese / Korean titles to English. No Chinese, Japanese or Korean characters in this part. No shop names, prices, shipping notes, hashtags or 【】 tags.
+- product: what sets this product apart, IN ENGLISH, without repeating the series and WITHOUT the product type (type_th already says it — no "Trading Photo Card", "Acrylic Stand", "Can Badge" etc.): volume / set / edition number written the English way ("Vol. 2", "Set 2" — never "第2弾" or "第二弹"), character name(s) in their usual English spelling, and "by <maker>" when listings name the maker. Use the official English name when one exists; otherwise translate Chinese / Japanese / Korean titles to English. No Chinese, Japanese or Korean characters in this part. No shop names, prices, shipping notes, hashtags or 【】 tags.
 Keep the whole name under 120 characters.`;
 
 const MATCH_RULE = `First copy shop_title: the main title / logo text printed on the shop photo's item, exactly as printed (any language), or "" if none is readable. Write shop_item: the kind of item and its main artwork.
@@ -200,11 +200,11 @@ function titlesAgree(a: string, b: string): boolean {
 function formatName(out: { series?: unknown; type_th?: unknown; product?: unknown }): string {
   const series = String(out.series ?? "").trim().replace(/^\[|\]$/g, "");
   let product = String(out.product ?? "").trim();
-  // "[Highlight Pick] … Highlight Pick Collecting Card" → drop the repeat
+  // "Highlight Pick - … Highlight Pick Collecting Card" → drop the repeat
   const at = series ? product.toLowerCase().indexOf(series.toLowerCase()) : -1;
   if (at >= 0) product = (product.slice(0, at) + product.slice(at + series.length)).replace(/^[\s:–-]+/, "").trim();
-  const parts = [series ? `[${series}]` : "", String(out.type_th ?? "").trim(), product];
-  return parts.filter(Boolean).join(" ").replace(/\s+/g, " ").slice(0, 160);
+  const rest = [String(out.type_th ?? "").trim(), product].filter(Boolean).join(" ");
+  return [series, rest].filter(Boolean).join(" - ").replace(/\s+/g, " ").slice(0, 160);
 }
 
 // Gemini looks at the photo + search clues → clean name + best candidate photo
