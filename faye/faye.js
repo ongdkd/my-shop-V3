@@ -1,6 +1,14 @@
 (()=> {
   const base = new URL('.', document.currentScript.src);
   const version = new URL(document.currentScript.src).search; // cache-bust the artwork with the script
+  // Seasonal outfit: from Dec 1 to Jan 6 (the viewer's own date) Faye wears his Christmas
+  // outfit, drawn on the same poses in assets/christmas/. ?fayeOutfit=christmas|normal overrides.
+  const query=new URLSearchParams(location.search);
+  const outfitParam=query.get('fayeOutfit')||({xmas:'christmas',normal:'normal'})[query.get('theme')];
+  const now0=new Date();
+  const christmas=outfitParam?outfitParam==='christmas':now0.getMonth()===11||(now0.getMonth()===0&&now0.getDate()<=6);
+  const artDir=christmas?'assets/christmas/':'assets/';
+  const seasonalSummer = new Set(christmas?['cola','ramune','iceCream','strawberryMilk','rain','bubble']:[]);
   const idle = [
     ['breathe','Breathe','stand',3200],
     ['vibe','Vibing','music',1300],
@@ -35,6 +43,14 @@
     ['strawberryMilk','Strawberry milk','stand',2600], ['ramune','Drinking ramune','stand',2600],
     ['dance','Dancing','music',2400], ['chill','Chill music','music',2800],
     ['idleFun','Bored antics','stand',3200],
+    ...(christmas?[
+      ['xmas-cocoa','Christmas cocoa','stand',2900],
+      ['xmas-gift','Opening a present','stand',3200],
+      ['xmasTree','Decorating the tree','stand',11000],
+      ['xmas-snow','Catching snowflakes','stand',3200],
+      ['xmas-snowman','Building a snowman','crouch',3000],
+      ['xmas-cookie','Gingerbread break','stand',2800],
+    ]:[]),
   ];
   const thinking = [
     ['ponder','Pondering','think',2200],
@@ -65,7 +81,7 @@
     idle:Object.freeze(idle.map(([id])=>id)), thinking:Object.freeze(thinking.map(([id])=>id)),
     reactions:Object.freeze(reactions.map(([id])=>id)),
   });
-  const idleCycle=groups.idle.filter(id=>id!=='page'&&id!=='sleep'&&id!=='sip'&&id!=='wake');
+  const idleCycle=groups.idle.filter(id=>id!=='page'&&id!=='sleep'&&id!=='sip'&&id!=='wake'&&!seasonalSummer.has(id));
   // Idle is random: weighted picks (default weight 1), never one of the last few, and
   // now and then (routineChance) a short routine played in order with no rest between.
   // Short reactions in idleExtras happen on their own too, rarely.
@@ -85,7 +101,10 @@
     ['read','stretch'],             // reads a page, then stretches
     ['game','fidget'],              // game, then restless
     ['ramen','yawn'],               // full and sleepy (yawn leads to a short nap)
-  ];
+    ...(christmas?[
+      ['xmas-cocoa','xmas-cookie'], ['xmas-snow','xmas-snowman'], ['xmasTree','xmas-gift'],
+    ]:[]),
+  ].filter(routine=>!routine.some(id=>seasonalSummer.has(id)));
   const routineChance=.3, recentSize=6;
   const authored = {
     'idle-breath': ['inhale','exhale','weightShift','tapFoot'],
@@ -145,6 +164,22 @@
     'bridge-vibe': ['bridgeVibeFrom','bridgeVibeOne','bridgeVibeTwo','bridgeVibeTo'],
     'bridge-hum': ['bridgeHumFrom','bridgeHumOne','bridgeHumTwo','bridgeHumTo'],
     'bridge-ponder': ['bridgePonderFrom','bridgePonderOne','bridgePonderTwo','bridgePonderTo'],
+    ...(christmas?{
+      "xmas-cocoa": ["cocoaSmell", "cocoaBlow", "cocoaSip", "cocoaMustache"],
+      "xmas-gift": ["giftShake", "giftHug", "giftRibbon", "giftOpen"],
+      "xmas-tree-pull": ["treeRummage", "treeTug", "treeLift", "treeSet"],
+      "xmas-tree-deco-a": ["treeGarlandCoil", "treeGarlandLeft", "treeGarlandRight", "treeGarlandLower"],
+      "xmas-tree-deco-b": ["treeBaubleLeft", "treeBaubleRight", "treeStarHop", "treeFinished"],
+      "xmas-tree-pack": ["treePackAdmire", "treePackLift", "treePackTip", "treePackIdle"],
+      "xmas-snow": ["snowTongue", "snowPalm", "snowShiver", "snowScarf"],
+      "xmas-snowman": ["snowmanRoll", "snowmanStack", "snowmanNose", "snowmanPeace"],
+      "xmas-cookie": ["gingerAdmire", "gingerBite", "gingerChew", "gingerOffer"],
+      "xmas-cheer": ["xmasBell", "xmasArms", "xmasJump", "xmasPeace"],
+      "xmas-tree-between": ["treeReachBetween", "treeLowerBetween", "treeStepBetween", "treeArmsBetween"],
+      "xmas-treats-between": ["cocoaBetween", "gingerBetween", "giftBetween", "xmasLandBetween"],
+      "xmas-snow-bridge": ["snowBridgeFrom", "snowBridgeOne", "snowBridgeTwo", "snowBridgeTo"],
+      "xmas-snowman-bridge": ["snowmanBridgeFrom", "snowmanBridgeOne", "snowmanBridgeTwo", "snowmanBridgeTo"],
+    }:{}),
   };
   const clips = {
     breathe:['exhale','exhale','inhale','inhale'], vibe:['vibeLeft','vibeCenter','vibeRight','vibeDown'],
@@ -200,11 +235,197 @@
     poke:['pokeFlinch','pokePeace'], tickle:['pokeGiggle','pokeFlinch','pokeGiggle'],
     hideFace:['pokeHide','pokeFlinch','pokeHide'], peace:['pokePeace','pokeGiggle','pokePeace'],
   };
+  const seasonalFrames=christmas?{
+  "xmas-cocoa": [
+    [
+      0,
+      "cocoaSmell"
+    ],
+    [
+      690,
+      "cocoaBlow"
+    ],
+    [
+      1380,
+      "cocoaBetween"
+    ],
+    [
+      1520,
+      "cocoaSip"
+    ],
+    [
+      2210,
+      "cocoaMustache"
+    ]
+  ],
+  "xmas-gift": [
+    [
+      0,
+      "giftShake"
+    ],
+    [
+      765,
+      "giftHug"
+    ],
+    [
+      1530,
+      "giftBetween"
+    ],
+    [
+      1670,
+      "giftRibbon"
+    ],
+    [
+      2435,
+      "giftOpen"
+    ]
+  ],
+  "xmasTree": [
+    [
+      0,
+      "treeRummage"
+    ],
+    [
+      740,
+      "treeReachBetween"
+    ],
+    [
+      880,
+      "treeTug"
+    ],
+    [
+      1600,
+      "treeLift"
+    ],
+    [
+      2320,
+      "treeLowerBetween"
+    ],
+    [
+      2460,
+      "treeSet"
+    ],
+    [
+      3180,
+      "treeStepBetween"
+    ],
+    [
+      3320,
+      "treeGarlandCoil"
+    ],
+    [
+      4040,
+      "treeGarlandLeft"
+    ],
+    [
+      4300,
+      "treeGarlandRight"
+    ],
+    [
+      4560,
+      "treeGarlandLeft"
+    ],
+    [
+      4820,
+      "treeGarlandRight"
+    ],
+    [
+      5080,
+      "treeGarlandLower"
+    ],
+    [
+      5800,
+      "treeBaubleLeft"
+    ],
+    [
+      6520,
+      "treeBaubleRight"
+    ],
+    [
+      7240,
+      "treeStarHop"
+    ],
+    [
+      7960,
+      "treeArmsBetween"
+    ],
+    [
+      8100,
+      "treeFinished"
+    ],
+    [
+      9000,
+      "treePackAdmire"
+    ],
+    [
+      9500,
+      "treePackLift"
+    ],
+    [
+      10000,
+      "treePackTip"
+    ],
+    [
+      10500,
+      "treePackIdle"
+    ]
+  ],
+  "xmas-cookie": [
+    [
+      0,
+      "gingerAdmire"
+    ],
+    [
+      665,
+      "gingerBetween"
+    ],
+    [
+      805,
+      "gingerBite"
+    ],
+    [
+      1470,
+      "gingerChew"
+    ],
+    [
+      2135,
+      "gingerOffer"
+    ]
+  ],
+  "celebrate": [
+    [
+      0,
+      "xmasBell"
+    ],
+    [
+      280,
+      "xmasArms"
+    ],
+    [
+      560,
+      "xmasJump"
+    ],
+    [
+      830,
+      "xmasLandBetween"
+    ],
+    [
+      970,
+      "xmasPeace"
+    ]
+  ]
+}:{};
+  if(christmas) {
+    for(const [id,frames] of Object.entries(seasonalFrames)) clips[id]=frames.map(([,pose])=>pose);
+    clips['xmas-snow']=['snowTongue','snowPalm','snowShiver','snowScarf'];
+    clips['xmas-snowman']=['snowmanRoll','snowmanStack','snowmanNose','snowmanPeace'];
+  }
   const props={
     game:'console',read:'book',page:'book',tea:'mug',sip:'mug',snack:'cookie',flower:'flower',
     photo:'camera',strum:'ukulele',plane:'paper',process:'notebook',letter:'letter',
     ramen:'ramen',rice:'rice',onigiri:'onigiri',sticks:'sticks',taiyaki:'taiyaki',iceCream:'iceCream',
     cola:'cola',boba:'boba',strawberryMilk:'milk',ramune:'ramune',
+    ...(christmas?{'xmas-cocoa':'cocoa','xmas-gift':'gift','xmas-cookie':'ginger'}:{}),
   };
   const propPixels={
     paper:[['00001111','00111110','11111100','00111000','00010000'],'#fff1d7'],
@@ -220,9 +441,27 @@
     taiyaki:['bagTaiyakiHalf','taiyakiAdmire'],iceCream:['bagIceHalf','iceLick'],
     cola:['bagColaHalf','colaOpen'],boba:['bagBobaHalf','bobaAdmire'],
     milk:['bagMilkHalf','milkSip'],ramune:['bagRamuneHalf','ramuneOpen'],
+    ...(christmas?{cocoa:['bagCocoaHalf','cocoaSmell'],gift:['bagGiftHalf','giftHug'],ginger:['bagGingerHalf','gingerAdmire']}:{}),
   };
   // Reuse the approved prop pixels at their original scale for the new food bag handoffs.
-  const foodInBag={
+  // The Christmas art adds a mask per prop (only the food's own pixels, no coat behind it).
+  const foodInBag=christmas?{
+    "bagCocoaHalf":{"pose":"cocoaSmell","crop":[31,51,11,9],"mask":["01111111100","01111111100","01111111111","01111111111","01111111101","01111111111","01111111111","01111111100","01111111100"]},
+    "bagGiftHalf":{"pose":"giftHug","crop":[30,50,13,12],"mask":["0001000001000","0010100110100","0001111011000","1111111111111","1111111111111","1111111111111","0111111111110","0111111111110","0111111111110","0111111111110","0111111111110","0111111111110"]},
+    "bagGingerHalf":{"pose":"gingerAdmire","crop":[27,39,5,8],"mask":["01110","01110","01110","11110","11110","11111","01111","01111"]},
+
+    bagRamenHalf:{pose:'ramenLook',crop:[29,49,17,14],mask:['00000000000000000','00000000000000000','00000000000000000','00000011100000000','00000111110000000','00000111111000000','00011111111110000','01111111111111100','01111111111111100','00111111111111100','00111111111111100','00111111111111000','00001111111110000','00000111111100000']},
+    bagRamenSit:{pose:'ramenLook',crop:[29,49,18,15],crouch:true,mask:['000000000000000000','000000000000000000','000000000000000000','000000111000000000','000001111100000000','000001111110000000','000111111111100000','011111111111111000','011111111111111111','111111111111111111','111111111111111111','011111111111111111','000111111111111111','000011111111111111','000000000001000000']},
+    bagRiceHalf:{pose:'riceProud',crop:[36,49,14,9],mask:['00000111111000','00000111111100','00001111111110','01111111111111','01111111111111','00111111111110','00001111111100','00000111111000','00000000000000']},
+    bagOnigiriHalf:{pose:'onigiriAdmire',crop:[31,41,13,10],mask:['0000001000000','0000011100000','0001111110000','0011111111000','0011111111000','0111111111100','1111111111110','1111111111110','1111111111110','1111111111110']},
+    bagSticksHalf:{pose:'sticksCool',crop:[41,48,8,11],mask:['00111100','01111100','11111110','11111110','11111110','11111110','11111111','11111111','11111111','11111111','11111110']},
+    bagTaiyakiHalf:{pose:'taiyakiAdmire',crop:[28,44,16,9],mask:['0000010000000000','0001111111100001','0111111111111111','0111111111111111','1111111111111111','0011111111111111','0001111111100001','0000000001000000','0000000000000000']},
+    bagIceHalf:{pose:'iceLick',crop:[27,43,8,11],mask:['00011100','00111110','01111111','01111111','01111111','00111110','00111100','00111100','00111000','00011000','00001000']},
+    bagColaHalf:{pose:'colaOpen',crop:[43,46,5,8],mask:['01110','01110','11111','11111','11111','11111','11111','00000']},
+    bagBobaHalf:{pose:'bobaAdmire',crop:[30,41,15,16],mask:['000000000000000','000000100000000','000000100000000','000000100000000','000000100000000','000011111100000','000111111110000','011111111111100','011111111111100','011111111111100','011111111111100','011111111111100','011111111111100','011111111111100','001111111111000','000111111110000']},
+    bagMilkHalf:{pose:'milkSip',crop:[32,42,11,15],mask:['00001000000','00001000000','00001000000','00011000000','00111111000','00111111000','01111111100','01111111100','01111111100','01111111100','01111111100','01111111100','01111111100','01111111100','00000000000']},
+    bagRamuneHalf:{pose:'ramuneOpen',crop:[32,47,7,14],mask:['0001110','0001110','0001110','0011110','0011110','1111111','1111111','1111111','1111111','1111111','1111111','1111111','1111111','0000000']},
+  }:{
     bagRamenHalf:{pose:'ramenLook',crop:[30,52,17,12]},
     bagRamenSit:{pose:'ramenLook',crop:[30,52,17,12],crouch:true},
     bagRiceHalf:{pose:'riceProud',crop:[35,50,13,9]},
@@ -263,7 +502,7 @@
       const timer=setTimeout(()=>{img.src='';reject(new Error('slow '+file));},15000);
       img.onload=()=>{clearTimeout(timer);resolve(img);};
       img.onerror=()=>{clearTimeout(timer);reject(new Error('load '+file));};
-      img.src=new URL('assets/'+file+'.png'+version+(attempt?(version?'&':'?')+'retry='+attempt:''),base);
+      img.src=new URL(artDir+file+'.png'+version+(attempt?(version?'&':'?')+'retry='+attempt:''),base);
     }).then(img=>img.decode?img.decode().then(()=>img,()=>img):img)
       .catch(error=>attempt<1?loadSheet(file,attempt+1):Promise.reject(error));
   }
@@ -306,9 +545,18 @@
     vibe:['bridgeVibeOne','bridgeVibeTwo'],
     hum:['bridgeHumOne','bridgeHumTwo'],
     ponder:['bridgePonderOne','bridgePonderTwo'],
+    ...(christmas?{'xmas-snow':['snowBridgeOne','snowBridgeTwo'],'xmas-snowman':['snowmanBridgeOne','snowmanBridgeTwo']}:{}),
   };
   // Coordinates on the sheets' 72×82 logical pixel grid, measured over each visible iris.
-  const eyelids={
+  const eyelids=christmas?{
+    inhale:[[29,35,4,4],[40,35,4,4]],
+    exhale:[[29,36,4,4],[40,36,4,4]],
+    weightShift:[[28,37,4,4],[38,37,4,4]],
+    tapFoot:[[28,37,4,4],[39,37,4,4]],
+    lookLeft:[[26,37,2,3],[35,37,3,4]],
+    lookRight:[[36,37,3,4],[45,36,3,4]],
+    talkClosed:[[29,36,4,4],[40,36,4,4]],
+  }:{
     // inhale / exhale / weightShift / tapFoot are built from talkClosed (scripts note in ART-PROMPTS.md)
     inhale:[[29,37,4,4],[40,37,4,4]],
     exhale:[[29,38,4,4],[40,38,4,4]],
@@ -436,7 +684,7 @@
       if(id==='tea'&&!returning) following='sip';
       if(linked&&id==='page'&&!automatic) following='read';
       if(linked&&id==='sip') following='tea';
-      const oneCycle=following!==null||id==='wake'||(id==='plane'&&automatic)||(linked&&id==='page')||returning||groups.reactions.includes(id);
+      const oneCycle=following!==null||id==='wake'||id==='xmasTree'||(id==='plane'&&automatic)||(linked&&id==='page')||returning||groups.reactions.includes(id);
       next=oneCycle?started+(id==='sleep'?sleepMs:current.duration):automatic?started+(mode==='idle'?7600:4000):Infinity;
       if(id==='sleep'&&napping) next=Infinity; // a nap lasts until wake()
     }
@@ -551,7 +799,7 @@
       const sprite=art[pose]||art.exhale||art.talkClosed;
       if(!sprite) return;
       const {img,left,top}=sprite;
-      const breathing=animate&&!beingCarried&&frame.pose!=='cheerJump';
+      const breathing=animate&&!beingCarried&&frame.pose!=='cheerJump'&&frame.pose!=='xmasJump'&&frame.pose!=='xmasLandBetween';
       const bob=breathing&&!neutral?(speaking?-(beat%2):Math.cos((drawTime-t0)*TAU/2400)<0?-1:0):0;
       ctx.save();
       ctx.translate(Math.round(frame.x),Math.round(frame.y)+bob);
@@ -562,14 +810,19 @@
         const prop=sprite.prop,source=art[prop.pose];
         const [px,py,pw,ph]=prop.crop;
         const center=prop.crouch?72:95;
+        const propX=center-pw-W/2,propY=128-ph*2+41-FLOOR;
         ctx.save();
         if(!prop.crouch) {
           ctx.beginPath();
           ctx.rect(-W/2,41-FLOOR,W,128);
           ctx.clip();
         }
-        ctx.drawImage(source.img,source.left+px*4,source.top+py*4,pw*4,ph*4,
-          center-pw-W/2,128-ph*2+41-FLOOR,pw*2,ph*2);
+        if(prop.mask) {
+          ctx.beginPath();
+          prop.mask.forEach((row,y)=>{for(let x=0;x<row.length;x++) if(row[x]==='1') ctx.rect(propX+x*2,propY+y*2,2,2);});
+          ctx.clip();
+        }
+        ctx.drawImage(source.img,source.left+px*4,source.top+py*4,pw*4,ph*4,propX,propY,pw*2,ph*2);
         ctx.restore();
       }
       if(animate&&!beingCarried&&drawTime<blinkUntil&&eyelids[pose]) {
@@ -728,7 +981,9 @@
       const detail=detailFor(id,p);
       const clip=clips[id];
       const frame=reduced.matches?Math.floor(clip.length/2):Math.min(clip.length-1,Math.floor(Math.max(0,p)*clip.length));
-      const inkPose=clip[frame];
+      const timed=seasonalFrames[id];
+      const at=p*duration;
+      const inkPose=timed&&!reduced.matches?(timed.findLast(([start])=>start<=at)||timed[0])[1]:clip[frame];
       const hopPx=inkPose==='cheerJump'&&!reduced.matches?-8:0;
       const carryTilt=id==='drag'&&!reduced.matches?swing+.035*Math.sin(now/180):0;
       drawSprite(inkPose,hopPx,carryTilt);
@@ -939,5 +1194,5 @@
       dead=true;events.abort();layout.disconnect();cancelAnimationFrame(frame);canvas.remove();host.style.position=previousPosition;
     }};
   }
-  window.FayeCompanion=Object.freeze({mount,actions,groups});
+  window.FayeCompanion=Object.freeze({mount,actions,groups,outfit:christmas?'christmas':'normal'});
 })();

@@ -60,6 +60,7 @@ button:focus-visible,a:focus-visible,.nav-item:focus-visible{outline:2px solid v
 .faye-stage{--faye-w:144px;display:block;position:relative;width:var(--faye-w);height:calc(var(--faye-w) * 164 / 144);}
 .faye-stage canvas{transform:none!important;}
 .faye.no-art .faye-stage,.faye.loading .faye-stage{background:url('../faye/assets/talk.png?v=faye-reference-5') 0 0 / 200% 200% no-repeat;image-rendering:pixelated;}
+.faye.xmas.no-art .faye-stage,.faye.xmas.loading .faye-stage{background-image:url('../faye/assets/christmas/talk.png?v=faye-xmas-3');}
 .faye.mini .faye-stage{--faye-w:72px;}
 .faye.held summary{cursor:grabbing;}
 .faye.held .faye-stage{filter:drop-shadow(0 12px 10px rgba(74,46,61,.25));}

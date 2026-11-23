@@ -137,6 +137,7 @@ document.getElementById('modalSave').onclick = function() { if (modalSaveFn) mod
 // tips for the screen you're on. He speaks up when a new order or slip arrives.
 // ════════════════════════════════
 var fayeBox = el('faye');
+if (window.FayeCompanion && FayeCompanion.outfit === 'christmas') fayeBox.classList.add('xmas'); // seasonal outfit (faye.js)
 var fayeHelp = el('fayeHelp');
 var fayeReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 var fayePaused = false, fayeHeld = false;

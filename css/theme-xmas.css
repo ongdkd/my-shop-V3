@@ -1,0 +1,135 @@
+/* Christmas theme (Dec 1 – Jan 6), switched on by js/season.js on top of theme-pink.css.
+   Keeps the pink palette: a pink Santa hat on the logo, pink-and-white snow falling in the
+   banners, and a candy-cane stripe around them. The snow is one animated background on a
+   small panel (cheap on phones) and stops for people who prefer reduced motion. */
+
+/* Santa hat worn on every logo: its white trim runs across the whole top of the round logo
+   (js/season.js wraps the shop and admin logo <img> in .xmas-logo) */
+.xmas-logo { position: relative; display: inline-block; flex: none; line-height: 0; }
+.xmas-logo::after {
+  content: '';
+  position: absolute;
+  width: 112%;
+  aspect-ratio: 10 / 7;
+  left: -6%;
+  top: -40%;
+  transform: rotate(-8deg);
+  pointer-events: none;
+  filter: drop-shadow(0 2px 3px rgba(201, 75, 130, 0.28));
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 70'%3E%3Cpath d='M10 52C14 24 36 6 60 8c16 1 27 10 31 22l-9 4c-4-8-10-11-16-10 8 7 16 16 20 28z' fill='%23E4639B'/%3E%3Cpath d='M60 8c16 1 27 10 31 22l-9 4c-4-8-10-11-16-10-2-6-4-11-6-16z' fill='%23C94B82'/%3E%3Crect x='3' y='47' width='94' height='19' rx='9.5' fill='%23fff' stroke='%23F2C3D7' stroke-width='2'/%3E%3Ccircle cx='89' cy='35' r='9' fill='%23fff' stroke='%23F2C3D7' stroke-width='2'/%3E%3C/svg%3E") no-repeat center / contain;
+}
+/* Room above each logo so the hat isn't cut off by the page container */
+.xmas .hub-topbar { padding-top: 30px; }
+.xmas .st-head { padding-top: 28px; }
+.xmas .page-header { padding-top: 18px; }
+
+/* Candy-cane stripe around the banners and the shop header */
+.xmas .hub-topbar, .xmas .st-head, .xmas .page-header {
+  border: 3px solid transparent;
+  background:
+    linear-gradient(#FFFAFC, #FFFAFC) padding-box,
+    repeating-linear-gradient(-45deg, #E4639B 0 7px, #FFFFFF 7px 14px) border-box;
+}
+
+/* Snow falling inside the banners: two tiles of flakes drifting down at different speeds */
+.xmas .hub-topbar, .xmas .st-head { position: relative; }
+.xmas .hub-topbar > *, .xmas .st-head > * { position: relative; z-index: 1; }
+.xmas .hub-topbar::before, .xmas .st-head::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cg fill='%23F6AECD'%3E%3Ccircle cx='14' cy='18' r='2.5'/%3E%3Ccircle cx='70' cy='44' r='2'/%3E%3Ccircle cx='104' cy='90' r='2.5'/%3E%3Ccircle cx='38' cy='100' r='1.8'/%3E%3C/g%3E%3Cg stroke='%23F09BC0' stroke-width='1.3' stroke-linecap='round'%3E%3Cpath d='M92 14v12M86 17l12 6M86 23l12-6'/%3E%3Cpath d='M30 58v10M25.5 60.5l9 5M25.5 65.5l9-5'/%3E%3C/g%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80'%3E%3Cg fill='%23fff' stroke='%23F4BCD4' stroke-width='1'%3E%3Ccircle cx='20' cy='12' r='3'/%3E%3Ccircle cx='60' cy='38' r='2.4'/%3E%3Ccircle cx='34' cy='66' r='2.8'/%3E%3C/g%3E%3C/svg%3E");
+  background-size: 120px 120px, 80px 80px;
+  animation: xmasSnow 14s linear infinite;
+}
+@keyframes xmasSnow {
+  from { background-position: 0 0, 40px 0; }
+  to { background-position: 0 120px, 40px 160px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .xmas .hub-topbar::before, .xmas .st-head::before { animation: none; }
+}
+
+/* Admin page: snow in the top bar and the sidebar logo block. Drawn as the element's own
+   background (no layer on top), so the buttons and the bell's dropdown are untouched. */
+.xmas .topbar, .xmas .sidebar-logo {
+  background-color: var(--surface);
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cg fill='%23F6AECD'%3E%3Ccircle cx='14' cy='18' r='2.5'/%3E%3Ccircle cx='70' cy='44' r='2'/%3E%3Ccircle cx='104' cy='90' r='2.5'/%3E%3Ccircle cx='38' cy='100' r='1.8'/%3E%3C/g%3E%3Cg stroke='%23F09BC0' stroke-width='1.3' stroke-linecap='round'%3E%3Cpath d='M92 14v12M86 17l12 6M86 23l12-6'/%3E%3Cpath d='M30 58v10M25.5 60.5l9 5M25.5 65.5l9-5'/%3E%3C/g%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80'%3E%3Cg fill='%23fff' stroke='%23F4BCD4' stroke-width='1'%3E%3Ccircle cx='20' cy='12' r='3'/%3E%3Ccircle cx='60' cy='38' r='2.4'/%3E%3Ccircle cx='34' cy='66' r='2.8'/%3E%3C/g%3E%3C/svg%3E");
+  background-size: 120px 120px, 80px 80px;
+  animation: xmasSnow 14s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .xmas .topbar, .xmas .sidebar-logo { animation: none; }
+}
+
+/* ── More Christmas ── */
+
+/* Twinkling string lights along the top of the banners: pink, red, gold, mint and lilac
+   bulbs on a wavy wire, gently brightening and dimming. */
+.xmas .hub-topbar::after, .xmas .st-head::after, .xmas .topbar::after {
+  content: '';
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  top: 0;
+  height: 22px;
+  pointer-events: none;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='150' height='22'%3E%3Cpath d='M0 3Q15 9 30 3T60 3T90 3T120 3T150 3' fill='none' stroke='%23B48A9C' stroke-width='1.2'/%3E%3Cg stroke='%23fff' stroke-width='0.8'%3E%3Crect x='13' y='6' width='4' height='3' rx='1' fill='%23B48A9C'/%3E%3Cellipse cx='15' cy='13' rx='3.6' ry='5' fill='%23FF7EB6'/%3E%3Crect x='43' y='6' width='4' height='3' rx='1' fill='%23B48A9C'/%3E%3Cellipse cx='45' cy='13' rx='3.6' ry='5' fill='%23FFC94D'/%3E%3Crect x='73' y='6' width='4' height='3' rx='1' fill='%23B48A9C'/%3E%3Cellipse cx='75' cy='13' rx='3.6' ry='5' fill='%23E8475F'/%3E%3Crect x='103' y='6' width='4' height='3' rx='1' fill='%23B48A9C'/%3E%3Cellipse cx='105' cy='13' rx='3.6' ry='5' fill='%236FD3B0'/%3E%3Crect x='133' y='6' width='4' height='3' rx='1' fill='%23B48A9C'/%3E%3Cellipse cx='135' cy='13' rx='3.6' ry='5' fill='%23B79CFF'/%3E%3C/g%3E%3C/svg%3E") repeat-x 0 0 / 150px 22px;
+  filter: drop-shadow(0 0 3px rgba(255, 150, 200, 0.55));
+  animation: xmasTwinkle 2.4s ease-in-out infinite alternate;
+}
+.xmas .topbar { position: relative; padding-top: 24px; }
+.xmas .topbar::after { left: 24px; right: 24px; top: 1px; height: 20px; }
+@keyframes xmasTwinkle {
+  from { filter: drop-shadow(0 0 2px rgba(255, 150, 200, 0.35)) brightness(0.92); }
+  to { filter: drop-shadow(0 0 5px rgba(255, 190, 120, 0.85)) brightness(1.15); }
+}
+
+/* "Merry Christmas" tag next to the shop name and the status page title */
+.xmas .hub-title::after, .xmas .st-title::after {
+  content: 'Merry Christmas';
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 9px;
+  vertical-align: middle;
+  font-family: var(--heading);
+  font-size: 0.62rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  color: #fff;
+  border-radius: 999px;
+  background: repeating-linear-gradient(-45deg, #E4639B 0 6px, #EE7FAE 6px 12px);
+  box-shadow: 0 2px 6px rgba(228, 99, 155, 0.3);
+}
+
+/* Gentle snow drifting over the whole shop and status pages. One tall layer moved with
+   transform (handled by the graphics card, so scrolling stays smooth); it never catches taps
+   and sits under the cart, menus and pop-ups. */
+.xmas body::after {
+  content: '';
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: -240px;
+  height: calc(100% + 240px);
+  z-index: 500;
+  pointer-events: none;
+  opacity: 0.75;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='260' height='240'%3E%3Cg fill='%23fff' stroke='%23F3B3CF' stroke-width='0.8'%3E%3Ccircle cx='30' cy='20' r='2.6'/%3E%3Ccircle cx='150' cy='60' r='2'/%3E%3Ccircle cx='220' cy='140' r='2.8'/%3E%3Ccircle cx='90' cy='190' r='2.2'/%3E%3C/g%3E%3Cg stroke='%23F4A3C6' stroke-width='1.2' stroke-linecap='round'%3E%3Cpath d='M200 26v10M195.5 28.5l9 5M195.5 33.5l9-5'/%3E%3Cpath d='M60 112v10M55.5 114.5l9 5M55.5 119.5l9-5'/%3E%3C/g%3E%3C/svg%3E") 0 0 / 260px 240px,
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='190' height='120'%3E%3Cg fill='%23FBD3E4'%3E%3Ccircle cx='120' cy='16' r='1.8'/%3E%3Ccircle cx='40' cy='78' r='1.5'/%3E%3Ccircle cx='170' cy='96' r='1.6'/%3E%3C/g%3E%3C/svg%3E") 70px 30px / 190px 120px;
+  animation: xmasPageSnow 22s linear infinite;
+  will-change: transform;
+}
+.xmas body:has(.app)::after { display: none; } /* admin: snow stays in its header */
+@keyframes xmasPageSnow { to { transform: translateY(240px); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .xmas .hub-topbar::after, .xmas .st-head::after, .xmas .topbar::after, .xmas body::after { animation: none; }
+}
